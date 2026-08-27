@@ -50,11 +50,11 @@ import columnAttenuation.ignoreAttenuation
 // place when the run completes. Repaints are diffed by the `InlineRoot`, so only changed
 // cells are rewritten, and are throttled so an event storm cannot dominate the run.
 //
-// The document is rendered through `Render` into a CAPTURING `Stdio` and replayed line by
-// line into an Ultimatum panel: the panel's `Extent` is itself the nearest `Stdio`, so the
-// same renderer draws the live board and the final report. Only the last `window` lines
-// show — the newest results matter, and an inline block taller than the screen cannot be
-// redrawn in place.
+// The document is collected from `Render` as STRUCTURED `Teletype` lines and written into
+// an Ultimatum panel through the grid's styled `put`: styling must survive as data — the
+// grid writes plain `Text` literally, so pre-rendered ANSI bytes would appear as garbage.
+// Only the last `window` lines show — the newest results matter, and an inline block taller
+// than the screen cannot be redrawn in place.
 final class Live(model: Model, width: Int)(using stdio: Stdio):
   private given decimalizer: Decimalizer = Decimalizer(4)
   private given style: TableStyle = tableStyles.defaultTableStyle
@@ -138,42 +138,35 @@ final class Live(model: Model, width: Int)(using stdio: Stdio):
 
     Scaffold[Row](defs*).tabulate(rows())
 
-  // The current report, rendered exactly as `Render` would print it, captured as lines.
-  private def renderedLines(): List[Text] =
-    val buffer = ji.ByteArrayOutputStream()
-    val print = ji.PrintStream(buffer, true, "UTF-8")
-    val capture: Stdio = Stdio(print, print, null, stdio.termcap)
+  // The current report, exactly the lines `Render` would print, as structured `Teletype`.
+  private def renderedLines(): List[Teletype] =
+    val buffer = scala.collection.mutable.ArrayBuffer[Teletype]()
 
-    locally:
-      given Stdio = capture
-      tabulation().grid(width).render.each(Out.println(_))
-      val document = Documenting.document(model.state())
-      document.groups.each(Render.renderGroup(_, width, terse = false))
+    tabulation().grid(width).render.each(buffer.append(_))
 
-    print.flush()
+    val document = Documenting.document(model.state())
 
-    val all: List[Text] = Text(buffer.toString("UTF-8").nn).cut(t"\n")
+    document.groups.each: group =>
+      Render.groupLines(group, width, terse = false) { line => buffer.append(line) }
 
-    // Drop the trailing empty segment a final newline leaves behind.
-    val trimmed: List[Text] =
-      (all.stdlib.reverse.dropWhile(_ == t"").reverse).to(List)
+    val all: List[Teletype] = buffer.to(List)
+    val length = all.stdlib.length
 
-    val length = trimmed.stdlib.length
-
-    if length <= window then trimmed
+    if length <= window then all
     else
       val elided = length - window
-      val notice: Text = t"… $elided earlier lines"
-      val visible: List[Text] = (trimmed.stdlib.drop(elided)).to(List)
+      val notice: Teletype = e"${Fg(Palette.subdued)}(… $elided earlier lines)"
+      val visible: List[Teletype] = (all.stdlib.drop(elided)).to(List)
       notice :: visible
 
   private def repaint(): Unit = root0.let: root =>
-    val lines: List[Text] = renderedLines()
+    val lines: List[Teletype] = renderedLines()
 
     val pane: Pane =
       stack(panel(minHeight = lines.stdlib.length.max(1)):
         // Written through the `Board` surface directly: the contextual `Extent^` is tracked,
-        // so it cannot serve as the pure `Stdio` that `Out` requires under capture checking.
+        // so it cannot serve as the pure `Stdio` that `Out` requires under capture checking —
+        // and the `Teletype` overload of `put` is what carries the styling into the grid.
         val extent = summon[Extent^]
 
         lines.indexed.each: (line, index) =>

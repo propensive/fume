@@ -171,7 +171,7 @@ object Render:
        rows: List[List[Datum]],
        width: Int,
        terse: Boolean )
-     (using Stdio)
+     (emit: Teletype => Unit)
   :   Unit =
 
     val defs: List[escritoire.Column[List[Datum], Teletype]] =
@@ -186,7 +186,7 @@ object Render:
         escritoire.Column[List[Datum], Teletype, Teletype](title, align, sizing = sizing):
           row => datum(row.stdlib(index.n0), terse)
 
-    gridLines(Scaffold[List[Datum]](defs*).tabulate(rows), width, terse).each(Out.println(_))
+    gridLines(Scaffold[List[Datum]](defs*).tabulate(rows), width, terse).each(emit(_))
 
   // ---------------------------------------------------------------- the results table
 
@@ -254,11 +254,21 @@ object Render:
     case t"profile" => t"Profile"
     case _          => t"Tests"
 
-  private[fume] def renderGroup(group: Doc.Group, width: Int, terse: Boolean)(using Stdio): Unit =
+  private def renderGroup(group: Doc.Group, width: Int, terse: Boolean)(using Stdio): Unit =
+    groupLines(group, width, terse)(Out.println(_))
+
+  // The group renderer proper, emitting STRUCTURED `Teletype` lines: the final report
+  // prints them, while the live board writes them straight into its grid — styling must
+  // survive as data, never as pre-rendered ANSI bytes (the grid writes plain `Text`
+  // literally).
+  private[fume] def groupLines(group: Doc.Group, width: Int, terse: Boolean)
+     (emit: Teletype => Unit)
+  :   Unit =
+
     if terse then
-      Out.println(t"")
+      emit(e"")
       val suiteName = group.suite.let(_.name).or(t"")
-      Out.println(t"${kindTitle(group.kind)}: $suiteName")
+      emit(e"${kindTitle(group.kind)}: $suiteName")
     else
       val ribbon =
         Ribbon
@@ -266,28 +276,28 @@ object Render:
             Bg(Palette.subdue(Palette.detail, 0.6)),
             Bg(Palette.subdue(Palette.detail, 0.9)) )
 
-      Out.println:
+      emit:
         ribbon.fill
           ( e"${group.suite.let(_.id).or(t"")}",
             kindTitle(group.kind).teletype,
             group.suite.let(_.name.teletype).or(e"") )
 
-    group.blocks.each(renderBlock(_, width, terse))
+    group.blocks.each(blockLines(_, width, terse)(emit))
 
-  private def renderBlock(block: Block, width: Int, terse: Boolean)(using Stdio): Unit =
+  private def blockLines(block: Block, width: Int, terse: Boolean)(emit: Teletype => Unit): Unit =
     block match
       case Block.Table(title, columns, rows) =>
         title.let: ref =>
-          if terse then Out.println(t"${ref.id}  ${ref.name}")
-          else Out.println(e"$Bold(${Fg(Palette.informative)}(${ref.id})) $Bold(${ref.name})")
+          if terse then emit(e"${ref.id}  ${ref.name}")
+          else emit(e"$Bold(${Fg(Palette.informative)}(${ref.id})) $Bold(${ref.name})")
 
-        printTable(columns, rows, width, terse)
+        printTable(columns, rows, width, terse)(emit)
 
       case Block.Sparkline(steps, sequence) =>
         val labelWidth = sequence.map(_.label.length).stdlib.foldLeft(1)(_.max(_))
         val stepWidth = steps.map(_.show.length).stdlib.foldLeft(1)(_.max(_)) + 2
 
-        Out.println:
+        emit:
           val headings: Text = steps.map { (step: Long) => step.show.pad(stepWidth, Rtl) }.join
           if terse then e"  ${t"N".pad(labelWidth)}$headings"
           else e"  ${Fg(Palette.subdued)}(${t"N".pad(labelWidth)}$headings)"
@@ -315,14 +325,14 @@ object Render:
             if terse then spark.label.pad(labelWidth).teletype
             else e"${Fg(Palette.accented)}(${spark.label.pad(labelWidth)})"
 
-          Out.println(e"  $label$cells$summary")
+          emit(e"  $label$cells$summary")
 
-        Out.println(e"")
+        emit(e"")
 
       case Block.Histogram(title, total, frames) =>
         title.let: ref =>
-          if terse then Out.println(t"${ref.id}  ${ref.name}")
-          else Out.println(e"$Bold(${Fg(Palette.foreground)}(${ref.name}))")
+          if terse then emit(e"${ref.id}  ${ref.name}")
+          else emit(e"$Bold(${Fg(Palette.foreground)}(${ref.name}))")
 
         val maxSamples: Long = frames.map(_.samples).stdlib.foldLeft(0L)(_.max(_))
 
@@ -335,12 +345,12 @@ object Render:
           val bar = Figures.bar(frame.samples, maxSamples)
 
           if terse
-          then Out.println(t"  ${name(frame).pad(nameWidth, Rtl)} ${percent.pad(6, Rtl)}% $bar")
+          then emit(e"  ${name(frame).pad(nameWidth, Rtl)} ${percent.pad(6, Rtl)}% $bar")
           else
             val share = e"${Fg(Palette.foreground)}(${percent.pad(6, Rtl)}%)"
-            Out.println(e"  ${name(frame).pad(nameWidth, Rtl)} $share ${Fg(Palette.accented)}($bar)")
+            emit(e"  ${name(frame).pad(nameWidth, Rtl)} $share ${Fg(Palette.accented)}($bar)")
 
-        Out.println(e"")
+        emit(e"")
 
   // ---------------------------------------------------------------- failures
 
