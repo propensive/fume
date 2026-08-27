@@ -136,7 +136,9 @@ final class Model:
         prefixes(n + 1)
 
     prefixes(1)
-    entry(ref, kind).unit
+    // `update`, not `entry`: an `AnchorRecorded` (emitted at declaration, ahead of the
+    // schedule) may have created the entry already, kindless; the schedule fills it in.
+    update(ref, kind) { entry => entry }
 
   private def detail(ref: TestEvent.Ref, event: TestEvent): Unit =
     val (_, existing) = details0(ref.id).or((ref, Nil))

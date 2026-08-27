@@ -224,7 +224,15 @@ final class Live(model: Model, initialWidth: Int, winched: juca.AtomicBoolean, i
   private def renderedLines(): List[Teletype] =
     val buffer = scala.collection.mutable.ArrayBuffer[Teletype]()
 
-    tabulation().grid(width).render.each(buffer.append(_))
+    // The progress table earns its place only when the run contains unit tests: their
+    // marks, counts and timings live there. A measurement-only run would show an empty
+    // shell of names the group tables already carry, so it is skipped.
+    val checks: Boolean =
+      model.state().lines.exists:
+        case Model.Line.EntryLine(entry) => entry.kind.or(t"check") == t"check"
+        case _                           => false
+
+    if checks then tabulation().grid(width).render.each(buffer.append(_))
 
     val document = Documenting.document(model.state())
 
