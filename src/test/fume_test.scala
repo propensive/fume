@@ -88,7 +88,7 @@ object Tests extends Suite(m"Fume tests"):
         ( ji.File(services, "probably.Suite").nn.toPath,
           "# source: one.scala\nexample.Tests\n\n# source: two.scala\nother.Tests\n".getBytes("UTF-8") )
 
-      Suites.discover(LocalClasspath(List(hellenism.Classpath.Entry.Directory(root.getAbsolutePath.nn.tt))*))
+      Suites.discover(LocalClasspath(List(Classpath.Entry.Directory(root.getAbsolutePath.nn.tt))*))
     . assert(_ == List(t"example.Tests", t"other.Tests"))
 
     test(m"glob classpath entries expand, sorted, one segment at a time"):

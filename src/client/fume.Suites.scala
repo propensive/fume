@@ -89,13 +89,13 @@ object Suites:
   // `prependShellScript`), which a strict zip parse rejects but a `URLClassLoader` tolerates —
   // and a directory entry works identically. Comment lines (the beneficence plugin writes
   // `# source: …`) and blanks are skipped.
-  private def services(entry: hellenism.Classpath.Entry): List[Text] =
+  private def services(entry: Classpath.Entry): List[Text] =
     // The resource bytes are read through the underlying JDK classloader rather than
     // hellenism's `Classloader#apply`: the latter's `logs`-sugared signature leaves a fresh
     // root capability on its `Data` result, which capture checking cannot admit into the
     // enclosing `safely` block (a hellenism/CC interop wart worth fixing upstream).
     val content: Optional[Text] = entry match
-      case entry: (hellenism.Classpath.Entry.Directory | hellenism.Classpath.Entry.Jar) =>
+      case entry: (Classpath.Entry.Directory | Classpath.Entry.Jar) =>
         safely(LocalClasspath(List(entry)*).classloader().java).let: loader =>
           Optional(loader.getResourceAsStream(index.s)).let: stream =>
             String(stream.readAllBytes(), "UTF-8").tt
