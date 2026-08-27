@@ -123,22 +123,20 @@ final class Model:
 
     entries0 = entries0.define(ref.id, lambda(entry1))
 
-  // Seeds one line of the run's SCHEDULE, from a listing pre-pass: the test's id, kind and
-  // full path are known before anything runs, so its table rows can render blank and fill
-  // in as the events arrive.
-  def schedule(id: Text, kind: Text, path: List[Text]): Unit = mutex:
+  // Seeds one line of the run's SCHEDULE from a `TestScheduled` event (a listing pre-pass):
+  // the test's real ref and kind are known before anything runs, so its table rows can
+  // render blank and fill in as the results arrive. Ancestor suites materialize from the
+  // ref's path prefixes, merged by path with their `SuiteStarted` refs later.
+  private def scheduled(ref: TestEvent.Ref, kind: Text): Unit =
     def prefixes(n: Int): Unit =
-      if n < path.stdlib.length then
-        val prefix: List[Text] = (path.stdlib.take(n)).to(List)
+      if n < ref.path.stdlib.length then
+        val prefix: List[Text] = (ref.path.stdlib.take(n)).to(List)
 
         suiteLine(TestEvent.Ref(t"", prefix.stdlib.last, Unset, prefix, t"", 0))
         prefixes(n + 1)
 
     prefixes(1)
-
-    val kind2: Text = if kind == t"test" then t"check" else kind
-    val ref = TestEvent.Ref(id, path.stdlib.last, Unset, path, t"", 0)
-    entry(ref, kind2).unit
+    entry(ref, kind).unit
 
   private def detail(ref: TestEvent.Ref, event: TestEvent): Unit =
     val (_, existing) = details0(ref.id).or((ref, Nil))
@@ -146,6 +144,9 @@ final class Model:
 
   def handle(event: TestEvent): Unit = mutex:
     event match
+      case TestEvent.TestScheduled(ref, kind) =>
+        scheduled(ref, kind)
+
       case TestEvent.SuiteStarted(ref, _) =>
         suiteLine(ref)
         active0 = ref :: active0

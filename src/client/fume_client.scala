@@ -516,9 +516,13 @@ private def runSuite
       if terse || !tty then Unset
       else input.let { input => Live(model, width, winched, input) }
 
-    // With a live board coming, a listing pre-pass seeds the schedule: every admitted test
-    // appears in its table immediately, blank, and fills in as its result arrives.
-    if live.present then Suites.schedule(classpath, suite, args, model)
+    // With a live board coming, a listing pre-pass seeds the schedule: the suite runs with
+    // `--list` on the EVENT protocol, emitting one `TestScheduled` per admitted test — with
+    // its real ref, so paths group correctly whatever characters the names contain — and
+    // every scheduled test appears in its table immediately, blank, filling in as its
+    // result arrives.
+    if live.present then
+      safely(EventStream.stream(classpath, suite, t"--list" :: args)(model.handle(_))).unit
 
     // The one-second trigger: if the suite is still producing when this fires, the board
     // starts painting; `activate` is a no-op once `finish` has run.
