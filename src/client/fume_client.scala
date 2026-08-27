@@ -249,7 +249,7 @@ def runClient(): Unit =
 
                       val (exit, suiteTotals) =
                         runSuite(classpath, head, args, fork, width, terse, tty,
-                            () => aborted.get, winched)
+                            aborted, winched)
                       val passed = exit == Exit.Ok
 
                       if suiteTotals.absent then
@@ -489,7 +489,7 @@ private def runSuite
      width: Int,
      terse: Boolean,
      tty: Boolean,
-     abort: () => Boolean,
+     aborted: java.util.concurrent.atomic.AtomicBoolean,
      winched: java.util.concurrent.atomic.AtomicBoolean )
    (using Stdio, WorkingDirectory, Monitor, Environment)
 :   (Exit, Optional[Doc.Totals]) =
@@ -506,7 +506,15 @@ private def runSuite
     // The live board is worthless where nobody watches: terse mode (CI, Claude Code) folds
     // events quietly, and a piped invocation (the launcher reports whether the client is on
     // a terminal) renders once at the end instead.
-    val live: Optional[Live] = if terse || !tty then Unset else Live(model, width, winched)
+    //
+    // On a terminal, the launcher holds the client tty in RAW mode: Ctrl+C arrives as the
+    // byte 0x03 on stdin, never as a signal, so an input pump owns stdin for the run —
+    // dispatching keypresses to the abort flag and size-probe replies to the board.
+    val input: Optional[Live.Input] = if tty then Live.Input(aborted) else Unset
+
+    val live: Optional[Live] =
+      if terse || !tty then Unset
+      else input.let { input => Live(model, width, winched, input) }
 
     // With a live board coming, a listing pre-pass seeds the schedule: every admitted test
     // appears in its table immediately, blank, and fills in as its result arrives.
@@ -528,16 +536,29 @@ private def runSuite
 
       loop()
 
+    // The stdin pump: every byte the client's terminal sends is dispatched — Ctrl+C to the
+    // abort flag, CSI replies to the size probe.
+    val pump = async:
+      def loop(): Unit =
+        input.let: input =>
+          val stdio = summon[Stdio]
+          if stdio.in.available() > 0 then input.offer(stdio.in.read()) else snooze(30L)
+
+        if input.present then loop()
+
+      loop()
+
     val outcome =
       EventStream.stream(classpath, suite, args)
         ( { event =>
               model.handle(event)
               live.let(_.tick()) },
-          abort )
+          () => aborted.get )
 
     live.let(_.finish())
     timer.cancel()
     pulse.cancel()
+    pump.cancel()
 
     outcome match
       case EventStream.Outcome.Completed(exit) if exit == EventStream.abortExit =>

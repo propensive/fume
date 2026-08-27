@@ -66,7 +66,32 @@ object Live:
     @scala.caps.unsafe.untrackedCaptures
     var rows: Int = initialRows
 
-final class Live(model: Model, initialWidth: Int, winched: juca.AtomicBoolean)
+  // The single owner of the client's stdin. The launcher holds the terminal in RAW mode,
+  // so a user's Ctrl+C never becomes a SIGNAL — it arrives as the byte 0x03 (ETX) on this
+  // very stream, interleaved with the CSI cursor-position replies the size probe requests.
+  // A pump task feeds every byte through `offer`: ETX (and Ctrl+D) set the abort flag;
+  // a complete `\e[<rows>;<cols>R` reply parks in `reply` for `probeSize` to collect.
+  final class Input(aborted: juca.AtomicBoolean):
+    val reply: juca.AtomicReference[String | Null] = juca.AtomicReference(null)
+
+    @scala.caps.unsafe.untrackedCaptures
+    private var pending: String = ""
+    @scala.caps.unsafe.untrackedCaptures
+    private var collecting: Boolean = false
+
+    def offer(byte: Int): Unit =
+      if byte == 3 || byte == 4 then aborted.set(true)
+      else if byte == 27 then
+        collecting = true
+        pending = ""
+      else if collecting then
+        if byte == 'R'.toInt then
+          reply.set(pending)
+          collecting = false
+        else if pending.length > 15 then collecting = false
+        else pending = pending + byte.toChar
+
+final class Live(model: Model, initialWidth: Int, winched: juca.AtomicBoolean, input: Live.Input)
    (using stdio: Stdio):
 
   private val geometry: Live.Geometry = Live.Geometry(initialWidth, 24)
@@ -94,36 +119,30 @@ final class Live(model: Model, initialWidth: Int, winched: juca.AtomicBoolean)
   def columns: Int = geometry.columns
 
   // Asks the terminal its size directly: save the cursor, jump to the far corner, request
-  // the cursor position (whose reply is thus the terminal's dimensions), restore. The
-  // launcher holds the client's terminal in raw mode, so the reply arrives unbuffered on
-  // the invocation's stdin. A terminal that never replies (or a pipe) leaves the previous
-  // values standing after a short deadline.
+  // the cursor position (whose reply is thus the terminal's dimensions), restore. The reply
+  // arrives on stdin, whose single owner is the `Input` pump; the probe collects it from
+  // there. A terminal that never replies (or a pipe) leaves the previous values standing
+  // after a short deadline.
   private def probeSize(): Unit =
+    input.reply.set(null)
     stdio.print(Text("\u001b7\u001b[4095C\u001b[4095B\u001b[6n\u001b8"))
     stdio.out.flush()
 
-    val builder = StringBuilder()
+    def deadline(remaining: Int): String | Null =
+      val collected = input.reply.get()
 
-    def deadline(remaining: Int): Unit =
-      if remaining > 0 then
-        if stdio.in.available() > 0 then
-          val byte = stdio.in.read()
-          if byte == 'R'.toInt then ()
-          else
-            if byte > 0 then builder.append(byte.toChar)
-            deadline(remaining)
-        else
-          jl.Thread.sleep(10L)
-          deadline(remaining - 1)
+      if collected != null || remaining <= 0 then collected else
+        jl.Thread.sleep(10L)
+        deadline(remaining - 1)
 
-    deadline(50)
+    val reply: String | Null = deadline(50)
 
-    // The reply is `\e[<rows>;<cols>R`; anything else leaves the size unchanged.
-    val reply: String = builder.toString
-    val bracket: Int = reply.lastIndexOf('[')
+    // The reply body is `<rows>;<cols>` (the pump strips the framing); anything else
+    // leaves the size unchanged.
+    if reply != null then
+      val body: String = if reply.startsWith("[") then reply.substring(1).nn else reply
 
-    if bracket >= 0 then
-      Text(reply.substring(bracket + 1).nn).cut(t";") match
+      Text(body).cut(t";") match
         case rows :: cols :: Nil =>
           safely(rows.as[Int]).let { value => geometry.rows = value.max(4) }
           safely(cols.as[Int]).let { value => geometry.columns = value.max(20) }
