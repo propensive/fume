@@ -385,13 +385,11 @@ object Documenting:
           Datum.Ratio(side(value)/side(anchorValue))
 
   private def benchBlocks(entries: List[Entry]): List[Block] =
-    // A benchmark with no results yet renders as a single pending line, not an empty table
-    // (or a blank row crowding a live one): it expands the moment its first result arrives.
-    val pending: List[Entry] = entries.filter(_.benches.nil)
-    val started: List[Entry] = entries.filter(!_.benches.nil)
-
-    val plain: List[Entry] = started.filter(_.benches.all(_.coordinates.nil))
-    val axial: List[Entry] = started.filter(_.benches.exists(!_.coordinates.nil))
+    // Once its group has started, a benchmark without results yet occupies its named row
+    // with BLANK cells, filling in when the data arrives. (An entry that turns out to be
+    // axial leaves the plain table for its own titled table with its first record.)
+    val plain: List[Entry] = entries.filter(_.benches.all(_.coordinates.nil))
+    val axial: List[Entry] = entries.filter(_.benches.exists(!_.coordinates.nil))
 
     val sized: Boolean =
       entries.exists(_.benches.exists { bench =>
@@ -401,12 +399,12 @@ object Documenting:
       // DECLARATION order, not throughput order: a live board pre-lists the scheduled rows
       // and fills each in place as its result arrives, so rows must not move.
       val rows: List[List[Datum]] =
-        plain.bind[List[List[Datum]], List[Datum], List[List[Datum]]]: entry =>
+        plain.map: entry =>
           val lead: List[Datum] =
             List(Datum.Hash(entry.ref.id), Datum.Title(entry.ref.name, 0))
 
-          entry.benches.prim.lay(Nil): bench =>
-            List(lead + benchMetricCells(bench, sized))
+          entry.benches.prim.lay(lead + blankCells(if sized then 7 else 5)): bench =>
+            lead + benchMetricCells(bench, sized)
 
       if rows.nil then Nil else
         List(Block.Table
@@ -414,12 +412,7 @@ object Documenting:
             List(Column(t"Hash"), Column(t"Test", stretch = true)) + benchMetricColumns(sized),
             rows ))
 
-    val pendingBlock: List[Block] =
-      if pending.nil then Nil else List(Block.Pending(pending.map(_.ref)))
-
-    table
-      + axial.bind[List[Block], Block, List[Block]] { entry => axialBench(entry, sized) }
-      + pendingBlock
+    table + axial.bind[List[Block], Block, List[Block]] { entry => axialBench(entry, sized) }
 
   // An entry with one axis renders as a table of its runs; with two, as a crosstab of
   // headline data; with more, as a flat listing of coordinates and headlines.
@@ -510,9 +503,6 @@ object Documenting:
     val pending: List[Entry] = entries0.filter(_.strains.nil)
     val entries: List[Entry] = entries0.filter(!_.strains.nil)
 
-    val pendingBlock: List[Block] =
-      if pending.nil then Nil else List(Block.Pending(pending.map(_.ref)))
-
     // Each stress entry's strains form its scaling curve: concurrency against the strain
     // measured there; a repeated concurrency keeps its first measurement.
     val curves: List[(Entry, List[TestEvent.StrainRecorded])] =
@@ -589,7 +579,7 @@ object Documenting:
     val ranked: Boolean = peaks.stdlib.length > 1 && bestRate > 0L
 
     val summary: List[Block] =
-      if peaks.nil then Nil else
+      if peaks.nil && pending.nil then Nil else
         val columns: List[Column] =
           List
             ( Column(t"Hash"),
@@ -628,9 +618,18 @@ object Documenting:
 
             lead + ratio + alloc + latency + sloCell
 
-        List(Block.Table(Unset, columns, rows))
+        // Scheduled stress tests that have not begun occupy their named rows, blank.
+        val blanks: List[List[Datum]] =
+          pending.map: entry =>
+            val cells =
+              2 + (if ranked then 1 else 0) + 1 + (if latencies then 1 else 0)
+                + (if slo then 1 else 0)
 
-    sparkline + summary + pendingBlock
+            List(Datum.Hash(entry.ref.id), Datum.Title(entry.ref.name, 0)) + blankCells(cells)
+
+        List(Block.Table(Unset, columns, rows + blanks))
+
+    sparkline + summary
 
   // ---------------------------------------------------------------- profiles
 
