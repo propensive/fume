@@ -499,7 +499,14 @@ private def runSuite
       case EventStream.Outcome.Completed(exit) =>
         val document = Documenting.document(model.state())
         Render.suite(document, width, terse)
-        (if exit == 0 then Exit.Ok else Exit.Fail(exit), document.totals)
+
+        // A suite reports failure (exit 1) when NOTHING was admitted: right when it is
+        // invoked alone, wrong when fume fans a kind filter (`--bench`) across every suite
+        // on the classpath — a suite with no benchmarks is not a failing suite.
+        val emptySelection: Boolean =
+          exit == 1 && document.totals.total == 0 && document.fatal.absent
+
+        (if exit == 0 || emptySelection then Exit.Ok else Exit.Fail(exit), document.totals)
 
       case EventStream.Outcome.Incompatible =>
         Out.println(t"fume: $suite was built against an incompatible Soundness; falling back")
