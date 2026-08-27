@@ -209,6 +209,19 @@ def runClient(): Unit =
 
                 val width: Int = safely(Environment.columns.as[Int]).or(120)
                 val terse: Boolean = fume.GithubActions.terse
+                val tty: Boolean = summon[DaemonService[?]].cliInput == ethereal.Stdin.Terminal
+
+                // Ctrl+C at the client arrives here as a trapped SIGINT: the current suite's
+                // event consumption stops, its partial report renders, and no further suite
+                // starts. (The suite's threads — and any measurement JVMs a staged benchmark
+                // has spawned — are cancelled, not awaited.)
+                val aborted: java.util.concurrent.atomic.AtomicBoolean =
+                  java.util.concurrent.atomic.AtomicBoolean(false)
+
+                trap:
+                  case Interrupt.Int =>
+                    aborted.set(true)
+                    SignalResponse.Accept
 
                 // Each suite renders its own report as its event stream ends; the verdict
                 // comes from its exit status, and the totals — when the suite ran by the
@@ -221,9 +234,15 @@ def runClient(): Unit =
                 :   (Int, Int, Optional[Doc.Totals]) =
 
                   remaining match
+                    case _ if aborted.get =>
+                      (failures, ran, totals)
+
                     case head :: tail =>
                       Out.println(t"fume: running $head")
-                      val (exit, suiteTotals) = runSuite(classpath, head, args, fork, width, terse)
+
+                      val (exit, suiteTotals) =
+                        runSuite(classpath, head, args, fork, width, terse, tty,
+                            () => aborted.get)
                       val passed = exit == Exit.Ok
 
                       if suiteTotals.absent then
@@ -461,7 +480,9 @@ private def runSuite
      args: List[Text],
      fork: Boolean,
      width: Int,
-     terse: Boolean )
+     terse: Boolean,
+     tty: Boolean,
+     abort: () => Boolean )
    (using Stdio, WorkingDirectory, Monitor, Environment)
 :   (Exit, Optional[Doc.Totals]) =
 
@@ -475,11 +496,9 @@ private def runSuite
     val model = Model()
 
     // The live board is worthless where nobody watches: terse mode (CI, Claude Code) folds
-    // events quietly, and without the terminal's real geometry (no COLUMNS in the client's
-    // environment) live painting would be guesswork; both render once at the end instead.
-    val knownColumns: Boolean = safely(Environment.columns.as[Int]).present
-
-    val live: Optional[Live] = if terse || !knownColumns then Unset else Live(model, width)
+    // events quietly, and a piped invocation (the launcher reports whether the client is on
+    // a terminal) renders once at the end instead.
+    val live: Optional[Live] = if terse || !tty then Unset else Live(model, width)
 
     // The one-second trigger: if the suite is still producing when this fires, the board
     // starts painting; `activate` is a no-op once `finish` has run.
@@ -488,14 +507,22 @@ private def runSuite
       live.let(_.activate())
 
     val outcome =
-      EventStream.stream(classpath, suite, args): event =>
-        model.handle(event)
-        live.let(_.tick())
+      EventStream.stream(classpath, suite, args)
+        ( { event =>
+              model.handle(event)
+              live.let(_.tick()) },
+          abort )
 
     live.let(_.finish())
     timer.cancel()
 
     outcome match
+      case EventStream.Outcome.Completed(exit) if exit == EventStream.abortExit =>
+        Out.println(t"fume: aborted; the partial report follows")
+        val document = Documenting.document(model.state())
+        Render.suite(document, width, terse)
+        (Exit.Fail(exit), document.totals)
+
       case EventStream.Outcome.Completed(exit) =>
         val document = Documenting.document(model.state())
         Render.suite(document, width, terse)

@@ -254,7 +254,7 @@ object Render:
     case t"profile" => t"Profile"
     case _          => t"Tests"
 
-  private def renderGroup(group: Group, width: Int, terse: Boolean)(using Stdio): Unit =
+  private[fume] def renderGroup(group: Doc.Group, width: Int, terse: Boolean)(using Stdio): Unit =
     if terse then
       Out.println(t"")
       val suiteName = group.suite.let(_.name).or(t"")

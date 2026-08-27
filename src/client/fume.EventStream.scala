@@ -84,10 +84,15 @@ object EventStream:
   // `probably.Streamer` on its classpath); `Incompatible` when the schema fingerprints
   // disagree. The `System.out`/`err` swap covers the whole run, exactly as the legacy path:
   // the suite's own prints reach the invocation's stdio, while events travel the chunk chain.
+  // The exit status reported for an aborted run, conventionally 128 + SIGINT.
+  val abortExit: Int = 130
+
   def stream(classpath: LocalClasspath, suite: Text, args: List[Text])
-     (handle: probably.TestEvent => Unit)
+     (handle: probably.TestEvent => Unit, abort: () => Boolean = () => false)
      (using stdio: Stdio, monitor: Monitor)
   :   Optional[Outcome] =
+
+    import abstractables.durationAbstractable
 
     import scala.reflect.Selectable.reflectiveSelectable
 
@@ -125,8 +130,24 @@ object EventStream:
           if allFrames.isEmpty then Outcome.Completed(exit())
           else if !matches(allFrames.head, probably.Streamer.fingerprint) then Outcome.Incompatible
           else
-            allFrames.tail.foreach { (frame: Data) => handle(probably.Streamer.read(frame)) }
-            Outcome.Completed(exit())
+            // Frames are consumed on their own task, so the invocation thread stays free to
+            // notice an abort (a trapped Ctrl+C) even while the chain is blocked mid-benchmark
+            // waiting for the next event. Cancelling the tasks interrupts the blocked take.
+            val consumer = async:
+              allFrames.tail.foreach { (frame: Data) => handle(probably.Streamer.read(frame)) }
+
+            def drained(): Boolean =
+              scala.caps.unsafe.unsafeAssumeSeparate(safely(consumer.await(100L)).present)
+
+            def spin(): Outcome =
+              if drained() then Outcome.Completed(exit())
+              else if abort() then
+                consumer.cancel()
+                task.cancel()
+                Outcome.Completed(abortExit)
+              else spin()
+
+            spin()
 
         finally
           stdio.out.flush()
