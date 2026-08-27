@@ -265,7 +265,14 @@ object Render:
      (emit: Teletype => Unit)
   :   Unit =
 
-    if terse then
+    if group.pending then
+      val suiteName = group.suite.let(_.name).or(t"")
+
+      if terse then emit(e"${kindTitle(group.kind)}: $suiteName  (pending)")
+      else
+        val dot = e"${Fg(Palette.subdued)}(·)"
+        emit(e"$dot ${Fg(Palette.subdued)}(${kindTitle(group.kind)}:) $suiteName")
+    else if terse then
       emit(e"")
       val suiteName = group.suite.let(_.name).or(t"")
       emit(e"${kindTitle(group.kind)}: $suiteName")

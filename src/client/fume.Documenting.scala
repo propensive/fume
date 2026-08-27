@@ -174,13 +174,22 @@ object Documenting:
         val members: List[Entry] = relevant.filter { entry => parent(entry.ref.path) == path }
         val suite: Optional[TestEvent.Ref] = suiteRefs.seek(_.path == path)
 
-        val blocks: List[Block] = kind match
-          case t"check"  => members.map(axialCheck(_))
-          case t"bench"  => benchBlocks(members)
-          case t"stress" => stressBlocks(members)
-          case _         => members.map(histogram(_))
+        // A group where nothing has recorded and nothing is running collapses to one line:
+        // its members stay elided until the group starts evaluating.
+        val started: Boolean =
+          members.exists: entry =>
+            !entry.completions.nil || !entry.benches.nil || !entry.strains.nil
+              || entry.hotspots.present || state.active.exists(_.id == entry.ref.id)
 
-        if blocks.nil then Nil else List(Group(suite, kind, blocks))
+        if !started then List(Group(suite, kind, Nil, pending = true))
+        else
+          val blocks: List[Block] = kind match
+            case t"check"  => members.map(axialCheck(_))
+            case t"bench"  => benchBlocks(members)
+            case t"stress" => stressBlocks(members)
+            case _         => members.map(histogram(_))
+
+          if blocks.nil then Nil else List(Group(suite, kind, blocks))
 
   // ---------------------------------------------------------------- unit-test grids
 

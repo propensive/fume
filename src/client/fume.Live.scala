@@ -243,44 +243,27 @@ final class Live(model: Model, initialWidth: Int, winched: juca.AtomicBoolean)
   // The board takes over the WHOLE terminal via the alternate screen buffer — the primary
   // buffer (and its scrollback) is untouched, and the final report prints there after
   // `finish` switches back.
-  def activate()(using Monitor): Unit =
-    mutex:
-      if !done0 && root0.absent then
-        probeSize()
-        stdio.print(Text("\u001b[?1049h\u001b[?25l"))
-        stdio.out.flush()
-        val geometry0: Live.Geometry = geometry
-        root0 = new ScreenRoot(() => geometry0.columns, () => geometry0.rows)
-        used0 = true
-        repaint()
+  def activate(): Unit = mutex:
+    if !done0 && root0.absent then
+      probeSize()
+      stdio.print(Text("\u001b[?1049h\u001b[?25l"))
+      stdio.out.flush()
+      val geometry0: Live.Geometry = geometry
+      root0 = new ScreenRoot(() => geometry0.columns, () => geometry0.rows)
+      used0 = true
+      repaint()
 
-    heartbeat()
-
-  // A background pulse while the board is active: a forwarded SIGWINCH sets `winched`, and
-  // the next beat re-probes the terminal's size and repaints — the tables re-tabulate at
-  // the new width, and the `ScreenRoot` reframes and fully redraws.
-  private def heartbeat()(using Monitor): Unit =
-    import abstractables.durationAbstractable
-    import probates.cancelProbate
-
-    // Single-owner: the heartbeat reads and writes board state only under the same mutex
-    // as every other entry point, which the separation checker cannot see through `async`.
-    scala.caps.unsafe.unsafeAssumeSeparate:
-      async:
-        def loop(): Unit =
-          if !mutex(done0) then
-            snooze(200L)
-
-            if winched.getAndSet(false) then mutex:
-              if root0.present then
-                probeSize()
-                root0.let(_.invalidate())
-                repaint()
-
-            loop()
-
-        loop()
-    . unit
+  // Called by the run's own pulse task, every ~200ms while the suite runs: a forwarded
+  // SIGWINCH set `winched`, and this beat re-probes the terminal's size and repaints —
+  // every table re-tabulates at the new width, and the `ScreenRoot` reframes and fully
+  // redraws. (The pulse must be owned by the INVOCATION, not spawned from the activation
+  // timer: parasite's structured concurrency ends a task's children with the task, and the
+  // timer finishes moments after it fires.)
+  def pulse(): Unit = mutex:
+    if root0.present && winched.getAndSet(false) then
+      probeSize()
+      root0.let(_.invalidate())
+      repaint()
 
   // Called on every event: repaints (diffed, throttled) if the board is active.
   def tick(): Unit = mutex:

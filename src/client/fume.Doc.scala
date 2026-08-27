@@ -146,8 +146,13 @@ object Doc:
     case Pending(refs: List[TestEvent.Ref])
 
   // A group of measurement blocks belonging to one suite, of one kind (`bench`, `stress`,
-  // `profile` or axial `check` grids), rendered with a ribbon header.
-  case class Group(suite: Optional[TestEvent.Ref], kind: Text, blocks: List[Block])
+  // `profile` or axial `check` grids), rendered with a ribbon header — or, while NOTHING in
+  // the group has begun evaluating, collapsed to a single pending line, its members elided.
+  case class Group
+    ( suite:   Optional[TestEvent.Ref],
+      kind:    Text,
+      blocks:  List[Block],
+      pending: Boolean = false )
 
   // One row of the global results table, aggregating a test's runs across all its cells.
   case class SummaryRow(status: Status, ref: TestEvent.Ref, count: Int, min: Long, max: Long, avg: Long)

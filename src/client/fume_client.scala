@@ -518,6 +518,16 @@ private def runSuite
       snooze(1000L)
       live.let(_.activate())
 
+    // The resize pulse, owned by the invocation so it outlives the timer: each beat lets
+    // the board react to a forwarded SIGWINCH.
+    val pulse = async:
+      def loop(): Unit =
+        snooze(200L)
+        live.let(_.pulse())
+        loop()
+
+      loop()
+
     val outcome =
       EventStream.stream(classpath, suite, args)
         ( { event =>
@@ -527,6 +537,7 @@ private def runSuite
 
     live.let(_.finish())
     timer.cancel()
+    pulse.cancel()
 
     outcome match
       case EventStream.Outcome.Completed(exit) if exit == EventStream.abortExit =>
