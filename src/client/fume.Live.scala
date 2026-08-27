@@ -150,7 +150,13 @@ final class Live(model: Model, initialWidth: Int, winched: juca.AtomicBoolean, i
         case _ =>
           ()
 
-  private case class Row(mark: Teletype, hash: Text, title: Teletype, count: Text, time: Teletype)
+  private case class Row
+    ( mark:    Teletype,
+      hash:    Text,
+      title:   Teletype,
+      count:   Text,
+      time:    Teletype,
+      started: Boolean )
 
   private def rows(): List[Row] =
     val state = model.state()
@@ -159,7 +165,9 @@ final class Live(model: Model, initialWidth: Int, winched: juca.AtomicBoolean, i
     state.lines.map:
       case Model.Line.SuiteLine(ref) =>
         val depth = Documenting.depth(ref)
-        Row(e"   ", ref.id, e"${t"  "*depth}${Fg(Palette.foreground)}($Bold(${ref.name}))", t"", e"")
+
+        Row(e"   ", ref.id, e"${t"  "*depth}${Fg(Palette.foreground)}($Bold(${ref.name}))", t"", e"",
+            started = false)
 
       case Model.Line.EntryLine(entry) =>
         val depth = Documenting.depth(entry.ref)
@@ -181,7 +189,8 @@ final class Live(model: Model, initialWidth: Int, winched: juca.AtomicBoolean, i
           entry.benches.prim.lay(averageTime(entry)): bench =>
             timeOf(bench.mean.toLong)
 
-        Row(mark, entry.ref.id, e"${t"  "*depth}${entry.ref.name}", count, time)
+        Row(mark, entry.ref.id, e"${t"  "*depth}${entry.ref.name}", count, time,
+            started = running || !idle)
 
   private def averageTime(entry: Model.Entry): Teletype =
     val durations: List[Long] = entry.completions.map { completion => completion(1).duration }
@@ -200,7 +209,7 @@ final class Live(model: Model, initialWidth: Int, winched: juca.AtomicBoolean, i
       val unit = Figures.timeUnits.stdlib(figure.unit)
       e"${Fg(Palette.foreground)}(${figure.whole}.${figure.fraction}) ${Fg(color)}($unit)"
 
-  private def tabulation(): Tabulation[Teletype] =
+  private def tabulation(visible: List[Row]): Tabulation[Teletype] =
     val defs: List[escritoire.Column[Row, Teletype]] =
       List
         ( escritoire.Column[Row, Teletype, Teletype](e"")(_.mark),
@@ -218,7 +227,7 @@ final class Live(model: Model, initialWidth: Int, winched: juca.AtomicBoolean, i
           escritoire.Column[Row, Teletype, Teletype]
              (e"$Bold(Time)", TextAlignment.Right, sizing = Render.Rigid)(_.time) )
 
-    Scaffold[Row](defs*).tabulate(rows())
+    Scaffold[Row](defs*).tabulate(visible)
 
   // The current report, exactly the lines `Render` would print, as structured `Teletype`.
   private def renderedLines(): List[Teletype] =
@@ -232,7 +241,24 @@ final class Live(model: Model, initialWidth: Int, winched: juca.AtomicBoolean, i
         case Model.Line.EntryLine(entry) => entry.kind.or(t"check") == t"check"
         case _                           => false
 
-    if checks then tabulation().grid(width).render.each(buffer.append(_))
+    if checks then
+      // The progress table is elided from the BOTTOM: the visible region should end at the
+      // running test, not at the far tail of the schedule (all pending dots). Rows beyond a
+      // short look-ahead past the last started row are dropped, with a count.
+      val all: List[Row] = rows()
+
+      val lastStarted: Int =
+        all.stdlib.zipWithIndex.foldLeft(-1): (last, pair) =>
+          if pair(0).started then pair(1) else last
+
+      val keep: Int = (lastStarted + 4).max(8)
+      val visible: List[Row] = (all.stdlib.take(keep)).to(List)
+      val elided: Int = all.stdlib.length - visible.stdlib.length
+
+      tabulation(visible).grid(width).render.each(buffer.append(_))
+
+      if elided > 0 then
+        buffer.append(e"  ${Fg(Palette.subdued)}(… $elided more scheduled)")
 
     val document = Documenting.document(model.state())
 
