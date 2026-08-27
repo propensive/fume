@@ -410,18 +410,54 @@ private def forkSuite(classpath: LocalClasspath, suite: Text, args: List[Text])
       Out.println(t"fume: could not invoke $suite")
       Exit.Fail(2)
 
-// Runs one suite: in-process by default — `Suites.invoke` loads it in an isolating classloader
-// and calls the non-exiting `Suite#invoke` — or in a separate JVM with `--fork`. A suite built
-// against a Probably too old to have `Suite#invoke` falls back to a forked JVM automatically.
+// A minimal event renderer — the seed of fume's reporting, to be replaced by the full port
+// (model fold, Doc IR, tables). One line per completed test, plus terminal notices.
+private def renderEvent(event: probably.TestEvent)(using Stdio): Unit = event match
+  case probably.TestEvent.TestCompleted(ref, _, _, outcome, _, _) =>
+    val mark = outcome.outcome match
+      case t"pass" | t"aspire-pass" => t"✓"
+      case _                        => t"✗"
+
+    Out.println(t"  $mark ${ref.name}")
+
+  case probably.TestEvent.RunTerminated(error, _, _) =>
+    val name = error.components.prim.let(_.className).or(t"unknown")
+    Out.println(t"  suite terminated: $name")
+
+  case probably.TestEvent.NothingMatched(_) =>
+    Out.println(t"  no tests matched the selection")
+
+  case _ =>
+    ()
+
+// Runs one suite: by the EVENT PROTOCOL by default — `EventStream.stream` runs it in the
+// isolating classloader and fume renders the typed events — or in a separate JVM with
+// `--fork`. A suite whose Probably predates the event stream falls back to the legacy
+// in-process run (it renders its own report), and one predating `Suite#invoke` falls back
+// further to a forked JVM; an INCOMPATIBLE event schema (a different Soundness) falls back
+// likewise, with a distinct notice.
 private def invokeSuite(classpath: LocalClasspath, suite: Text, args: List[Text], fork: Boolean)
-   (using Stdio, WorkingDirectory)
+   (using Stdio, WorkingDirectory, Monitor)
 :   Exit =
 
-  if fork then forkSuite(classpath, suite, args)
-  else
+  def legacy(): Exit =
     Suites.invoke(classpath, suite, args).or:
       Out.println(t"fume: $suite could not be run in-process; running it in a separate JVM")
       forkSuite(classpath, suite, args)
+
+  if fork then forkSuite(classpath, suite, args)
+  else
+    EventStream.stream(classpath, suite, args)(renderEvent(_)) match
+      case EventStream.Outcome.Completed(0)    => Exit.Ok
+      case EventStream.Outcome.Completed(exit) => Exit.Fail(exit)
+
+      case EventStream.Outcome.Incompatible =>
+        Out.println(t"fume: $suite was built against an incompatible Soundness; falling back")
+        legacy()
+
+      case _ =>
+        Out.println(t"fume: $suite predates event streaming; using the legacy run")
+        legacy()
 
 private def showVersion()(using Invocation): Exit =
   Out.println(t"fume $fumeVersion")
