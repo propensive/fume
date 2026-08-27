@@ -295,7 +295,12 @@ final class Live(model: Model, initialWidth: Int, winched: juca.AtomicBoolean, i
       stdio.print(Text("\u001b[?1049h\u001b[?25l"))
       stdio.out.flush()
       val geometry0: Live.Geometry = geometry
-      root0 = new ScreenRoot(() => geometry0.columns, () => geometry0.rows)
+      val root = new ScreenRoot(() => geometry0.columns, () => geometry0.rows)
+
+      // `flush` re-shows the hardware cursor after every frame unless told otherwise — the
+      // board has no caret, so it stays hidden for the whole run (`finish` restores it).
+      root.cursor(false)
+      root0 = root
       used0 = true
       repaint()
 

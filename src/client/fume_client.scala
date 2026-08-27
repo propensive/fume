@@ -159,6 +159,110 @@ def runClient(): Unit =
       Configurator.properties ++ Configurator.environment
       ++ Workspace.configurator(summon[Cli].workingDirectory.directory())
 
+    // The run command's whole body, shared by `fume run …` and the BARE `fume …` (running is
+    // the default when no subcommand is given).
+    def runSelection(rest: List[Argument]) =
+      val classpath: Optional[LocalClasspath] = classpathSetting()
+      val suite: Prospective[Text] = suiteFlag(classpath)
+      val kinds: List[Text] = selectedKinds
+      val failFast: Boolean = ui.FailFast().or(false)
+      val fork: Boolean = ui.Fork().present
+      val terms: List[Text] = selectionTerms(rest)
+
+      // Selection terms tab-complete to the REAL tests on the classpath: hash ids, monikers
+      // and `kind:` terms, discovered LAZILY — the update thunk runs only when the focused
+      // word is a term, so ordinary invocations never pay for the listing.
+      classpath.let: cp =>
+        selectionArguments(rest).each: argument =>
+          summon[Cli].suggest(argument, Suites.terms(cp, Unset), t"", t"")
+
+      execute:
+        classpath match
+          case classpath: LocalClasspath =>
+            val suites: List[Text] = selectSuites(classpath, suite())
+
+            if suites.nil then
+              Out.println(t"fume: no test suites were found on the classpath")
+              NoSuites
+            else
+              val kindTerms: List[Text] = kinds.map { (kind: Text) => t"kind:$kind" }
+              val args: List[Text] = kindTerms + terms
+
+              val width: Int = safely(Environment.columns.as[Int]).or(120)
+              val terse: Boolean = fume.GithubActions.terse
+              val tty: Boolean = summon[DaemonService[?]].cliInput == ethereal.Stdin.Terminal
+
+              // Ctrl+C at the client arrives here as a trapped SIGINT: the current suite's
+              // event consumption stops, its partial report renders, and no further suite
+              // starts. (The suite's threads — and any measurement JVMs a staged benchmark
+              // has spawned — are cancelled, not awaited.)
+              val aborted: java.util.concurrent.atomic.AtomicBoolean =
+                java.util.concurrent.atomic.AtomicBoolean(false)
+
+              val winched: java.util.concurrent.atomic.AtomicBoolean =
+                java.util.concurrent.atomic.AtomicBoolean(false)
+
+              trap:
+                case Interrupt.Int =>
+                  aborted.set(true)
+                  SignalResponse.Accept
+
+                case Interrupt.Winch =>
+                  winched.set(true)
+                  SignalResponse.Accept
+
+              // Each suite renders its own report as its event stream ends; the verdict
+              // comes from its exit status, and the totals — when the suite ran by the
+              // event protocol — accumulate towards the whole-run banner.
+              def recur
+                 ( remaining: List[Text],
+                   failures: Int,
+                   ran: Int,
+                   totals: Optional[Doc.Totals] )
+              :   (Int, Int, Optional[Doc.Totals]) =
+
+                remaining match
+                  case _ if aborted.get =>
+                    (failures, ran, totals)
+
+                  case head :: tail =>
+                    Out.println(t"fume: running $head")
+
+                    val (exit, suiteTotals) =
+                      runSuite(classpath, head, args, fork, width, terse, tty,
+                          aborted, winched)
+                    val passed = exit == Exit.Ok
+
+                    if suiteTotals.absent then
+                      Out.println:
+                        if passed then t"fume: $head: passed" else t"fume: $head: FAILED"
+
+                    val failures2 = if passed then failures else failures + 1
+
+                    val totals2: Optional[Doc.Totals] =
+                      suiteTotals.lay(totals): suiteTotals =>
+                        totals.lay(suiteTotals)(_ + suiteTotals)
+
+                    if !passed && failFast then (failures2, ran + 1, totals2)
+                    else recur(tail, failures2, ran + 1, totals2)
+
+                  case _ =>
+                    (failures, ran, totals)
+
+              val (failures, ran, totals) = recur(suites, 0, 0, Unset)
+
+              // The banner renders over the aggregate of every event-run suite; when every
+              // suite ran legacy (each rendered its own banner already), only the summary
+              // line prints.
+              totals.let(Render.finale(_, terse))
+
+              Out.println(t"fume: ${ran - failures} of $ran suites passed")
+              if failures == 0 then Exit.Ok else TestsFailed
+
+          case _ =>
+            Out.println(t"fume: at least one --classpath must be specified")
+            NoClasspath
+
     arguments match
       // `fume -<flag>…` — currently only `--version`. This case fires only when the first
       // token is a FLAG (`head` begins with `-`), which cannot be a subcommand.
@@ -188,99 +292,7 @@ def runClient(): Unit =
       // forwarded verbatim to each suite with no re-parsing; fume itself only prepends the
       // `kind:` terms derived from the kind switches.
       case ui.Run() :: rest =>
-        val classpath: Optional[LocalClasspath] = classpathSetting()
-        val suite: Prospective[Text] = suiteFlag(classpath)
-        val kinds: List[Text] = selectedKinds
-        val failFast: Boolean = ui.FailFast().or(false)
-        val fork: Boolean = ui.Fork().present
-        val terms: List[Text] = selectionTerms(rest)
-
-        execute:
-          classpath match
-            case classpath: LocalClasspath =>
-              val suites: List[Text] = selectSuites(classpath, suite())
-
-              if suites.nil then
-                Out.println(t"fume: no test suites were found on the classpath")
-                NoSuites
-              else
-                val kindTerms: List[Text] = kinds.map { (kind: Text) => t"kind:$kind" }
-                val args: List[Text] = kindTerms + terms
-
-                val width: Int = safely(Environment.columns.as[Int]).or(120)
-                val terse: Boolean = fume.GithubActions.terse
-                val tty: Boolean = summon[DaemonService[?]].cliInput == ethereal.Stdin.Terminal
-
-                // Ctrl+C at the client arrives here as a trapped SIGINT: the current suite's
-                // event consumption stops, its partial report renders, and no further suite
-                // starts. (The suite's threads — and any measurement JVMs a staged benchmark
-                // has spawned — are cancelled, not awaited.)
-                val aborted: java.util.concurrent.atomic.AtomicBoolean =
-                  java.util.concurrent.atomic.AtomicBoolean(false)
-
-                val winched: java.util.concurrent.atomic.AtomicBoolean =
-                  java.util.concurrent.atomic.AtomicBoolean(false)
-
-                trap:
-                  case Interrupt.Int =>
-                    aborted.set(true)
-                    SignalResponse.Accept
-
-                  case Interrupt.Winch =>
-                    winched.set(true)
-                    SignalResponse.Accept
-
-                // Each suite renders its own report as its event stream ends; the verdict
-                // comes from its exit status, and the totals — when the suite ran by the
-                // event protocol — accumulate towards the whole-run banner.
-                def recur
-                   ( remaining: List[Text],
-                     failures: Int,
-                     ran: Int,
-                     totals: Optional[Doc.Totals] )
-                :   (Int, Int, Optional[Doc.Totals]) =
-
-                  remaining match
-                    case _ if aborted.get =>
-                      (failures, ran, totals)
-
-                    case head :: tail =>
-                      Out.println(t"fume: running $head")
-
-                      val (exit, suiteTotals) =
-                        runSuite(classpath, head, args, fork, width, terse, tty,
-                            aborted, winched)
-                      val passed = exit == Exit.Ok
-
-                      if suiteTotals.absent then
-                        Out.println:
-                          if passed then t"fume: $head: passed" else t"fume: $head: FAILED"
-
-                      val failures2 = if passed then failures else failures + 1
-
-                      val totals2: Optional[Doc.Totals] =
-                        suiteTotals.lay(totals): suiteTotals =>
-                          totals.lay(suiteTotals)(_ + suiteTotals)
-
-                      if !passed && failFast then (failures2, ran + 1, totals2)
-                      else recur(tail, failures2, ran + 1, totals2)
-
-                    case _ =>
-                      (failures, ran, totals)
-
-                val (failures, ran, totals) = recur(suites, 0, 0, Unset)
-
-                // The banner renders over the aggregate of every event-run suite; when every
-                // suite ran legacy (each rendered its own banner already), only the summary
-                // line prints.
-                totals.let(Render.finale(_, terse))
-
-                Out.println(t"fume: ${ran - failures} of $ran suites passed")
-                if failures == 0 then Exit.Ok else TestsFailed
-
-            case _ =>
-              Out.println(t"fume: at least one --classpath must be specified")
-              NoClasspath
+        runSelection(rest)
 
       // `fume list [-c CLASSPATH] [-s SUITE] [--test|--bench|--stress|--profile] [TERMS…]` —
       // enumerate, without running anything, the tests admitted by the selection, in
@@ -342,8 +354,10 @@ def runClient(): Unit =
 
         execute(install(force))
 
+      // A bare `fume` runs: the workspace's `.fume/config.tel` supplies the classpath, so
+      // the zero-argument invocation is the everyday one.
       case Nil =>
-        execute(usage())
+        runSelection(List())
 
       case _ =>
         execute(usage())
@@ -410,10 +424,10 @@ private def suiteFlag(classpath: Optional[LocalClasspath])(using Cli, Interprete
 // The raw Probably selection terms: every argument after the subcommand that is neither a flag
 // nor the operand of a value-taking flag. This does NOT interpret the terms — they are
 // forwarded verbatim to each suite — it only separates them from fume's own flags.
-private def selectionTerms(rest: List[Argument]): List[Text] =
+private def selectionArguments(rest: List[Argument]): List[Argument] =
   val valueFlags: List[Flag] = List(ui.Classpath.flag, ui.Suite, ui.FailFast.flag)
 
-  def recur(args: List[Argument], terms: List[Text]): List[Text] = args match
+  def recur(args: List[Argument], terms: List[Argument]): List[Argument] = args match
     case head :: tail =>
       if head().starts(t"-") then
         // A value-taking flag consumes the argument after it (unless written `--flag=value`,
@@ -423,12 +437,15 @@ private def selectionTerms(rest: List[Argument]): List[Text] =
 
         recur(if operand then tail match { case _ :: tail2 => tail2; case _ => tail } else tail,
               terms)
-      else recur(tail, head() :: terms)
+      else recur(tail, head :: terms)
 
     case _ =>
       terms.reverse
 
   recur(rest, List())
+
+private def selectionTerms(rest: List[Argument]): List[Text] =
+  selectionArguments(rest).map { (argument: Argument) => argument() }
 
 // The suites the selection admits: everything discovered on the classpath, narrowed to
 // `--suite` when given. Empty means nothing to run (reported by the caller as `NoSuites`).

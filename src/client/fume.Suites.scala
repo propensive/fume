@@ -170,3 +170,51 @@ object Suites:
       stdio.err.flush()
       jl.System.setOut(out)
       jl.System.setErr(err)
+
+  // Tab-completion SUGGESTIONS for selection terms: each suite the selection admits is run
+  // with `--list` (its output captured, not printed — the suite body runs, tests do not),
+  // and every test contributes its stable 6-hex id — and its moniker, when it has one that
+  // a shell can complete unquoted — described by its kind and full path. Fast enough per
+  // keystroke because listing skips all execution, and evaluated LAZILY: the caller wraps
+  // this in the completion's update thunk, so it runs only when a term is being completed.
+  def terms(classpath: LocalClasspath, suite: Optional[Text]): List[Suggestion] =
+    val kindNames: List[Text] = List(t"test", t"bench", t"stress", t"profile")
+
+    val kinds: List[Suggestion] =
+      kindNames.map: (kind: Text) =>
+        Suggestion(t"kind:$kind", t"run only ${kind}s")
+
+    val suites: List[Text] = suite.lay(discover(classpath)) { chosen => List(chosen) }
+
+    val tests: List[Suggestion] =
+      suites.bind[List[Suggestion], Suggestion, List[Suggestion]]: suiteName =>
+        val buffer = java.io.ByteArrayOutputStream()
+        val print = java.io.PrintStream(buffer, true, "UTF-8")
+        val capture: Stdio = Stdio(print, print, null, termcapDefinitions.basicTermcap)
+
+        safely(invoke(classpath, suiteName, List(t"--list"))(using capture))
+        print.flush()
+
+        Text(buffer.toString("UTF-8").nn).cut(t"\n")
+        . bind[List[Suggestion], Suggestion, List[Suggestion]]: line =>
+            if line.length <= 8 then Nil else
+              val id: Text = line.keep(6)
+              val rest: Text = line.skip(8)
+
+              rest.cut(t"  ") match
+                case kind :: path =>
+                  val joined: Text = path.join(t"  ")
+                  val hash = Suggestion(id, t"$kind  $joined")
+
+                  // The last path segment is the moniker when one was declared (a plain
+                  // identifier); a name with spaces cannot complete unquoted.
+                  val leaf: Text = joined.cut(t"/").stdlib.lastOption.getOrElse(t"")
+
+                  if leaf != t"" && !leaf.contains(t" ") && leaf != id
+                  then List(hash, Suggestion(leaf, t"$kind  $joined"))
+                  else List(hash)
+
+                case _ =>
+                  Nil
+
+    kinds + (tests.distinct: List[Suggestion])
