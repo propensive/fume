@@ -136,8 +136,14 @@ object Doc:
 
   enum Block:
     // A table of cells; a biaxial entry renders as a crosstab: its second axis's values
-    // become the columns and each cell holds only the headline datum.
-    case Table(title: Optional[TestEvent.Ref], columns: List[Column], rows: List[List[Datum]])
+    // become the columns and each cell holds only the headline datum. `highlight` lists the
+    // indices of rows to render with the winner's background — set once every scheduled row
+    // has its data.
+    case Table
+      ( title:     Optional[TestEvent.Ref],
+        columns:   List[Column],
+        rows:      List[List[Datum]],
+        highlight: List[Int] = Nil )
     case Sparkline(steps: List[Long], sequence: List[Spark])
     case Histogram(title: Optional[TestEvent.Ref], total: Long, frames: List[TestEvent.Hotspot])
 

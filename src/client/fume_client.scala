@@ -522,7 +522,10 @@ private def runSuite
     // every scheduled test appears in its table immediately, blank, filling in as its
     // result arrives.
     if live.present then
-      safely(EventStream.stream(classpath, suite, t"--list" :: args)(model.handle(_))).unit
+      // The abort thunk is passed explicitly: the DEFAULT argument's root capability
+      // cannot flow into `safely`'s enclosing function under capture checking.
+      safely(EventStream.stream(classpath, suite, t"--list" :: args)(model.handle(_), () => false))
+      . unit
 
     // The one-second trigger: if the suite is still producing when this fires, the board
     // starts painting; `activate` is a no-op once `finish` has run.
@@ -546,7 +549,13 @@ private def runSuite
       def loop(): Unit =
         input.let: input =>
           val stdio = summon[Stdio]
-          if stdio.in.available() > 0 then input.offer(stdio.in.read()) else snooze(30L)
+
+          if stdio.in.available() > 0 then
+            input.offer(stdio.in.read()) match
+              case Live.Key.Up   => live.let(_.scroll(-1))
+              case Live.Key.Down => live.let(_.scroll(1))
+              case _             => ()
+          else snooze(30L)
 
         if input.present then loop()
 

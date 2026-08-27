@@ -406,11 +406,22 @@ object Documenting:
           entry.benches.prim.lay(lead + blankCells(if sized then 7 else 5)): bench =>
             lead + benchMetricCells(bench, sized)
 
+      // The winner is marked only once EVERY scheduled row has its result: a leader among
+      // stragglers is not yet the best.
+      val highlight: List[Int] =
+        if plain.nil || plain.exists(_.benches.nil) then Nil else
+          val rates: scala.List[Long] =
+            plain.map { entry => entry.benches.prim.lay(0L)(throughput(_)) }.stdlib
+
+          val best = rates.max
+          if best == 0L then Nil else List(rates.indexOf(best))
+
       if rows.nil then Nil else
         List(Block.Table
           ( Unset,
             List(Column(t"Hash"), Column(t"Test", stretch = true)) + benchMetricColumns(sized),
-            rows ))
+            rows,
+            highlight ))
 
     table + axial.bind[List[Block], Block, List[Block]] { entry => axialBench(entry, sized) }
 
@@ -627,7 +638,12 @@ object Documenting:
 
             List(Datum.Hash(entry.ref.id), Datum.Title(entry.ref.name, 0)) + blankCells(cells)
 
-        List(Block.Table(Unset, columns, rows + blanks))
+        // Rows are sorted by descending throughput, so once nothing remains pending the
+        // winner is the first row.
+        val highlight: List[Int] =
+          if pending.nil && !peaks.nil && bestRate > 0L then List(0) else Nil
+
+        List(Block.Table(Unset, columns, rows + blanks, highlight))
 
     sparkline + summary
 

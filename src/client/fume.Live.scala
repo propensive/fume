@@ -71,6 +71,10 @@ object Live:
   // very stream, interleaved with the CSI cursor-position replies the size probe requests.
   // A pump task feeds every byte through `offer`: ETX (and Ctrl+D) set the abort flag;
   // a complete `\e[<rows>;<cols>R` reply parks in `reply` for `probeSize` to collect.
+  // A keypress the pump should act on: arrows move the scrolling viewport.
+  enum Key:
+    case Idle, Up, Down
+
   final class Input(aborted: juca.AtomicBoolean):
     val reply: juca.AtomicReference[String | Null] = juca.AtomicReference(null)
 
@@ -79,17 +83,32 @@ object Live:
     @scala.caps.unsafe.untrackedCaptures
     private var collecting: Boolean = false
 
-    def offer(byte: Int): Unit =
-      if byte == 3 || byte == 4 then aborted.set(true)
+    def offer(byte: Int): Key =
+      if byte == 3 || byte == 4 then
+        aborted.set(true)
+        Key.Idle
       else if byte == 27 then
         collecting = true
         pending = ""
+        Key.Idle
       else if collecting then
-        if byte == 'R'.toInt then
+        if pending == "[" && byte == 'A'.toInt then
+          collecting = false
+          Key.Up
+        else if pending == "[" && byte == 'B'.toInt then
+          collecting = false
+          Key.Down
+        else if byte == 'R'.toInt then
           reply.set(pending)
           collecting = false
-        else if pending.length > 15 then collecting = false
-        else pending = pending + byte.toChar
+          Key.Idle
+        else if pending.length > 15 then
+          collecting = false
+          Key.Idle
+        else
+          pending = pending + byte.toChar
+          Key.Idle
+      else Key.Idle
 
 final class Live(model: Model, initialWidth: Int, winched: juca.AtomicBoolean, input: Live.Input)
    (using stdio: Stdio):
@@ -113,7 +132,6 @@ final class Live(model: Model, initialWidth: Int, winched: juca.AtomicBoolean, i
   private var painted0: Long = 0L
 
   private def width: Int = geometry.columns
-  private def window: Int = (geometry.rows - 1).max(4)
 
   // The probed terminal width, for the final report to replay at once the board has gone.
   def columns: Int = geometry.columns
@@ -241,56 +259,31 @@ final class Live(model: Model, initialWidth: Int, winched: juca.AtomicBoolean, i
         case Model.Line.EntryLine(entry) => entry.kind.or(t"check") == t"check"
         case _                           => false
 
-    if checks then
-      // The progress table is elided from the BOTTOM: the visible region should end at the
-      // running test, not at the far tail of the schedule (all pending dots). Rows beyond a
-      // short look-ahead past the last started row are dropped, with a count.
-      val all: List[Row] = rows()
-
-      val lastStarted: Int =
-        all.stdlib.zipWithIndex.foldLeft(-1): (last, pair) =>
-          if pair(0).started then pair(1) else last
-
-      val keep: Int = (lastStarted + 4).max(8)
-      val visible: List[Row] = (all.stdlib.take(keep)).to(List)
-      val elided: Int = all.stdlib.length - visible.stdlib.length
-
-      tabulation(visible).grid(width).render.each(buffer.append(_))
-
-      if elided > 0 then
-        buffer.append(e"  ${Fg(Palette.subdued)}(… $elided more scheduled)")
+    if checks then tabulation(rows()).grid(width).render.each(buffer.append(_))
 
     val document = Documenting.document(model.state())
 
     document.groups.each: group =>
       Render.groupLines(group, width, terse = false) { line => buffer.append(line) }
 
-    val all: List[Teletype] = buffer.to(List)
-    val length = all.stdlib.length
+    buffer.to(List)
 
-    if length <= window then all
-    else
-      val elided = length - window
-      val notice: Teletype = e"${Fg(Palette.subdued)}(… $elided earlier lines)"
-      val visible: List[Teletype] = (all.stdlib.drop(elided)).to(List)
-      notice :: visible
+  // The whole report lives in ONE scrolling viewport: docked to the bottom it tracks new
+  // results; scrolled up (the arrow keys) it holds position while content grows, with a
+  // proportional scrollbar on the right edge.
+  private val scroller: ScrollFixture =
+    ScrollFixture()((renderedLines().stdlib): scala.List[Teletype])
 
   private def repaint(): Unit = root0.let: root =>
-    val lines: List[Teletype] = renderedLines()
-
-    val pane: Pane =
-      stack(panel(minHeight = lines.stdlib.length.max(1)):
-        // Written through the `Board` surface directly: the contextual `Extent^` is tracked,
-        // so it cannot serve as the pure `Stdio` that `Out` requires under capture checking —
-        // and the `Teletype` overload of `put` is what carries the styling into the grid.
-        val extent = summon[Extent^]
-
-        lines.indexed.each: (line, index) =>
-          extent.move(Prim, index)
-          extent.put(line))
-
-    paint(root, pane)
+    paint(root, scrolling(scroller))
     painted0 = jl.System.currentTimeMillis
+
+  // Moves the viewport; called by the stdin pump on arrow keys — immediate, deliberately
+  // bypassing the tick throttle.
+  def scroll(delta: Int): Unit = mutex:
+    if root0.present then
+      scroller.scroll(delta)
+      repaint()
 
   // Called by the one-second timer: begins live painting unless the run already finished.
   // The board takes over the WHOLE terminal via the alternate screen buffer — the primary

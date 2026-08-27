@@ -166,15 +166,25 @@ object Render:
       given style: TableStyle = tableStyles.defaultTableStyle
       tabulation.grid(width).render
 
+  // The winner's background: subdued towards the terminal background so the row's own
+  // foreground styling stays readable through it.
+  private val winnerBg: Bg = Bg(Palette.subdue(Palette.pass, 0.65))
+
   private def printTable
      ( columns: List[Column],
        rows: List[List[Datum]],
        width: Int,
-       terse: Boolean )
+       terse: Boolean,
+       highlight: List[Int] = Nil )
      (emit: Teletype => Unit)
   :   Unit =
 
-    val defs: List[escritoire.Column[List[Datum], Teletype]] =
+    // Rows are zipped with their indices so each column's decorator can recognise a
+    // highlighted row from the row value alone.
+    val indexed: List[(List[Datum], Int)] =
+      rows.indexed.map { (row, index) => (row, index.n0) }
+
+    val defs: List[escritoire.Column[(List[Datum], Int), Teletype]] =
       columns.indexed.map: (column, index) =>
         val align = if column.numeric then TextAlignment.Right else TextAlignment.Left
         val sizing: Columnar =
@@ -183,10 +193,15 @@ object Render:
           else columnar.Paragraph
         val title: Teletype = if terse then column.title.teletype else e"$Bold(${column.title})"
 
-        escritoire.Column[List[Datum], Teletype, Teletype](title, align, sizing = sizing):
-          row => datum(row.stdlib(index.n0), terse)
+        escritoire.Column[(List[Datum], Int), Teletype, Teletype]
+           ( title, align, sizing = sizing,
+             decorate = { (row: (List[Datum], Int)) =>
+               if !terse && highlight.has(row(1))
+               then ((line: Teletype) => e"$winnerBg($line)"): Optional[Teletype -> Teletype]
+               else Unset } ):
+          row => datum(row(0).stdlib(index.n0), terse)
 
-    gridLines(Scaffold[List[Datum]](defs*).tabulate(rows), width, terse).each(emit(_))
+    gridLines(Scaffold[(List[Datum], Int)](defs*).tabulate(indexed), width, terse).each(emit(_))
 
   // ---------------------------------------------------------------- the results table
 
@@ -293,12 +308,12 @@ object Render:
 
   private def blockLines(block: Block, width: Int, terse: Boolean)(emit: Teletype => Unit): Unit =
     block match
-      case Block.Table(title, columns, rows) =>
+      case Block.Table(title, columns, rows, highlight) =>
         title.let: ref =>
           if terse then emit(e"${ref.id}  ${ref.name}")
           else emit(e"$Bold(${Fg(Palette.informative)}(${ref.id})) $Bold(${ref.name})")
 
-        printTable(columns, rows, width, terse)(emit)
+        printTable(columns, rows, width, terse, highlight)(emit)
 
       case Block.Sparkline(steps, sequence) =>
         val labelWidth = sequence.map(_.label.length).stdlib.foldLeft(1)(_.max(_))
