@@ -207,25 +207,47 @@ def runClient(): Unit =
                 val kindTerms: List[Text] = kinds.map { (kind: Text) => t"kind:$kind" }
                 val args: List[Text] = kindTerms + terms
 
-                // The verdict comes from each suite's EXIT STATUS, and fume prints its own
-                // per-suite line from it: the suite's own report output is not yet reliably
-                // visible under the daemon (reporting is due to be rewritten), but the
-                // pass/fail result always is.
-                def recur(remaining: List[Text], failures: Int, ran: Int): (Int, Int) =
+                val width: Int = safely(Environment.columns.as[Int]).or(120)
+                val terse: Boolean = fume.GithubActions.terse
+
+                // Each suite renders its own report as its event stream ends; the verdict
+                // comes from its exit status, and the totals — when the suite ran by the
+                // event protocol — accumulate towards the whole-run banner.
+                def recur
+                   ( remaining: List[Text],
+                     failures: Int,
+                     ran: Int,
+                     totals: Optional[Doc.Totals] )
+                :   (Int, Int, Optional[Doc.Totals]) =
+
                   remaining match
                     case head :: tail =>
                       Out.println(t"fume: running $head")
-                      val passed = invokeSuite(classpath, head, args, fork) == Exit.Ok
-                      Out.println(if passed then t"fume: $head: passed" else t"fume: $head: FAILED")
+                      val (exit, suiteTotals) = runSuite(classpath, head, args, fork, width, terse)
+                      val passed = exit == Exit.Ok
+
+                      if suiteTotals.absent then
+                        Out.println:
+                          if passed then t"fume: $head: passed" else t"fume: $head: FAILED"
+
                       val failures2 = if passed then failures else failures + 1
 
-                      if !passed && failFast then (failures2, ran + 1)
-                      else recur(tail, failures2, ran + 1)
+                      val totals2: Optional[Doc.Totals] =
+                        suiteTotals.lay(totals): suiteTotals =>
+                          totals.lay(suiteTotals)(_ + suiteTotals)
+
+                      if !passed && failFast then (failures2, ran + 1, totals2)
+                      else recur(tail, failures2, ran + 1, totals2)
 
                     case _ =>
-                      (failures, ran)
+                      (failures, ran, totals)
 
-                val (failures, ran) = recur(suites, 0, 0)
+                val (failures, ran, totals) = recur(suites, 0, 0, Unset)
+
+                // The banner renders over the aggregate of every event-run suite; when every
+                // suite ran legacy (each rendered its own banner already), only the summary
+                // line prints.
+                totals.let(Render.finale(_, terse))
 
                 Out.println(t"fume: ${ran - failures} of $ran suites passed")
                 if failures == 0 then Exit.Ok else TestsFailed
@@ -410,54 +432,82 @@ private def forkSuite(classpath: LocalClasspath, suite: Text, args: List[Text])
       Out.println(t"fume: could not invoke $suite")
       Exit.Fail(2)
 
-// A minimal event renderer — the seed of fume's reporting, to be replaced by the full port
-// (model fold, Doc IR, tables). One line per completed test, plus terminal notices.
-private def renderEvent(event: probably.TestEvent)(using Stdio): Unit = event match
-  case probably.TestEvent.TestCompleted(ref, _, _, outcome, _, _) =>
-    val mark = outcome.outcome match
-      case t"pass" | t"aspire-pass" => t"✓"
-      case _                        => t"✗"
-
-    Out.println(t"  $mark ${ref.name}")
-
-  case probably.TestEvent.RunTerminated(error, _, _) =>
-    val name = error.components.prim.let(_.className).or(t"unknown")
-    Out.println(t"  suite terminated: $name")
-
-  case probably.TestEvent.NothingMatched(_) =>
-    Out.println(t"  no tests matched the selection")
-
-  case _ =>
-    ()
-
-// Runs one suite: by the EVENT PROTOCOL by default — `EventStream.stream` runs it in the
-// isolating classloader and fume renders the typed events — or in a separate JVM with
-// `--fork`. A suite whose Probably predates the event stream falls back to the legacy
-// in-process run (it renders its own report), and one predating `Suite#invoke` falls back
-// further to a forked JVM; an INCOMPATIBLE event schema (a different Soundness) falls back
-// likewise, with a distinct notice.
+// Runs one suite the LEGACY way: in-process through `Suite#invoke` (the suite renders its
+// own report), falling back to a forked JVM when even that is unavailable. This remains the
+// whole story for `--fork` and for `--list`, whose selection the event protocol deliberately
+// rejects (the stable text output belongs to the legacy path).
 private def invokeSuite(classpath: LocalClasspath, suite: Text, args: List[Text], fork: Boolean)
    (using Stdio, WorkingDirectory, Monitor)
 :   Exit =
 
-  def legacy(): Exit =
+  if fork then forkSuite(classpath, suite, args)
+  else
     Suites.invoke(classpath, suite, args).or:
       Out.println(t"fume: $suite could not be run in-process; running it in a separate JVM")
       forkSuite(classpath, suite, args)
 
-  if fork then forkSuite(classpath, suite, args)
+// Runs one suite by the EVENT PROTOCOL: `EventStream.stream` runs it in the isolating
+// classloader; the events fold into a `Model` (live-painted by an Ultimatum board if the
+// suite is still producing after one second), and the report renders from the model when
+// the stream ends. Returns the suite's totals alongside its exit, for the whole-run banner.
+//
+// A suite whose Probably predates the event stream falls back to the legacy in-process run
+// (it renders its own report), and one predating `Suite#invoke` falls back further to a
+// forked JVM; an INCOMPATIBLE event schema (a different Soundness) falls back likewise,
+// with a distinct notice.
+private def runSuite
+   ( classpath: LocalClasspath,
+     suite: Text,
+     args: List[Text],
+     fork: Boolean,
+     width: Int,
+     terse: Boolean )
+   (using Stdio, WorkingDirectory, Monitor, Environment)
+:   (Exit, Optional[Doc.Totals]) =
+
+  import abstractables.durationAbstractable
+  import probates.cancelProbate
+
+  def legacy(): Exit = invokeSuite(classpath, suite, args, fork = false)
+
+  if fork then (forkSuite(classpath, suite, args), Unset)
   else
-    EventStream.stream(classpath, suite, args)(renderEvent(_)) match
-      case EventStream.Outcome.Completed(0)    => Exit.Ok
-      case EventStream.Outcome.Completed(exit) => Exit.Fail(exit)
+    val model = Model()
+
+    // The live board is worthless where nobody watches: terse mode (CI, Claude Code) folds
+    // events quietly, and without the terminal's real geometry (no COLUMNS in the client's
+    // environment) live painting would be guesswork; both render once at the end instead.
+    val knownColumns: Boolean = safely(Environment.columns.as[Int]).present
+
+    val live: Optional[Live] = if terse || !knownColumns then Unset else Live(model, width)
+
+    // The one-second trigger: if the suite is still producing when this fires, the board
+    // starts painting; `activate` is a no-op once `finish` has run.
+    val timer = async:
+      snooze(1000L)
+      live.let(_.activate())
+
+    val outcome =
+      EventStream.stream(classpath, suite, args): event =>
+        model.handle(event)
+        live.let(_.tick())
+
+    live.let(_.finish())
+    timer.cancel()
+
+    outcome match
+      case EventStream.Outcome.Completed(exit) =>
+        val document = Documenting.document(model.state())
+        Render.suite(document, width, terse)
+        (if exit == 0 then Exit.Ok else Exit.Fail(exit), document.totals)
 
       case EventStream.Outcome.Incompatible =>
         Out.println(t"fume: $suite was built against an incompatible Soundness; falling back")
-        legacy()
+        (legacy(), Unset)
 
       case _ =>
         Out.println(t"fume: $suite predates event streaming; using the legacy run")
-        legacy()
+        (legacy(), Unset)
 
 private def showVersion()(using Invocation): Exit =
   Out.println(t"fume $fumeVersion")
