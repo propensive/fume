@@ -352,6 +352,13 @@ object Render:
 
         emit(e"")
 
+      case Block.Pending(refs) =>
+        refs.each: ref =>
+          if terse then emit(e"${ref.id}  ${ref.name}  (pending)")
+          else
+            val dot = e"${Fg(Palette.subdued)}(·)"
+            emit(e"  $dot ${Fg(Palette.informative)}(${ref.id}) ${Fg(Palette.subdued)}(${ref.name})")
+
   // ---------------------------------------------------------------- failures
 
   private def location(ref: TestEvent.Ref): Text = t"${ref.file}:${ref.line}"

@@ -90,6 +90,9 @@ final class Live(model: Model, initialWidth: Int, winched: juca.AtomicBoolean)
   private def width: Int = geometry.columns
   private def window: Int = (geometry.rows - 1).max(4)
 
+  // The probed terminal width, for the final report to replay at once the board has gone.
+  def columns: Int = geometry.columns
+
   // Asks the terminal its size directly: save the cursor, jump to the far corner, request
   // the cursor position (whose reply is thus the terminal's dimensions), restore. The
   // launcher holds the client's terminal in raw mode, so the reply arrives unbuffered on
@@ -143,8 +146,13 @@ final class Live(model: Model, initialWidth: Int, winched: juca.AtomicBoolean)
         val depth = Documenting.depth(entry.ref)
         val running = active.has(entry.ref.id)
 
+        val idle: Boolean =
+          entry.completions.nil && entry.benches.nil && entry.strains.nil
+            && entry.hotspots.absent
+
         val mark: Teletype =
           if running then e"${Bg(Palette.accented)}($Bold(${Fg(Palette.black)}( ▶ )))"
+          else if idle then e" ${Fg(Palette.subdued)}(·) "
           else Documenting.entryStatus(entry).symbol
 
         val count: Text =

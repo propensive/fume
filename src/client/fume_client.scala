@@ -532,12 +532,14 @@ private def runSuite
       case EventStream.Outcome.Completed(exit) if exit == EventStream.abortExit =>
         Out.println(t"fume: aborted; the partial report follows")
         val document = Documenting.document(model.state())
-        Render.suite(document, width, terse)
+        Render.suite(document, live.let(_.columns).or(width), terse)
         (Exit.Fail(exit), document.totals)
 
       case EventStream.Outcome.Completed(exit) =>
         val document = Documenting.document(model.state())
-        Render.suite(document, width, terse)
+        // The report replays onto the primary buffer at the terminal's REAL width — the
+        // board probed it — rather than the COLUMNS guess.
+        Render.suite(document, live.let(_.columns).or(width), terse)
 
         // A suite reports failure (exit 1) when NOTHING was admitted: right when it is
         // invoked alone, wrong when fume fans a kind filter (`--bench`) across every suite

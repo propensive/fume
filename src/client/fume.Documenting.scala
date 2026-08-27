@@ -376,8 +376,13 @@ object Documenting:
           Datum.Ratio(side(value)/side(anchorValue))
 
   private def benchBlocks(entries: List[Entry]): List[Block] =
-    val plain: List[Entry] = entries.filter(_.benches.all(_.coordinates.nil))
-    val axial: List[Entry] = entries.filter(_.benches.exists(!_.coordinates.nil))
+    // A benchmark with no results yet renders as a single pending line, not an empty table
+    // (or a blank row crowding a live one): it expands the moment its first result arrives.
+    val pending: List[Entry] = entries.filter(_.benches.nil)
+    val started: List[Entry] = entries.filter(!_.benches.nil)
+
+    val plain: List[Entry] = started.filter(_.benches.all(_.coordinates.nil))
+    val axial: List[Entry] = started.filter(_.benches.exists(!_.coordinates.nil))
 
     val sized: Boolean =
       entries.exists(_.benches.exists { bench =>
@@ -387,12 +392,12 @@ object Documenting:
       // DECLARATION order, not throughput order: a live board pre-lists the scheduled rows
       // and fills each in place as its result arrives, so rows must not move.
       val rows: List[List[Datum]] =
-        plain.map: entry =>
+        plain.bind[List[List[Datum]], List[Datum], List[List[Datum]]]: entry =>
           val lead: List[Datum] =
             List(Datum.Hash(entry.ref.id), Datum.Title(entry.ref.name, 0))
 
-          entry.benches.prim.lay(lead + blankCells(if sized then 7 else 5)): bench =>
-            lead + benchMetricCells(bench, sized)
+          entry.benches.prim.lay(Nil): bench =>
+            List(lead + benchMetricCells(bench, sized))
 
       if rows.nil then Nil else
         List(Block.Table
@@ -400,7 +405,12 @@ object Documenting:
             List(Column(t"Hash"), Column(t"Test", stretch = true)) + benchMetricColumns(sized),
             rows ))
 
-    table + axial.bind[List[Block], Block, List[Block]] { entry => axialBench(entry, sized) }
+    val pendingBlock: List[Block] =
+      if pending.nil then Nil else List(Block.Pending(pending.map(_.ref)))
+
+    table
+      + axial.bind[List[Block], Block, List[Block]] { entry => axialBench(entry, sized) }
+      + pendingBlock
 
   // An entry with one axis renders as a table of its runs; with two, as a crosstab of
   // headline data; with more, as a flat listing of coordinates and headlines.
@@ -487,7 +497,13 @@ object Documenting:
   // A stress group renders as the sparkline of every curve, then one row per implementation
   // at its best point, ranked. (The per-step detail table upstream was reserved for a
   // verbose mode that was never reachable; it is not reproduced.)
-  private def stressBlocks(entries: List[Entry]): List[Block] =
+  private def stressBlocks(entries0: List[Entry]): List[Block] =
+    val pending: List[Entry] = entries0.filter(_.strains.nil)
+    val entries: List[Entry] = entries0.filter(!_.strains.nil)
+
+    val pendingBlock: List[Block] =
+      if pending.nil then Nil else List(Block.Pending(pending.map(_.ref)))
+
     // Each stress entry's strains form its scaling curve: concurrency against the strain
     // measured there; a repeated concurrency keeps its first measurement.
     val curves: List[(Entry, List[TestEvent.StrainRecorded])] =
@@ -605,10 +621,10 @@ object Documenting:
 
         List(Block.Table(Unset, columns, rows))
 
-    sparkline + summary
+    sparkline + summary + pendingBlock
 
   // ---------------------------------------------------------------- profiles
 
   private def histogram(entry: Entry): Block =
-    entry.hotspots.lay(Block.Histogram(entry.ref, 0L, Nil)): hotspots =>
+    entry.hotspots.lay(Block.Pending(List(entry.ref))): hotspots =>
       Block.Histogram(entry.ref, hotspots.total, hotspots.frames)

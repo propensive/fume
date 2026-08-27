@@ -141,6 +141,10 @@ object Doc:
     case Sparkline(steps: List[Long], sequence: List[Spark])
     case Histogram(title: Optional[TestEvent.Ref], total: Long, frames: List[TestEvent.Hotspot])
 
+    // Scheduled measurements that have not yet recorded anything: one name line each, so a
+    // live view shows what is coming without an empty table crowding out the results.
+    case Pending(refs: List[TestEvent.Ref])
+
   // A group of measurement blocks belonging to one suite, of one kind (`bench`, `stress`,
   // `profile` or axial `check` grids), rendered with a ribbon header.
   case class Group(suite: Optional[TestEvent.Ref], kind: Text, blocks: List[Block])
