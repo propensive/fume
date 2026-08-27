@@ -274,8 +274,52 @@ final class Live(model: Model, initialWidth: Int, winched: juca.AtomicBoolean, i
   private val scroller: ScrollFixture =
     ScrollFixture()((renderedLines().stdlib): scala.List[Teletype])
 
+  // The whole run's progress, one full-width row pinned beneath the viewport: filled blocks
+  // (with an eighth-block partial for smoothness) for the SCHEDULED tests that have finished,
+  // a subdued track for the remainder, and a done/total count at the right. An entry counts
+  // as done once it has recorded something and is no longer running; with no schedule (a
+  // pre-event suite) the bar shows only the track.
+  private def progressLine(width: Int): Teletype =
+    val state = model.state()
+
+    val entries: List[Model.Entry] =
+      state.lines.bind[List[Model.Entry], Model.Entry, List[Model.Entry]]:
+        case Model.Line.EntryLine(entry) => List(entry)
+        case _                           => Nil
+
+    val active: List[Text] = state.active.map(_.id)
+    val total: Int = entries.stdlib.length
+
+    val done: Int =
+      entries.stdlib.count: entry =>
+        val recorded =
+          !entry.completions.nil || !entry.benches.nil || !entry.strains.nil
+            || entry.hotspots.present
+
+        recorded && !active.has(entry.ref.id)
+
+    val label: Text = t" $done/$total"
+    val span: Int = (width - label.length).max(1)
+    val eighths: Long = if total == 0 then 0L else done.toLong*span*8L/total
+    val partials: List[Text] = List(t"", t"▏", t"▎", t"▍", t"▌", t"▋", t"▊", t"▉")
+    val filled: Text = t"█"*(eighths/8L).toInt
+    val partial: Text = partials.stdlib((eighths%8L).toInt)
+    val track: Text = t"░"*(span - filled.length - partial.length).max(0)
+
+    e"${Fg(Palette.accented)}($filled$partial)${Fg(Palette.subdued)}($track$label)"
+
   private def repaint(): Unit = root0.let: root =>
-    paint(root, scrolling(scroller))
+    val bar: Teletype = progressLine(width)
+
+    val pane: Pane =
+      stack
+        ( scrolling(scroller),
+          panel(minHeight = 1, maxHeight = 1):
+            val extent = summon[Extent^]
+            extent.move(Prim, Prim)
+            extent.put(bar) )
+
+    paint(root, pane)
     painted0 = jl.System.currentTimeMillis
 
   // Moves the viewport; called by the stdin pump on arrow keys — immediate, deliberately
