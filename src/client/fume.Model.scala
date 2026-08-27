@@ -72,8 +72,10 @@ final class Model:
 
   private val mutex: Mutex = Mutex()
 
-  // Reversed insertion order; `state()` reverses. A test's line is added on first sight
-  // (usually `TestStarted`), a suite's on `SuiteStarted`.
+  // Reversed insertion order; `state()` reverses. A test's line is added on first sight —
+  // a `schedule` call from a listing pre-pass, or its first event — and a suite's likewise.
+  // Line tokens are `s:`-prefixed suite PATHS (a scheduled suite has no id yet; the path is
+  // the stable identity a later `SuiteStarted` merges into) and `e:`-prefixed entry ids.
   @scala.caps.unsafe.untrackedCaptures
   private var lines0: List[Text] = Nil
   @scala.caps.unsafe.untrackedCaptures
@@ -91,17 +93,52 @@ final class Model:
   @scala.caps.unsafe.untrackedCaptures
   private var nothing0: Boolean = false
 
+  private def suitePath(path: List[Text]): Text = path.join(t"/")
+
+  private def suiteLine(ref: TestEvent.Ref): Unit =
+    val key = suitePath(ref.path)
+    if suites0(key).absent then
+      suites0 = suites0.define(key, ref)
+      lines0 = t"s:$key" :: lines0
+    else if ref.file != t"" then
+      // A real `SuiteStarted` ref replaces a scheduled placeholder, in place.
+      suites0 = suites0.define(key, ref)
+
   private def entry(ref: TestEvent.Ref, kind: Optional[Text]): Entry =
     entries0(ref.id).or:
       val entry = Entry(ref, kind, Nil, Nil, Nil, Unset, Unset)
       entries0 = entries0.define(ref.id, entry)
-      lines0 = ref.id :: lines0
+      lines0 = t"e:${ref.id}" :: lines0
       entry
 
   private def update(ref: TestEvent.Ref, kind: Optional[Text])(lambda: Entry => Entry): Unit =
     val entry0 = entry(ref, kind)
-    val entry2 = lambda(if entry0.kind.absent then entry0.copy(kind = kind) else entry0)
-    entries0 = entries0.define(ref.id, entry2)
+
+    // A real event's ref replaces a scheduled placeholder (real file and line); the kind
+    // fills in if the placeholder had none.
+    val entry1 =
+      entry0.copy
+        ( ref = if ref.file != t"" || entry0.ref.file == t"" then ref else entry0.ref,
+          kind = if entry0.kind.absent then kind else entry0.kind )
+
+    entries0 = entries0.define(ref.id, lambda(entry1))
+
+  // Seeds one line of the run's SCHEDULE, from a listing pre-pass: the test's id, kind and
+  // full path are known before anything runs, so its table rows can render blank and fill
+  // in as the events arrive.
+  def schedule(id: Text, kind: Text, path: List[Text]): Unit = mutex:
+    def prefixes(n: Int): Unit =
+      if n < path.stdlib.length then
+        val prefix: List[Text] = (path.stdlib.take(n)).to(List)
+
+        suiteLine(TestEvent.Ref(t"", prefix.stdlib.last, Unset, prefix, t"", 0))
+        prefixes(n + 1)
+
+    prefixes(1)
+
+    val kind2: Text = if kind == t"test" then t"check" else kind
+    val ref = TestEvent.Ref(id, path.stdlib.last, Unset, path, t"", 0)
+    entry(ref, kind2).unit
 
   private def detail(ref: TestEvent.Ref, event: TestEvent): Unit =
     val (_, existing) = details0(ref.id).or((ref, Nil))
@@ -110,9 +147,7 @@ final class Model:
   def handle(event: TestEvent): Unit = mutex:
     event match
       case TestEvent.SuiteStarted(ref, _) =>
-        if suites0(ref.id).absent then
-          suites0 = suites0.define(ref.id, ref)
-          lines0 = ref.id :: lines0
+        suiteLine(ref)
         active0 = ref :: active0
 
       case TestEvent.SuiteEnded(ref, _) =>
@@ -159,8 +194,10 @@ final class Model:
 
   def state(): State = mutex:
     val lines: List[Line] =
-      lines0.reverse.map: id =>
-        suites0(id).lay(Line.EntryLine(entries0(id).option.get)) { ref => Line.SuiteLine(ref) }
+      lines0.reverse.map: token =>
+        if token.starts(t"s:")
+        then Line.SuiteLine(suites0(token.skip(2)).option.get)
+        else Line.EntryLine(entries0(token.skip(2)).option.get)
 
     val details: List[(TestEvent.Ref, List[TestEvent])] =
       details0.to[List].map { (pair: (Text, (TestEvent.Ref, List[TestEvent]))) =>

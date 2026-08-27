@@ -34,6 +34,7 @@ package fume
 
 import java.io as ji
 import java.lang as jl
+import java.util.concurrent.atomic as juca
 
 import soundness.*
 
@@ -55,23 +56,77 @@ import columnAttenuation.ignoreAttenuation
 // grid writes plain `Text` literally, so pre-rendered ANSI bytes would appear as garbage.
 // Only the last `window` lines show — the newest results matter, and an inline block taller
 // than the screen cannot be redrawn in place.
-final class Live(model: Model, width: Int)(using stdio: Stdio):
+object Live:
+  // The terminal's live dimensions, in a little pure holder of its own: the `ScreenRoot`'s
+  // size thunks capture THIS value rather than the whole `Live` (whose `Monitor` and
+  // `Stdio` captures they must not carry).
+  final class Geometry(initialColumns: Int, initialRows: Int):
+    @scala.caps.unsafe.untrackedCaptures
+    var columns: Int = initialColumns
+    @scala.caps.unsafe.untrackedCaptures
+    var rows: Int = initialRows
+
+final class Live(model: Model, initialWidth: Int, winched: juca.AtomicBoolean)
+   (using stdio: Stdio):
+
+  private val geometry: Live.Geometry = Live.Geometry(initialWidth, 24)
+
   private given decimalizer: Decimalizer = Decimalizer(4)
   private given style: TableStyle = tableStyles.defaultTableStyle
 
-  private val window: Int = 24
   private val throttle: Long = 100L
 
   private val mutex: Mutex = Mutex()
 
   @scala.caps.unsafe.untrackedCaptures
-  private var root0: Optional[InlineRoot] = Unset
+  private var root0: Optional[ScreenRoot] = Unset
   @scala.caps.unsafe.untrackedCaptures
   private var done0: Boolean = false
   @scala.caps.unsafe.untrackedCaptures
   private var used0: Boolean = false
   @scala.caps.unsafe.untrackedCaptures
   private var painted0: Long = 0L
+
+  private def width: Int = geometry.columns
+  private def window: Int = (geometry.rows - 1).max(4)
+
+  // Asks the terminal its size directly: save the cursor, jump to the far corner, request
+  // the cursor position (whose reply is thus the terminal's dimensions), restore. The
+  // launcher holds the client's terminal in raw mode, so the reply arrives unbuffered on
+  // the invocation's stdin. A terminal that never replies (or a pipe) leaves the previous
+  // values standing after a short deadline.
+  private def probeSize(): Unit =
+    stdio.print(Text("\u001b7\u001b[4095C\u001b[4095B\u001b[6n\u001b8"))
+    stdio.out.flush()
+
+    val builder = StringBuilder()
+
+    def deadline(remaining: Int): Unit =
+      if remaining > 0 then
+        if stdio.in.available() > 0 then
+          val byte = stdio.in.read()
+          if byte == 'R'.toInt then ()
+          else
+            if byte > 0 then builder.append(byte.toChar)
+            deadline(remaining)
+        else
+          jl.Thread.sleep(10L)
+          deadline(remaining - 1)
+
+    deadline(50)
+
+    // The reply is `\e[<rows>;<cols>R`; anything else leaves the size unchanged.
+    val reply: String = builder.toString
+    val bracket: Int = reply.lastIndexOf('[')
+
+    if bracket >= 0 then
+      Text(reply.substring(bracket + 1).nn).cut(t";") match
+        case rows :: cols :: Nil =>
+          safely(rows.as[Int]).let { value => geometry.rows = value.max(4) }
+          safely(cols.as[Int]).let { value => geometry.columns = value.max(20) }
+
+        case _ =>
+          ()
 
   private case class Row(mark: Teletype, hash: Text, title: Teletype, count: Text, time: Teletype)
 
@@ -177,21 +232,59 @@ final class Live(model: Model, width: Int)(using stdio: Stdio):
     painted0 = jl.System.currentTimeMillis
 
   // Called by the one-second timer: begins live painting unless the run already finished.
-  def activate(): Unit = mutex:
-    if !done0 && root0.absent then
-      // The height function is the block's CEILING (reframe clamps the measured height by
-      // it), not a fixed size: allow the whole window plus the elision line and borders.
-      root0 = new InlineRoot(() => width, () => window + 4)
-      used0 = true
-      repaint()
+  // The board takes over the WHOLE terminal via the alternate screen buffer — the primary
+  // buffer (and its scrollback) is untouched, and the final report prints there after
+  // `finish` switches back.
+  def activate()(using Monitor): Unit =
+    mutex:
+      if !done0 && root0.absent then
+        probeSize()
+        stdio.print(Text("\u001b[?1049h\u001b[?25l"))
+        stdio.out.flush()
+        val geometry0: Live.Geometry = geometry
+        root0 = new ScreenRoot(() => geometry0.columns, () => geometry0.rows)
+        used0 = true
+        repaint()
+
+    heartbeat()
+
+  // A background pulse while the board is active: a forwarded SIGWINCH sets `winched`, and
+  // the next beat re-probes the terminal's size and repaints — the tables re-tabulate at
+  // the new width, and the `ScreenRoot` reframes and fully redraws.
+  private def heartbeat()(using Monitor): Unit =
+    import abstractables.durationAbstractable
+    import probates.cancelProbate
+
+    // Single-owner: the heartbeat reads and writes board state only under the same mutex
+    // as every other entry point, which the separation checker cannot see through `async`.
+    scala.caps.unsafe.unsafeAssumeSeparate:
+      async:
+        def loop(): Unit =
+          if !mutex(done0) then
+            snooze(200L)
+
+            if winched.getAndSet(false) then mutex:
+              if root0.present then
+                probeSize()
+                root0.let(_.invalidate())
+                repaint()
+
+            loop()
+
+        loop()
+    . unit
 
   // Called on every event: repaints (diffed, throttled) if the board is active.
   def tick(): Unit = mutex:
     if root0.present && jl.System.currentTimeMillis - painted0 >= throttle then repaint()
 
-  // Ends the board, leaving its last frame in place with the cursor below it.
+  // Ends the board: leaves the alternate screen, restoring the primary buffer for the
+  // final report.
   def finish(): Unit = mutex:
-    root0.let(_.finish())
+    if root0.present then
+      stdio.print(Text("\u001b[?1049l\u001b[?25h"))
+      stdio.out.flush()
+
     root0 = Unset
     done0 = true
 

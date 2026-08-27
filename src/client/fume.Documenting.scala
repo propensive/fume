@@ -112,7 +112,13 @@ object Documenting:
 
       case Line.EntryLine(entry) =>
         if measurement(entry) then
-          if measurements then List(SummaryRow(entryStatus(entry), entry.ref, 0, 0L, 0L, 0L))
+          // A SCHEDULED measurement that never recorded anything (an aborted or filtered
+          // run) is not a result and counts towards nothing.
+          val ran =
+            !entry.benches.nil || !entry.strains.nil || entry.hotspots.present
+
+          if measurements && ran
+          then List(SummaryRow(entryStatus(entry), entry.ref, 0, 0L, 0L, 0L))
           else Nil
         else
           val durations: List[Long] =
@@ -300,6 +306,9 @@ object Documenting:
   private def rate(bench: TestEvent.BenchmarkRecorded): Datum =
     if throughput(bench) == 0L then Datum.Blank else Datum.Rate(throughput(bench))
 
+  private def blankCells(count: Int): List[Datum] =
+    (scala.List.fill(count)(Datum.Blank: Datum)).to(List)
+
   private def benchMetricColumns(sized: Boolean): List[Column] =
     val sizes: List[Column] =
       if sized then List(Column(t"Size", numeric = true), Column(t"Rate", numeric = true))
@@ -375,23 +384,21 @@ object Documenting:
         bench.operationSize.present || bench.operationRate.present })
 
     val table: List[Block] =
-      val rows: List[(Long, List[Datum])] =
-        plain.bind[List[(Long, List[Datum])], (Long, List[Datum]), List[(Long, List[Datum])]]:
-          entry =>
-            entry.benches.prim.lay(Nil): bench =>
-              val lead: List[Datum] =
-                List(Datum.Hash(entry.ref.id), Datum.Title(entry.ref.name, 0))
+      // DECLARATION order, not throughput order: a live board pre-lists the scheduled rows
+      // and fills each in place as its result arrives, so rows must not move.
+      val rows: List[List[Datum]] =
+        plain.map: entry =>
+          val lead: List[Datum] =
+            List(Datum.Hash(entry.ref.id), Datum.Title(entry.ref.name, 0))
 
-              List((throughput(bench), lead + benchMetricCells(bench, sized)))
+          entry.benches.prim.lay(lead + blankCells(if sized then 7 else 5)): bench =>
+            lead + benchMetricCells(bench, sized)
 
       if rows.nil then Nil else
-        val sorted: List[List[Datum]] =
-          (rows.stdlib.sortBy { row => -row(0) }.map(_(1))).to(List)
-
         List(Block.Table
           ( Unset,
             List(Column(t"Hash"), Column(t"Test", stretch = true)) + benchMetricColumns(sized),
-            sorted ))
+            rows ))
 
     table + axial.bind[List[Block], Block, List[Block]] { entry => axialBench(entry, sized) }
 

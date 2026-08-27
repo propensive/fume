@@ -218,9 +218,16 @@ def runClient(): Unit =
                 val aborted: java.util.concurrent.atomic.AtomicBoolean =
                   java.util.concurrent.atomic.AtomicBoolean(false)
 
+                val winched: java.util.concurrent.atomic.AtomicBoolean =
+                  java.util.concurrent.atomic.AtomicBoolean(false)
+
                 trap:
                   case Interrupt.Int =>
                     aborted.set(true)
+                    SignalResponse.Accept
+
+                  case Interrupt.Winch =>
+                    winched.set(true)
                     SignalResponse.Accept
 
                 // Each suite renders its own report as its event stream ends; the verdict
@@ -242,7 +249,7 @@ def runClient(): Unit =
 
                       val (exit, suiteTotals) =
                         runSuite(classpath, head, args, fork, width, terse, tty,
-                            () => aborted.get)
+                            () => aborted.get, winched)
                       val passed = exit == Exit.Ok
 
                       if suiteTotals.absent then
@@ -482,7 +489,8 @@ private def runSuite
      width: Int,
      terse: Boolean,
      tty: Boolean,
-     abort: () => Boolean )
+     abort: () => Boolean,
+     winched: java.util.concurrent.atomic.AtomicBoolean )
    (using Stdio, WorkingDirectory, Monitor, Environment)
 :   (Exit, Optional[Doc.Totals]) =
 
@@ -498,7 +506,11 @@ private def runSuite
     // The live board is worthless where nobody watches: terse mode (CI, Claude Code) folds
     // events quietly, and a piped invocation (the launcher reports whether the client is on
     // a terminal) renders once at the end instead.
-    val live: Optional[Live] = if terse || !tty then Unset else Live(model, width)
+    val live: Optional[Live] = if terse || !tty then Unset else Live(model, width, winched)
+
+    // With a live board coming, a listing pre-pass seeds the schedule: every admitted test
+    // appears in its table immediately, blank, and fills in as its result arrives.
+    if live.present then Suites.schedule(classpath, suite, args, model)
 
     // The one-second trigger: if the suite is still producing when this fires, the board
     // starts painting; `activate` is a no-op once `finish` has run.

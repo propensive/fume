@@ -170,3 +170,31 @@ object Suites:
       stdio.err.flush()
       jl.System.setOut(out)
       jl.System.setErr(err)
+
+  // A LISTING PRE-PASS: runs the suite with `--list` (and the same selection), its output
+  // captured rather than printed, and seeds `model` with the schedule — every test the run
+  // will admit, in declaration order, before anything executes. The live board renders the
+  // scheduled rows blank and fills each in as its result arrives. Lines are
+  // `<6-hex-id>  <kind>  <slash/joined/path>`; a failed or unparseable pre-pass simply
+  // seeds nothing.
+  def schedule(classpath: LocalClasspath, suite: Text, args: List[Text], model: Model): Unit =
+    val buffer = java.io.ByteArrayOutputStream()
+    val print = java.io.PrintStream(buffer, true, "UTF-8")
+    val capture: Stdio = Stdio(print, print, null, termcapDefinitions.basicTermcap)
+
+    safely(invoke(classpath, suite, t"--list" :: args)(using capture))
+
+    print.flush()
+
+    Text(buffer.toString("UTF-8").nn).cut(t"\n").each: line =>
+      if line.length > 8 then
+        val id: Text = line.keep(6)
+        val rest: Text = line.skip(8)
+
+        rest.cut(t"  ") match
+          case kind :: path =>
+            val joined: Text = path.join(t"  ")
+            if joined != t"" then model.schedule(id, kind, joined.cut(t"/"))
+
+          case _ =>
+            ()
