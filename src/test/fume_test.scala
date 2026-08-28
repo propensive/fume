@@ -133,3 +133,36 @@ object Tests extends Suite(m"Fume tests"):
       jnf.Files.write(file.toPath, "tel 1.0\n\nclasspath out/renewed.jar\n".getBytes("UTF-8"))
       (first, read(directory, t"classpath"))
     . assert(_ == (t"out/old.jar", t"out/renewed.jar"))
+
+    test(m"a started run is entered in the active ledger"):
+      val id = Journal.start(t"1", t"out.jar", List(t"kind:bench"), List(t"a.Tests"))
+      Journal.active.seek(_.id == id).let { run => (run.running, run.scheduled) }
+    . assert(_ == (true, List(t"a.Tests")))
+
+    test(m"a finished run moves to the completed ledger"):
+      val id = Journal.start(t"1", t"out.jar", List(), List(t"b.Tests"))
+      Journal.finish(id, Journal.Outcome.Passed, Unset)
+
+      ( Journal.active.exists(_.id == id),
+        Journal.completed.seek(_.id == id).let(_.outcome) )
+
+    . assert(_ == (false, Journal.Outcome.Passed))
+
+    test(m"each suite's verdict is recorded against its run"):
+      val id = Journal.start(t"1", t"out.jar", List(), List(t"c.Tests", t"d.Tests"))
+      Journal.record(id, t"c.Tests", true, Unset, 0L)
+      Journal.record(id, t"d.Tests", false, Unset, 0L)
+      Journal.finish(id, Journal.Outcome.Failed, Unset)
+
+      Journal.completed.seek(_.id == id).let: run =>
+        (run.suites.map(_.suite), run.failures)
+
+    . assert(_ == (List(t"c.Tests", t"d.Tests"), 1))
+
+    test(m"a run in flight names the suite it is running"):
+      val id = Journal.start(t"1", t"out.jar", List(), List(t"e.Tests"))
+      Journal.began(id, t"e.Tests")
+      val during = Journal.active.seek(_.id == id).let(_.current)
+      Journal.record(id, t"e.Tests", true, Unset, 0L)
+      (during, Journal.active.seek(_.id == id).let(_.current))
+    . assert(_ == (t"e.Tests", Unset))

@@ -211,6 +211,15 @@ def runClient(): Unit =
                   winched.set(true)
                   SignalResponse.Accept
 
+              // The run is entered in the daemon's journal for its whole duration: it moves
+              // to the completed list at the end, whichever way it ends.
+              val journalId: Int =
+                Journal.start
+                  ( summon[DaemonService[?]].pid.value.show,
+                    classpath(),
+                    args,
+                    suites )
+
               // Each suite renders its own report as its event stream ends; the verdict
               // comes from its exit status, and the totals — when the suite ran by the
               // event protocol — accumulate towards the whole-run banner.
@@ -227,11 +236,14 @@ def runClient(): Unit =
 
                   case head :: tail =>
                     Out.println(t"fume: running $head")
+                    Journal.began(journalId, head)
+                    val suiteStarted: Long = java.lang.System.currentTimeMillis
 
                     val (exit, suiteTotals) =
                       runSuite(classpath, head, args, fork, width, terse, tty,
                           aborted, winched)
                     val passed = exit == Exit.Ok
+                    Journal.record(journalId, head, passed, suiteTotals, suiteStarted)
 
                     if suiteTotals.absent then
                       Out.println:
@@ -250,6 +262,13 @@ def runClient(): Unit =
                     (failures, ran, totals)
 
               val (failures, ran, totals) = recur(suites, 0, 0, Unset)
+
+              val outcome: Journal.Outcome =
+                if aborted.get then Journal.Outcome.Aborted
+                else if failures == 0 then Journal.Outcome.Passed
+                else Journal.Outcome.Failed
+
+              Journal.finish(journalId, outcome, totals)
 
               // The banner renders over the aggregate of every event-run suite; when every
               // suite ran legacy (each rendered its own banner already), only the summary
