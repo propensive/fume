@@ -69,7 +69,7 @@ object Suites:
         val root: Path on Linux = (if absolute then t"/" else base).as[Path on Linux]
         val pattern: Glob = Glob.parse(if absolute then entry.skip(1) else entry)
 
-        root.glob(pattern).map(_.encode).sort { (path: Text) => path.s }
+        root.glob(pattern).map(_.encode).order { (path: Text) => path.s }
 
       . or(List())
 

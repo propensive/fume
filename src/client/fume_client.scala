@@ -177,6 +177,7 @@ def runClient(): Unit =
           summon[Cli].suggest(argument, Suites.terms(cp, Unset), t"", t"")
 
       execute:
+        given Stdio = summon[Invocation].stdio
         classpath match
           case classpath: LocalClasspath =>
             val suites: List[Text] = selectSuites(classpath, suite())
@@ -325,6 +326,7 @@ def runClient(): Unit =
         val terms: List[Text] = selectionTerms(rest)
 
         execute:
+          given Stdio = summon[Invocation].stdio
           classpath match
             case classpath: LocalClasspath =>
               val suites: List[Text] = selectSuites(classpath, suite())
@@ -358,6 +360,7 @@ def runClient(): Unit =
         val failFast: Boolean = ui.FailFast().or(false)
 
         execute:
+          given Stdio = summon[Invocation].stdio
           classpath match
             case classpath: LocalClasspath =>
               Out.println(t"fume: 'watch' is not yet implemented")
@@ -381,12 +384,16 @@ def runClient(): Unit =
       case _ =>
         execute(usage())
 
-// The command bodies below take the ambient `Invocation` (a tracked capability), and their
-// `Stdio` and `WorkingDirectory` resolve THROUGH it automatically: `Stdio.Provider` and
-// `WorkingDirectory.Provider` givens in those types' companions extract the invocation's pure
-// members, so no `given Stdio = …` bindings (and certainly no `unsafeAssumePure`) appear at
-// use sites. `Stdio.Provider` is implemented by `Invocation` alone — deliberately not by `Cli`
-// — so the pure prelude section still cannot print, which is what keeps completion mode clean.
+// The command bodies below take the ambient `Invocation` (a tracked capability). Its
+// `WorkingDirectory` still resolves THROUGH it automatically, via the `WorkingDirectory.Provider`
+// given in that type's companion, which extracts the invocation's pure member.
+//
+// `Stdio` no longer does: `Invocation` now extends `Stdio` directly (and `Stdio.Provider` moved
+// up to `Cli`), so the ambient invocation itself is the nearest `Stdio` candidate — and being a
+// tracked capability, it cannot flow into the PURE `Stdio` that `Out.println` demands under
+// capture checking. Every printing scope therefore binds `given Stdio = invocation.stdio`
+// explicitly: `stdio` is the invocation's pure member, so this is an ordinary projection, not
+// purity laundering (no `unsafeAssumePure` anywhere).
 
 // Reads `--classpath`, with its operand completing as a PATHNAME: `Discoverable` now receives
 // the partially-typed operand text (soundness#1859), so completion delegates to
@@ -638,11 +645,13 @@ private def runSuite
         Out.println(t"fume: $suite predates event streaming; using the legacy run")
         (legacy(), Unset)
 
-private def showVersion()(using Invocation): Exit =
+private def showVersion()(using invocation: Invocation): Exit =
+  given Stdio = invocation.stdio
   Out.println(t"fume $fumeVersion")
   Exit.Ok
 
-private def usage()(using Invocation): UsageError.type =
+private def usage()(using invocation: Invocation): UsageError.type =
+  given Stdio = invocation.stdio
   Out.println(t"Usage: fume <command> [options] [terms...]")
   Out.println(t"")
   Out.println(t"Commands:")
@@ -667,6 +676,8 @@ private def install(force: Boolean)
 :   InstallFailed.type | Exit =
 
   import errorDiagnostics.stackTracesDiagnostics
+
+  given Stdio = invocation.stdio
 
   // The `DaemonService` extends `Entrypoint`, and `Completions.ensure` accepts a TRACKED
   // `Entrypoint^`, so the service is passed on with its capture intact — no purity laundering.
