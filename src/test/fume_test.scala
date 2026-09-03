@@ -166,3 +166,93 @@ object Tests extends Suite(m"Fume tests"):
       Journal.record(id, t"e.Tests", true, Unset, 0L)
       (during, Journal.active.seek(_.id == id).let(_.current))
     . assert(_ == (t"e.Tests", Unset))
+
+    // The load gate's scale is fixed explicitly in these tests rather than derived from the
+    // target: `Load.Scale.apply` sizes the top of the scale from the core count, which
+    // differs between machines.
+    test(m"the log scale places each octave at an equal fraction"):
+      val scale = Load.Scale(1.0, 16.0, 40)
+      List(1.0, 2.0, 4.0, 8.0, 16.0).map(scale.column(_))
+    . assert(_ == List(0, 10, 20, 30, 40))
+
+    test(m"a load below the bottom of the scale clamps to the left edge"):
+      Load.Scale(1.0, 16.0, 40).column(0.1)
+    . assert(_ == 0)
+
+    test(m"an idle machine has no logarithm and clamps to the left edge"):
+      Load.Scale(1.0, 16.0, 40).column(0.0)
+    . assert(_ == 0)
+
+    test(m"a load above the top of the scale clamps to the right edge"):
+      Load.Scale(1.0, 16.0, 40).column(64.0)
+    . assert(_ == 40)
+
+    test(m"the ruler marks each power of two in subscript digits"):
+      Load.ruler(Load.Scale(1.0, 16.0, 40), 46)
+    . assert(_ == t"╷₁        ╷₂        ╷₄        ╷₈        ╷₁₆")
+
+    test(m"a ruler with no room for the topmost label drops it"):
+      Load.ruler(Load.Scale(1.0, 16.0, 40), 40)
+    . assert(_ == t"╷₁        ╷₂        ╷₄        ╷₈")
+
+    test(m"a narrow ruler crowds its marks rather than garbling them"):
+      Load.ruler(Load.Scale(1.0, 16.0, 8), 8)
+    . assert(_ == t"╷₁╷₂╷₄╷₈")
+
+    test(m"the bar measures the load in eighths of a cell"):
+      Load.Scale(1.0, 16.0, 40).eighths(4.0)
+    . assert(_ == 160L)
+
+    test(m"a wholly filled or wholly empty cell is a space on its own colour"):
+      List(Load.glyph(0), Load.glyph(8))
+    . assert(_ == List(t" ", t" "))
+
+    test(m"a cell the fill boundary falls inside takes an eighth-block glyph"):
+      List(Load.glyph(1), Load.glyph(3), Load.glyph(7))
+    . assert(_ == List(t"▏", t"▍", t"▉"))
+
+    test(m"the bar spans exactly the width it is given"):
+      Load.bar(4.0, 8.0, Load.Scale(1.0, 16.0, 40)).plain
+    . assert(_ == t" "*40)
+
+    test(m"a cell below the target is coloured 'pass'"):
+      Load.colour(8, 29, 30)
+    . assert(_ == Palette.pass)
+
+    test(m"a cell at or past the target is coloured 'warning'"):
+      Load.colour(8, 30, 30)
+    . assert(_ == Palette.warning)
+
+    test(m"an unfilled cell is track, whichever side of the target it falls"):
+      List(Load.colour(0, 29, 30), Load.colour(0, 31, 30))
+    . assert(_ == List(Palette.track, Palette.track))
+
+    test(m"a load average renders to two decimal places"):
+      List(Load.show(0.5), Load.show(12.0), Load.show(1.05))
+    . assert(_ == List(t"0.50", t"12.00", t"1.05"))
+
+    test(m"a bare target number is seconds"):
+      Budget.parse(t"90")
+    . assert(_ == 90_000_000_000L)
+
+    test(m"target suffixes select seconds, minutes and hours"):
+      List(Budget.parse(t"45s"), Budget.parse(t"10m"), Budget.parse(t"2h"), Budget.parse(t"1.5m"))
+    . assert(_ == List(45_000_000_000L, 600_000_000_000L, 7_200_000_000_000L, 90_000_000_000L))
+
+    test(m"a target must be a positive duration"):
+      List(Budget.parse(t"0"), Budget.parse(t"-5"), Budget.parse(t"soon"), Budget.parse(t""))
+    . assert(_ == List(Unset, Unset, Unset, Unset))
+
+    test(m"the derived factor is the budget over the expectation"):
+      List(Budget.factor(60_000_000_000L, 120_000_000_000L),
+           Budget.factor(600_000_000_000L, 150_000_000_000L))
+    . assert(_ == List(t"0.500000000", t"4.000000000"))
+
+    test(m"a colossal expectation cannot round the factor to zero"):
+      Budget.factor(1L, 100_000_000_000L)
+    . assert(_ == t"0.000000001")
+
+    test(m"budgets render in seconds below a minute and minutes above"):
+      List(Budget.show(12_300_000_000L), Budget.show(246_000_000_000L))
+    . assert(_ == List(t"12.3s", t"4m06s"))
+

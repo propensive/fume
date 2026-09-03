@@ -301,9 +301,8 @@ final class Live(model: Model, initialWidth: Int, winched: juca.AtomicBoolean, i
     val label: Text = t" $done/$total"
     val span: Int = (width - label.length).max(1)
     val eighths: Long = if total == 0 then 0L else done.toLong*span*8L/total
-    val partials: List[Text] = List(t"", t"▏", t"▎", t"▍", t"▌", t"▋", t"▊", t"▉")
     val filled: Text = t"█"*(eighths/8L).toInt
-    val partial: Text = partials.stdlib((eighths%8L).toInt)
+    val partial: Text = Figures.partials.stdlib((eighths%8L).toInt)
     val track: Text = t"░"*(span - filled.length - partial.length).max(0)
 
     e"${Fg(Palette.accented)}($filled$partial)${Fg(Palette.subdued)}($track$label)"

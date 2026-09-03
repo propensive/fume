@@ -31,7 +31,7 @@ object settings:
   // to use its `release/lib` jars directly (fork-developer mode).
   val scalaHome = sys.env.getOrElse("SOUNDNESS_SCALA_HOME", "")
 
-  val soundnessVersion = "0.66.0"
+  val soundnessVersion = "0.68.0"
 
   // The Maven Central version fume's OWN library module (`fume-client`) is published under, AND the
   // version the `launcher` module resolves it at. Kept as a single value so the published

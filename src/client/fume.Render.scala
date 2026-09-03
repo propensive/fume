@@ -53,6 +53,17 @@ object Render:
 
   private given decimalizer: Decimalizer = Decimalizer(4)
 
+  // Fume speaking in its own voice — as distinct from a suite's report, which surrounds these
+  // lines. Bold white, and UNPREFIXED: a line reads as fume's because of how it looks, not
+  // because every message repeats the program's name. (`Palette.white`, not the theme's
+  // `foreground`, which is deliberately dimmer than white so that reports do not glare.)
+  //
+  // Terse output — CI logs, Claude Code — takes the same words with no styling at all, for the
+  // same reason the tables lose their colour there: the reader is a log, or a machine.
+  def announce(message: Text)(using Stdio, Environment): Unit =
+    if GithubActions.terse then Out.println(message)
+    else Out.println(e"$Bold(${Fg(Palette.white)}($message))")
+
   // The column which absorbs a table's spare width: elastic from its natural content width
   // with NO maximum, so `Flex.solve` hands it everything the rigid columns leave and the
   // table spans the full line. Exactly one column of each fume table uses it.

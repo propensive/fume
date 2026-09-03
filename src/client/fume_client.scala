@@ -123,6 +123,47 @@ object ui:
   // for tab-completion.
   val FailFast = Setting[Boolean](t"failFast", t"stop after the first failing test")
 
+  // The load gate: hold the run back until the system's 1-minute load average has fallen
+  // below this value. A `Setting`, so a benchmarking workspace can fix a house threshold in
+  // `.fume/config.tel` (`maxLoad 0.5`) and still override it per invocation; `--max-load`,
+  // the `fume.max.load` property and `FUME_MAX_LOAD` all reach it.
+  //
+  // `Setting[Text]`, decoded where it is read: distillate's `Double is Decodable in Text`
+  // demands an ambient `Tactic`, and declaring a fume-local given for a type as common as
+  // `Double` would compete with it at every other decode site in the package.
+  val MaxLoad =
+    Setting[Text]
+      ( t"maxLoad",
+        t"wait until the system load average falls below this value before running" )
+
+  // The run-length multiplier, forwarded to each suite as probably's `--scale=<factor>`: every
+  // declared benchmark, stress-test and profile target duration is multiplied by it, so 2
+  // runs each measurement twice as long and 0.25 a quarter as long. Geometric, so the
+  // durations keep their proportions to one another; the suite's own source is untouched.
+  //
+  // It reaches the suite through the selection arguments, which is fume's only channel to a
+  // suite. A suite built against a Soundness that predates `--scale` reads it as an axis
+  // constraint on an axis named `--scale`, which no test has, and a constraint on an absent
+  // axis admits everything — so an old suite silently ignores the flag and runs normally,
+  // rather than losing its selection. Sent only when asked for, all the same.
+  val DurationScale =
+    Setting[Text]
+      ( t"durationScale",
+        t"multiply every benchmark, stress and profile duration by this factor" )
+
+  // The run-length budget, from which the multiplier above is DERIVED rather than stated: a
+  // schedule pre-pass sums the expected measuring time of every admitted benchmark, stress
+  // test and profile, and the factor that fits that sum into the budget is forwarded as
+  // `--scale=`. Seconds when bare (`90`), or suffixed (`90s`, `10m`, `2h`). Only measurement
+  // time is budgeted — staging, compilation and unit tests are on top — so the run completes
+  // in APPROXIMATELY the asked-for time, not exactly. Mutually exclusive with
+  // `--duration-scale`, which wins: a stated factor is deterministic where a derived one
+  // depends on what the selection admits.
+  val Target =
+    Setting[Text]
+      ( t"target",
+        t"scale benchmark, stress and profile durations to fit this total running time" )
+
 // There is no `Boolean is Decodable in Text` given in distillate, so `Setting[Boolean]` reads
 // (from a flag operand, a system property or an environment variable) decode here: `true`,
 // `yes` and `on` — case-insensitively — are true, and anything else is false.
@@ -166,6 +207,9 @@ def runClient(): Unit =
       val suite: Prospective[Text] = suiteFlag(classpath)
       val kinds: List[Text] = selectedKinds
       val failFast: Boolean = ui.FailFast().or(false)
+      val maxLoad: Optional[Text] = ui.MaxLoad()
+      val durationScale: Optional[Text] = ui.DurationScale()
+      val target: Optional[Text] = ui.Target()
       val fork: Boolean = ui.Fork().present
       val terms: List[Text] = selectionTerms(rest)
 
@@ -183,11 +227,52 @@ def runClient(): Unit =
             val suites: List[Text] = selectSuites(classpath, suite())
 
             if suites.nil then
-              Out.println(t"fume: no test suites were found on the classpath")
+              Render.announce(t"no test suites were found on the classpath")
               NoSuites
             else
               val kindTerms: List[Text] = kinds.map { (kind: Text) => t"kind:$kind" }
-              val args: List[Text] = kindTerms + terms
+              val selectionArgs: List[Text] = kindTerms + terms
+
+              // A positive factor becomes probably's `--scale=<factor>`; anything else is
+              // reported and dropped, like `--max-load` above, so that a mistyped multiplier
+              // costs a warning rather than a run. The factor is checked here but forwarded
+              // VERBATIM — the text the user wrote is what the suite parses, so no rounding
+              // or reformatting can creep in on the way.
+              val scaleTerm: Optional[Text] =
+                durationScale.lay(Unset: Optional[Text]): text =>
+                  if safely(text.as[Double]).lay(false)(_ > 0.0) then t"--scale=$text" else Unset
+
+              if durationScale.present && scaleTerm.absent
+              then Render.announce(t"--duration-scale must be a positive number; ignoring it")
+
+              if durationScale.present && target.present
+              then Render.announce
+                     (t"--target and --duration-scale are mutually exclusive; using --duration-scale")
+
+              // With a budget (and no explicit factor), the schedule pre-pass prices the
+              // selection and the factor is derived. A budget that buys nothing — no timed
+              // tests admitted, or no suite able to stream its schedule — changes nothing.
+              val budgetTerm: Optional[Text] =
+                if scaleTerm.present || target.absent then Unset else
+                  target.let(Budget.parse(_)).lay(Unset: Optional[Text]): nanos =>
+                    val priced: Long = Budget.expected(classpath, suites, selectionArgs)
+
+                    if priced == 0L then
+                      Render.announce(t"the selection has no timed measurements; ignoring --target")
+                      Unset
+                    else
+                      val factor: Text = Budget.factor(nanos, priced)
+                      Render.announce:
+                        t"the selection expects ${Budget.show(priced)} of measurement; scaling by $factor to fit ${Budget.show(nanos)}"
+                      t"--scale=$factor"
+
+              if target.present && scaleTerm.absent && budgetTerm.absent && target.let(Budget.parse(_)).absent
+              then Render.announce(t"--target must be a positive duration such as 90, 45s or 10m; ignoring it")
+
+              val scaleTerms: List[Text] =
+                scaleTerm.or(budgetTerm).lay(Nil: List[Text])(List(_))
+
+              val args: List[Text] = scaleTerms + selectionArgs
 
               val width: Int = safely(Environment.columns.as[Int]).or(120)
               val terse: Boolean = fume.GithubActions.terse
@@ -211,6 +296,21 @@ def runClient(): Unit =
                 case Interrupt.Winch =>
                   winched.set(true)
                   SignalResponse.Accept
+
+              // The load gate, if `--max-load` asked for one. It is entered AFTER the signal
+              // trap above, so Ctrl+C during the wait sets `aborted` and the run below then
+              // finishes immediately without starting a suite. A value that does not parse
+              // (or is not positive) is reported and ignored rather than failing the run: the
+              // gate is an optimisation for measurement quality, never a precondition.
+              val threshold: Optional[Double] =
+                maxLoad.lay(Unset: Optional[Double]): text =>
+                  safely(text.as[Double]).lay(Unset: Optional[Double]): value =>
+                    if value > 0.0 then value else Unset
+
+              if maxLoad.present && threshold.absent
+              then Render.announce(t"--max-load must be a positive number; not waiting")
+
+              threshold.let(Load.settle(_, width, tty, aborted)).unit
 
               // The run is entered in the daemon's journal for its whole duration: it moves
               // to the completed list at the end, whichever way it ends.
@@ -236,7 +336,7 @@ def runClient(): Unit =
                     (failures, ran, totals)
 
                   case head :: tail =>
-                    Out.println(t"fume: running $head")
+                    Render.announce(t"running $head")
                     Journal.began(journalId, head)
                     val suiteStarted: Long = java.lang.System.currentTimeMillis
 
@@ -247,8 +347,8 @@ def runClient(): Unit =
                     Journal.record(journalId, head, passed, suiteTotals, suiteStarted)
 
                     if suiteTotals.absent then
-                      Out.println:
-                        if passed then t"fume: $head: passed" else t"fume: $head: FAILED"
+                      Render.announce:
+                        if passed then t"$head: passed" else t"$head: FAILED"
 
                     val failures2 = if passed then failures else failures + 1
 
@@ -276,11 +376,16 @@ def runClient(): Unit =
               // line prints.
               totals.let(Render.finale(_, terse))
 
-              Out.println(t"fume: ${ran - failures} of $ran suites passed")
+              // `0 of 0 suites passed` would read like a clean run; nothing ran at all. This
+              // is the shape of an abort — Ctrl+C at the load gate, or before the first suite
+              // began — and of a selection that admitted no suite.
+              Render.announce:
+                if ran == 0 then t"no tests were run"
+                else t"${ran - failures} of $ran suites passed"
               if failures == 0 then Exit.Ok else TestsFailed
 
           case _ =>
-            Out.println(t"fume: at least one --classpath must be specified")
+            Render.announce(t"at least one --classpath must be specified")
             NoClasspath
 
     arguments match
@@ -332,7 +437,7 @@ def runClient(): Unit =
               val suites: List[Text] = selectSuites(classpath, suite())
 
               if suites.nil then
-                Out.println(t"fume: no test suites were found on the classpath")
+                Render.announce(t"no test suites were found on the classpath")
                 NoSuites
               else
                 val kindTerms: List[Text] = kinds.map { (kind: Text) => t"kind:$kind" }
@@ -348,7 +453,7 @@ def runClient(): Unit =
                 if recur(suites, false) then TestsFailed else Exit.Ok
 
             case _ =>
-              Out.println(t"fume: at least one --classpath must be specified")
+              Render.announce(t"at least one --classpath must be specified")
               NoClasspath
 
       // `fume watch …` — as `run`, but watch the OUTPUT jars named by `--classpath` (something
@@ -363,11 +468,11 @@ def runClient(): Unit =
           given Stdio = summon[Invocation].stdio
           classpath match
             case classpath: LocalClasspath =>
-              Out.println(t"fume: 'watch' is not yet implemented")
+              Render.announce(t"'watch' is not yet implemented")
               Unimplemented
 
             case _ =>
-              Out.println(t"fume: at least one --classpath must be specified")
+              Render.announce(t"at least one --classpath must be specified")
               NoClasspath
 
       // `fume install [--force]` — install shell tab-completions and the manpage.
@@ -451,7 +556,9 @@ private def suiteFlag(classpath: Optional[LocalClasspath])(using Cli, Interprete
 // nor the operand of a value-taking flag. This does NOT interpret the terms — they are
 // forwarded verbatim to each suite — it only separates them from fume's own flags.
 private def selectionArguments(rest: List[Argument]): List[Argument] =
-  val valueFlags: List[Flag] = List(ui.Classpath.flag, ui.Suite, ui.FailFast.flag)
+  val valueFlags: List[Flag] =
+    List(ui.Classpath.flag, ui.Suite, ui.FailFast.flag, ui.MaxLoad.flag, ui.DurationScale.flag,
+         ui.Target.flag)
 
   def recur(args: List[Argument], terms: List[Argument]): List[Argument] = args match
     case head :: tail =>
@@ -483,7 +590,7 @@ private def selectSuites(classpath: LocalClasspath, suite: Optional[Text]): List
 // output and yielding its exit status. The `java` executable is the daemon's own
 // (`java.home`), so no PATH lookup is involved.
 private def forkSuite(classpath: LocalClasspath, suite: Text, args: List[Text])
-   (using Stdio, WorkingDirectory)
+   (using Stdio, WorkingDirectory, Environment)
 :   Exit =
 
   val java: Text =
@@ -498,7 +605,7 @@ private def forkSuite(classpath: LocalClasspath, suite: Text, args: List[Text])
     job.exitStatus()
 
   . or:
-      Out.println(t"fume: could not invoke $suite")
+      Render.announce(t"could not invoke $suite")
       Exit.Fail(2)
 
 // Runs one suite the LEGACY way: in-process through `Suite#invoke` (the suite renders its
@@ -506,13 +613,13 @@ private def forkSuite(classpath: LocalClasspath, suite: Text, args: List[Text])
 // whole story for `--fork` and for `--list`, whose selection the event protocol deliberately
 // rejects (the stable text output belongs to the legacy path).
 private def invokeSuite(classpath: LocalClasspath, suite: Text, args: List[Text], fork: Boolean)
-   (using Stdio, WorkingDirectory, Monitor)
+   (using Stdio, WorkingDirectory, Monitor, Environment)
 :   Exit =
 
   if fork then forkSuite(classpath, suite, args)
   else
     Suites.invoke(classpath, suite, args).or:
-      Out.println(t"fume: $suite could not be run in-process; running it in a separate JVM")
+      Render.announce(t"$suite could not be run in-process; running it in a separate JVM")
       forkSuite(classpath, suite, args)
 
 // Runs one suite by the EVENT PROTOCOL: `EventStream.stream` runs it in the isolating
@@ -537,7 +644,6 @@ private def runSuite
    (using Stdio, WorkingDirectory, Monitor, Environment)
 :   (Exit, Optional[Doc.Totals]) =
 
-  import abstractables.durationAbstractable
   import probates.cancelProbate
 
   def legacy(): Exit = invokeSuite(classpath, suite, args, fork = false)
@@ -572,15 +678,18 @@ private def runSuite
 
     // The one-second trigger: if the suite is still producing when this fires, the board
     // starts painting; `activate` is a no-op once `finish` has run.
+    //
+    // `1*Second`, not `snooze(1000L)`: `snooze`'s `Long` overload counts NANOSECONDS, so the
+    // bare literal made this (and the two loops below) fire immediately and spin.
     val timer = async:
-      snooze(1000L)
+      snooze(1*Second)
       live.let(_.activate())
 
     // The resize pulse, owned by the invocation so it outlives the timer: each beat lets
     // the board react to a forwarded SIGWINCH.
     val pulse = async:
       def loop(): Unit =
-        snooze(200L)
+        snooze(0.2*Second)
         live.let(_.pulse())
         loop()
 
@@ -598,7 +707,7 @@ private def runSuite
               case Live.Key.Up   => live.let(_.scroll(-1))
               case Live.Key.Down => live.let(_.scroll(1))
               case _             => ()
-          else snooze(30L)
+          else snooze(0.03*Second)
 
         if input.present then loop()
 
@@ -618,7 +727,7 @@ private def runSuite
 
     outcome match
       case EventStream.Outcome.Completed(exit) if exit == EventStream.abortExit =>
-        Out.println(t"fume: aborted; the partial report follows")
+        Render.announce(t"aborted; the partial report follows")
         val document = Documenting.document(model.state())
         Render.suite(document, live.let(_.columns).or(width), terse)
         (Exit.Fail(exit), document.totals)
@@ -638,11 +747,11 @@ private def runSuite
         (if exit == 0 || emptySelection then Exit.Ok else Exit.Fail(exit), document.totals)
 
       case EventStream.Outcome.Incompatible =>
-        Out.println(t"fume: $suite was built against an incompatible Soundness; falling back")
+        Render.announce(t"$suite was built against an incompatible Soundness; falling back")
         (legacy(), Unset)
 
       case _ =>
-        Out.println(t"fume: $suite predates event streaming; using the legacy run")
+        Render.announce(t"$suite predates event streaming; using the legacy run")
         (legacy(), Unset)
 
 private def showVersion()(using invocation: Invocation): Exit =

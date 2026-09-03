@@ -66,13 +66,17 @@ object Figures:
   def percent(basisPoints: Long): Text =
     t"${basisPoints/100}.${(basisPoints%100).show.pad(2, Rtl, '0')}"
 
+  // The left-aligned eighth-block characters, indexed by the eighths of a cell they fill:
+  // index 0 is empty, and a whole cell is `█` rather than an eighth index. Shared by every
+  // bar fume draws — the progress line, the histograms and the load gate.
+  val partials: List[Text] = List(t"", t"▏", t"▎", t"▍", t"▌", t"▋", t"▊", t"▉")
+
   // A histogram bar of `samples` scaled against `max` over a 40-cell span: full blocks
   // with a final fractional character from the eighth-block sequence. Any nonzero count
   // shows at least the thinnest bar.
   def bar(samples: Long, max: Long): Text =
     val eighths = (if max == 0L then 0L else samples*320L/max).max(if samples > 0L then 1L else 0L)
-    val partial: List[Text] = List(t"", t"▏", t"▎", t"▍", t"▌", t"▋", t"▊", t"▉")
-    t"█"*(eighths/8L).toInt + partial.stdlib((eighths%8L).toInt)
+    t"█"*(eighths/8L).toInt + partials.stdlib((eighths%8L).toInt)
 
   val sparkBlocks: List[Text] = List(t"▁", t"▂", t"▃", t"▄", t"▅", t"▆", t"▇", t"█")
 

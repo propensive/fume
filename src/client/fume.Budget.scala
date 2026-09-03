@@ -32,50 +32,66 @@
                                                                                                   */
 package fume
 
+import java.util.concurrent.atomic as juca
+
 import soundness.*
 
-import luminosity.darkBrightness
-import themes.solarizedTheme
+import fume.Figures.measurable
+import probably.TestEvent
 
-// Fume's colour palette: the solarized-derived scheme probably's reporting used, now owned by
-// the consumer of the event stream. A singleton, not a `given`: fume renders with exactly one
-// palette, so call sites name `Palette.pass` directly rather than threading a capability-free
-// context parameter through every renderer.
-object Palette extends iridescence.Palette:
-  type Form = Srgb
+// The arithmetic behind `--target`: a whole run's measurement time, budgeted. The schedule
+// pre-pass (`--list` on the event protocol) streams one `TestScheduled` per admitted test,
+// and since the timed kinds carry their expected measuring time — declared metadata, scaled
+// by nothing at this point — the factor that makes the run fit the budget is simply
+// `target/expected`. Only MEASUREMENT time is budgeted: staging, compilation and the unit
+// tests around the benchmarks cost what they cost, on top.
+object Budget:
+  // `90` (seconds when bare), `90s`, `10m`, `2h`, decimals allowed (`1.5m`); nanoseconds out.
+  // Anything else — including zero and negative — is `Unset`.
+  def parse(text: Text): Optional[Long] =
+    if text.length == 0 then Unset else
+      val (digits, multiplier): (Text, Double) = text.s.charAt(text.length - 1) match
+        case 's' => (text.keep(text.length - 1), 1.0)
+        case 'm' => (text.keep(text.length - 1), 60.0)
+        case 'h' => (text.keep(text.length - 1), 3600.0)
+        case _   => (text, 1.0)
 
-  private val theme: Theme = summon[Theme]
+      safely(digits.as[Double]).lay(Unset: Optional[Long]): value =>
+        if value > 0.0 then (value*multiplier*1e9).toLong else Unset
 
-  val background:  Color in Srgb = theme.background.to[Srgb]
-  val foreground:  Color in Srgb = theme.foreground.to[Srgb]
+  // The sum, in nanoseconds, of every admitted timed test's expected measuring time, across
+  // all the suites of the run. A suite that cannot stream (pre-event, or an incompatible
+  // Soundness) contributes nothing — its measurements will simply run at their declared
+  // lengths — and untimed checks carry no estimate to add.
+  def expected(classpath: LocalClasspath, suites: List[Text], args: List[Text])
+     (using Stdio, Monitor)
+  :   Long =
 
-  private val yellow: Color in Srgb = theme.spectrum.yellow.to[Srgb]
-  private val red:    Color in Srgb = theme.spectrum.red.to[Srgb]
-  private val blue:   Color in Srgb = theme.spectrum.blue.to[Srgb]
+    val total: juca.AtomicLong = juca.AtomicLong(0L)
 
-  val warning:     Color in Srgb = yellow
-  val critical:    Color in Srgb = theme.spectrum.magenta.to[Srgb]
-  val benchmark:   Color in Srgb = theme.spectrum.cyan.to[Srgb]
-  val mixed:       Color in Srgb = blue
-  val informative: Color in Srgb = blue
-  val cold:        Color in Srgb = mix(yellow, red, 0.2)
-  val warm:        Color in Srgb = mix(yellow, red, 0.5)
-  val hot:         Color in Srgb = mix(yellow, red, 0.8)
-  val accented:    Color in Srgb = theme.spectrum.cyan.to[Srgb]
-  val highlight:   Color in Srgb = accent(yellow)
-  val pass:        Color in Srgb = theme.spectrum.green.to[Srgb]
-  val fail:        Color in Srgb = red
-  val aspirePass:  Color in Srgb = mix(theme.spectrum.green.to[Srgb], theme.spectrum.cyan.to[Srgb], 0.5)
-  val aspireFail:  Color in Srgb = subdue(yellow, 0.5)
-  val detail:      Color in Srgb = blue
-  val subdued:     Color in Srgb = subdue(theme.foreground.to[Srgb], 0.5)
+    suites.each: suite =>
+      // The abort thunk is passed explicitly: the DEFAULT argument's root capability cannot
+      // flow into `safely`'s enclosing function under capture checking (as in `runSuite`).
+      safely:
+        EventStream.stream(classpath, suite, t"--list" :: args)(
+          { case TestEvent.TestScheduled(_, _, expected) => expected.let(total.addAndGet(_)).unit
+            case _                                       => () },
+          () => false)
+      . unit
 
-  // The unfilled part of a bar, as a solid BACKGROUND colour. A quarter of the way from the
-  // terminal's background to `subdued`, which is what a `░` cell of `subdued` averages out to
-  // — so a bar drawn as solid track reads the same as one drawn with light-shade characters,
-  // but a partial eighth-block glyph can sit on it without a sliver of bare terminal
-  // background showing through between the fill and the track.
-  val track:       Color in Srgb = mix(background, subdued, 0.25)
-  val unaccented:  Color in Srgb = subdued
-  val positive:    Color in Srgb = pass
-  val negative:    Color in Srgb = fail
+    total.get
+
+  // The factor, rendered to nine decimal places by hand: `Double.toString` falls into
+  // exponent notation for small values, which probably's number parser does not read, and
+  // `String.format` follows the locale's decimal separator, which it does not read either.
+  // Floored at a nanofactor so a colossal expectation cannot round the factor to zero, which
+  // the suite would ignore.
+  def factor(target: Long, expected: Long): Text =
+    val nanofactor: Long = ((target.toDouble/expected.toDouble)*1e9).toLong.max(1L)
+    t"${nanofactor/1_000_000_000L}.${(nanofactor%1_000_000_000L).show.pad(9, Rtl, '0')}"
+
+  // `12.3s` for sub-minute budgets, `4m06s` above: enough precision to confirm what was asked.
+  def show(nanos: Long): Text =
+    val tenths: Long = nanos/100_000_000L
+    if tenths < 600L then t"${tenths/10L}.${tenths%10L}s"
+    else t"${tenths/600L}m${(tenths%600L/10L).show.pad(2, Rtl, '0')}s"

@@ -146,7 +146,7 @@ final class Model:
 
   def handle(event: TestEvent): Unit = mutex:
     event match
-      case TestEvent.TestScheduled(ref, kind) =>
+      case TestEvent.TestScheduled(ref, kind, _) =>
         scheduled(ref, kind)
 
       case TestEvent.SuiteStarted(ref, _) =>
