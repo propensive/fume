@@ -101,8 +101,17 @@ then
   exit 1
 fi
 
-java -Dbuild.executable=fume -jar fume.jar
-gh release upload "$VERSION" --repo "$REPO" fume
+# One executable per supported platform, all assembled here: producing an Ethereal executable
+# is byte-patching a bare runner stub and appending the (platform-independent) repackaged JAR,
+# not compilation, so `-Dbuild.target` cross-"builds" every platform from this machine. The
+# stubs are fetched from the Soundness `runners` release and digest-verified by the assembler.
+PLATFORMS="linux-x64 linux-arm64 macos-x64 macos-arm64 windows-x64"
+DIST=$(mktemp -d)
+for platform in $PLATFORMS; do
+  ext=""; [[ "$platform" == windows-* ]] && ext=".exe"
+  java "-Dbuild.executable=$DIST/fume-$platform$ext" "-Dbuild.target=$platform" -jar fume.jar
+done
+gh release upload "$VERSION" --repo "$REPO" "$DIST"/fume-*
 gh release edit "$VERSION" --repo "$REPO" --notes \
-  "The \`fume\` executable (a self-fetching Burdock launcher) and the \`fume-client\` library it externalizes, resolving further dependencies from the Soundness and proscala releases and Maven Central on first run."
-echo "release $VERSION complete: $ASSET_NAME + fume"
+  "One \`fume\` executable per platform (a self-fetching Burdock launcher), and the \`fume-client\` library each externalizes, resolving further dependencies from the Soundness and proscala releases and Maven Central on first run."
+echo "release $VERSION complete: $ASSET_NAME + $(cd "$DIST" && echo fume-*)"
