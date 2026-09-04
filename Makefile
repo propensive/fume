@@ -1,13 +1,13 @@
 # Build the invocation-point `launcher` module as a plain (clean, no shell-preamble) assembly JAR.
-# NOTE: `launcher` depends on fume-client as a PUBLISHED Maven Central coordinate, so this only
-# resolves once `make release VERSION=X.Y.Z` (below) has put that jar on Central. Until then,
-# build/run the library directly with `make run`.
+# NOTE: `launcher` depends on fume-client as a PUBLISHED coordinate, resolved from ~/.ivy2/local
+# (a `make run`/`make fume` publishes it there) and externalized against the GitHub release
+# during `make release`.
 assembly:
 	mill fume.launcher.assembly
 
-# Publish fume's library module (fume-client) to Maven Central. Signed, via the same Sonatype
-# Central flow as Soundness — see etc/ci/release.sh. Run this BEFORE `make fume`, and wait for
-# Central + deps.dev to index the jar, so the repackager can externalize it.
+# Publish fume to GitHub Releases: the fume-client jar first, then — once its digest is
+# indexed — the repackaged `fume` executable, added to the same release. See etc/ci/release.sh
+# for the two-step ordering and its verification.
 release:
 	./etc/ci/release.sh $(VERSION)
 
@@ -31,7 +31,7 @@ publishLocal:
 # is inlined. Set GITHUB_TOKEN to lift the API rate limit; the requests are otherwise anonymous.
 fume.jar: assembly
 	cp out/fume/launcher/assembly.dest/out.jar fume.jar
-	java -cp fume.jar soundness.repackage --github propensive/soundness,propensive/proscala
+	java -cp fume.jar soundness.repackage --github propensive/fume,propensive/soundness,propensive/proscala
 
 fume: fume.jar
 	java -Dbuild.executable=fume -jar fume.jar
