@@ -128,7 +128,8 @@ object settings:
     mvn"dev.propensive:sedentary-core:$soundnessVersion",      // benchmarks and stress tests
     mvn"dev.propensive:stratiform-core:$soundnessVersion",     // .fume/config.tel
     mvn"dev.propensive:tessellate-core:$soundnessVersion",     // Flow.wrap for report text
-    mvn"dev.propensive:ultimatum-core:$soundnessVersion")      // the scrolling viewport
+    mvn"dev.propensive:ultimatum-core:$soundnessVersion",      // the scrolling viewport
+    mvn"dev.propensive:ziggurat-core:$soundnessVersion")       // Xeq.dispatcher, for releases
 
 // Exposes the fork compiler's `release/lib` jars (from a local build via `settings.scalaHome`, or
 // downloaded from the `settings.scalaRelease` GitHub release) as a Maven-layout repository,

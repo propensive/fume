@@ -112,6 +112,29 @@ for platform in $PLATFORMS; do
   java "-Dbuild.executable=$DIST/fume-$platform$ext" "-Dbuild.target=$platform" -jar fume.jar
 done
 gh release upload "$VERSION" --repo "$REPO" "$DIST"/fume-*
+
+# The `fume` polyglot bootstrap: a small any-shell script (rename to fume.bat/fume.ps1 on
+# Windows) embedding each executable's URL and checksum, which downloads the right one,
+# verifies it, replaces itself and re-invokes. Built by ziggurat's `Xeq.dispatcher`, run from
+# the fat launcher assembly (ziggurat-core is among fume's dependencies for exactly this).
+# The manifest needs the executables' digests, which GitHub computes asynchronously — poll as
+# for the library. If the pinned Soundness predates `dispatcher`, warn and release without.
+MANIFEST=$(mktemp)
+for i in $(seq 1 60); do
+  gh api "repos/$REPO/releases/tags/$VERSION" --jq \
+    '.assets[] | select((.name | startswith("fume-")) and (.name | endswith(".jar") | not))
+     | .name + "\t" + .browser_download_url + "\t" + (.digest // "" | sub("sha256:"; ""))' \
+    > "$MANIFEST"
+  grep -qv $'\t$' "$MANIFEST" && ! grep -q $'\t$' "$MANIFEST" && break
+  sleep 5
+done
+sed -i.bak 's/^fume-//; s/\.exe\t/\t/' "$MANIFEST"
+
+if java -cp out/fume/launcher/assembly.dest/out.jar ziggurat.Xeq dispatcher "$DIST/fume" "$MANIFEST"
+then gh release upload "$VERSION" --repo "$REPO" "$DIST/fume"
+else echo "warning: ziggurat.Xeq has no dispatcher at the pinned Soundness; released without the bootstrap script" >&2
+fi
+
 gh release edit "$VERSION" --repo "$REPO" --notes \
-  "One \`fume\` executable per platform (a self-fetching Burdock launcher), and the \`fume-client\` library each externalizes, resolving further dependencies from the Soundness and proscala releases and Maven Central on first run."
-echo "release $VERSION complete: $ASSET_NAME + $(cd "$DIST" && echo fume-*)"
+  "The \`fume\` polyglot bootstrap (a small any-shell script — rename to \`fume.bat\` or \`fume.ps1\` on Windows — which downloads the right executable below, verifies its checksum, replaces itself and re-invokes), one \`fume\` executable per platform, and the \`fume-client\` library each externalizes, resolving further dependencies from the Soundness and proscala releases and Maven Central on first run."
+echo "release $VERSION complete: $ASSET_NAME + $(cd "$DIST" && echo fume*)"
