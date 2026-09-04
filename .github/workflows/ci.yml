@@ -1,0 +1,84 @@
+name: CI
+
+# Build fume and run its test suite on every merge into main. The workflow reproduces the
+# local development flow (see the Makefile): sync the pinned Soundness release from GitHub
+# Releases into ~/.ivy2/local, compile the client, publish it locally so the launcher's
+# published-coordinate dependency resolves, assemble the launcher and the tests, and run the
+# tests. The Burdock repackage (`make fume`) is deliberately not run: it externalizes against
+# Maven Central artifacts that do not exist for a non-release build.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # The version pins live in build.mill; read them once so caches and the release sync
+      # follow a bump automatically.
+      - name: Read version pins
+        id: pins
+        run: |
+          echo "soundness=$(sed -n 's/.*val soundnessVersion = "\(.*\)".*/\1/p' build.mill)" >> "$GITHUB_OUTPUT"
+          echo "scala=$(sed -n 's/.*SOUNDNESS_SCALA_RELEASE", "\(.*\)").*/\1/p' build.mill)" >> "$GITHUB_OUTPUT"
+
+      # Mill's bootstrap needs a JVM to start from; the build itself provisions its own
+      # toolchain JVM (`mill-jvm-version` in build.mill), but the test suite is run with
+      # plain `java`, so this must be at least the bytecode level the build targets.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 25
+
+      # The Soundness components (synced from the GitHub release, immutable per version) and
+      # the proscala toolchain tarball (likewise). The coursier cache holds the third-party
+      # dependencies the component POMs name.
+      - name: Cache Soundness release
+        uses: actions/cache@v4
+        with:
+          path: ~/.ivy2/local/dev.propensive
+          key: soundness-${{ steps.pins.outputs.soundness }}
+      - name: Cache proscala toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/soundness/proscala
+          key: proscala-${{ steps.pins.outputs.scala }}
+      - name: Cache coursier
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/coursier
+          key: coursier-${{ hashFiles('build.mill') }}
+          restore-keys: coursier-
+
+      # Soundness releases are per-component jars on GitHub Releases, each embedding its own
+      # POM and ivy.xml; the sync script (fetched from the same Soundness tag, so script and
+      # release cannot drift apart) reconstructs the ivy2 layout coursier resolves from. The
+      # token only lifts the API rate limit; the release is public. Idempotent: jars already
+      # cached with GitHub's digest are left alone.
+      - name: Sync the Soundness release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.pins.outputs.soundness }}
+        run: |
+          curl -fsSL -o /tmp/sync_releases.py \
+            "https://raw.githubusercontent.com/propensive/soundness/$VERSION/etc/ci/sync_releases.py"
+          python3 /tmp/sync_releases.py "$VERSION"
+
+      - name: Compile the client
+        run: ./mill fume.client.compile
+
+      # The launcher names fume-client as a PUBLISHED coordinate (see build.mill), so a local
+      # publish must precede its assembly, exactly as `make run` does.
+      - name: Assemble the launcher
+        run: |
+          ./mill fume.client.publishLocal
+          ./mill fume.launcher.assembly
+
+      - name: Run the tests
+        run: |
+          ./mill fume.test.assembly
+          java -cp out/fume/test/assembly.dest/out.jar fume.Tests
