@@ -152,6 +152,12 @@ then
 else echo "warning: ziggurat.Xeq has no dispatcher at the pinned Soundness; released without the bootstrap script" >&2
 fi
 
+# The installer served from https://fume.propensive.dev/ (`curl -fsSL … | sh`): plain POSIX
+# shell, embedding this release's per-platform digests, generated once they are all known and
+# attached to the release as `install.sh` — the domain serves (or redirects to) that asset.
+etc/ci/generate-install.sh "$VERSION" > "$DIST/install.sh"
+gh release upload "$VERSION" --repo "$REPO" "$DIST/install.sh"
+
 gh release edit "$VERSION" --repo "$REPO" --notes \
   "${SNIPPET}The \`fume\` polyglot bootstrap (a small any-shell script — rename to \`fume.bat\` or \`fume.ps1\` on Windows — which downloads the right executable below, verifies its checksum, replaces itself and re-invokes), one \`fume\` executable per platform, and the \`fume-client\` library each externalizes, resolving further dependencies from the Soundness and proscala releases and Maven Central on first run."
 echo "release $VERSION complete: $ASSET_NAME + $(cd "$DIST" && echo fume*)"
