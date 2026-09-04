@@ -20,18 +20,18 @@ object settings:
   // NOTE these two `sys.env` overrides do NOT work under Mill: the value is read when the build
   // script is evaluated, and neither a fresh daemon nor `--no-daemon` propagates the variable. To
   // switch toolchains, edit the defaults here.
-  val scalaVersion = sys.env.getOrElse("SOUNDNESS_SCALA_VERSION", "3.9.0-RC6-p15")
+  val scalaVersion = sys.env.getOrElse("SOUNDNESS_SCALA_VERSION", "3.9.0-p16")
   // The propensive/proscala release the toolchain jars are downloaded from (unless a local
   // `SOUNDNESS_SCALA_HOME` is set), exactly as in the Soundness build. The two MAY differ (the
   // synthetic repository below republishes whatever the release ships under `scalaVersion`), but
   // the pair must be kept in step with Soundness's own, or fume would compile against a different
   // compiler build from the one that produced the Soundness TASTy it reads.
-  val scalaRelease = sys.env.getOrElse("SOUNDNESS_SCALA_RELEASE", "3.9.0-RC6-p15")
+  val scalaRelease = sys.env.getOrElse("SOUNDNESS_SCALA_RELEASE", "3.9.0-p16")
   // Empty by default → download `scalaRelease`. Set to a local `make`-built `release` directory
   // to use its `release/lib` jars directly (fork-developer mode).
   val scalaHome = sys.env.getOrElse("SOUNDNESS_SCALA_HOME", "")
 
-  val soundnessVersion = "0.68.0"
+  val soundnessVersion = "0.64.0"
 
   // The Maven Central version fume's OWN library module (`fume-client`) is published under, AND the
   // version the `launcher` module resolves it at. Kept as a single value so the published
@@ -41,6 +41,22 @@ object settings:
   val fumeVersion = sys.env.getOrElse("FUME_VERSION", "0.1.0")
 
   val scalaOptions = Seq(
+    // The fork's opt-in behaviours, enabled by name, exactly as the Soundness build enables
+    // them (fume compiles the same idioms from the same TASTy): every capture-checking
+    // repair, spreadable varargs, given-prefix sealing, diagnostic givens, and JSR-45 source
+    // maps (formerly `-Xjsr45` — fume's own code is heavily inlined Soundness code, so
+    // without the maps a frame in one of fume's classes resolves to a synthetic line).
+    "-Zalias-captures",
+    "-Zdiagnostic-givens",
+    "-Zgiven-prefixes",
+    "-Zinline-source-maps",
+    "-Zopaque-mutability",
+    "-Zpure-iarrays",
+    "-Zretains-bounds",
+    "-Zretains-skolems",
+    "-Zspreadable-varargs",
+    "-Zunboxed-pure-types",
+    "-Zunion-captures",
     "-experimental",
     "-new-syntax",
     "-feature",
@@ -49,11 +65,6 @@ object settings:
     "-Wunused:imports",
     "-Wimplausible-patterns",
     "-Xmax-inlines", "32",
-    // Emit JSR-45 SMAPs (SourceDebugExtension) mapping inlined code back to its source, as the
-    // Soundness build does. Fume's own code is heavily inlined Soundness code, so without this a
-    // frame in one of fume's own classes resolves to a synthetic line with no way back to the
-    // call site.
-    "-Xjsr45",
     "-Yno-flexible-types",
     "-Yexplicit-nulls",
     "-Ycheck-all-patmat",
@@ -86,15 +97,38 @@ object settings:
   // `scala.`-qualified name or import, and cross the boundary through `proscenium.compat`.
   val predef = Seq("-Yno-predef", "-Yimports:java.lang,proscenium")
 
-  // Soundness publishes BUNDLES, not components (Soundness #1744): the ~230 per-component
-  // coordinates no longer exist, and the organization moved from `dev.soundness` to
-  // `dev.propensive`.
+  // Soundness publishes COMPONENTS again (Soundness #1929): each tagged version is a GitHub
+  // release whose assets are the individual component jars, and the bundles — including the
+  // `dev.propensive:soundness` universal aggregate fume used to depend on — are no longer
+  // published. Every released jar embeds its own POM and ivy.xml (`META-INF/maven/…`), and
+  // `make sync-releases VERSION=X.Y.Z` in the Soundness repository installs a release into
+  // `~/.ivy2/local` (Soundness #1933), from which coursier resolves these coordinates with no
+  // repository configuration. Component jars carry no `_3` suffix, hence the single-colon
+  // `mvn"…"`.
   //
-  // `dev.propensive:soundness` is the universal artifact — a POM-only aggregate of the eight
-  // non-opt-in bundles (base, cli, data, sci, test, tool, web, wasi), and the direct successor to
-  // the old `soundness-all` umbrella. Bundle jars carry no `_3` suffix (`artifactSuffix = ""` in
-  // the Soundness build), hence the single-colon `mvn"…"`.
-  val soundnessDeps = Seq(mvn"dev.propensive:soundness:$soundnessVersion")
+  // These are fume's TOP-LEVEL components only: each jar's embedded POM names its own
+  // dependencies, so the rest of the surface fume's `import soundness.*` touches arrives
+  // transitively.
+  val soundnessDeps = Seq(
+    mvn"dev.propensive:aviation-core:$soundnessVersion",       // timespec literals (0.2*Second)
+    mvn"dev.propensive:burdock-core:$soundnessVersion",        // externalize + the repackager
+    mvn"dev.propensive:digression-ansi:$soundnessVersion",     // stack-trace diagnostics
+    mvn"dev.propensive:escapade-io:$soundnessVersion",         // Teletype ↔ Stdio writables
+    mvn"dev.propensive:escritoire-core:$soundnessVersion",     // the board's tables
+    mvn"dev.propensive:ethereal-core:$soundnessVersion",       // the daemon
+    mvn"dev.propensive:eucalyptus-core:$soundnessVersion",     // logging.silentLogging
+    mvn"dev.propensive:exoskeleton-completions:$soundnessVersion", // execute + tab-completion
+    mvn"dev.propensive:exoskeleton-manpage:$soundnessVersion", // fume install's manpage
+    mvn"dev.propensive:galilei-jvm:$soundnessVersion",         // filesystem + glob
+    mvn"dev.propensive:guillotine-core:$soundnessVersion",     // sh"…" for forked suites
+    mvn"dev.propensive:hellenism-jvm:$soundnessVersion",       // LocalClasspath, classloaders
+    mvn"dev.propensive:iridescence-core:$soundnessVersion",    // the palette
+    mvn"dev.propensive:probably-cli:$soundnessVersion",        // Suite and its runner
+    mvn"dev.propensive:probably-events:$soundnessVersion",     // the BinTEL event stream
+    mvn"dev.propensive:sedentary-core:$soundnessVersion",      // benchmarks and stress tests
+    mvn"dev.propensive:stratiform-core:$soundnessVersion",     // .fume/config.tel
+    mvn"dev.propensive:tessellate-core:$soundnessVersion",     // Flow.wrap for report text
+    mvn"dev.propensive:ultimatum-core:$soundnessVersion")      // the scrolling viewport
 
 // Exposes the fork compiler's `release/lib` jars (from a local build via `settings.scalaHome`, or
 // downloaded from the `settings.scalaRelease` GitHub release) as a Maven-layout repository,
@@ -153,7 +187,12 @@ object toolchain extends Module:
 
     // (group, artifactId, jar filename in release/lib, dependencies as (group, id, version))
     val artifacts = Seq(
-      (sl, "scala-library", "scala-library.jar", Seq()),
+      // The fork's supplementary runtime (since 3.9.0-p16): shipped as its own jar so
+      // `scala-library` stays byte-identical to upstream's build, and declared as a
+      // dependency of `scala-library` so it rides along wherever the stdlib goes —
+      // exactly as in the Soundness build's toolchain repository.
+      (sl, "proscala-library_3", "proscala-library.jar", Seq()),
+      (sl, "scala-library", "scala-library.jar", Seq((sl, "proscala-library_3", v))),
       (sl, "scala3-library_3", "scala3-library.jar", Seq((sl, "scala-library", v))),
       (sl, "scala3-interfaces", "scala3-interfaces.jar", Seq()),
       (sl, "tasty-core_3", "tasty-core.jar", Seq((sl, "scala-library", v))),
@@ -219,6 +258,7 @@ trait Toolchain extends ScalaModule:
   // stream than the one that produced the Soundness jars.
   override def depManagement: T[Seq[Dep]] = Task:
     super.depManagement() ++ Seq(
+      mvn"org.scala-lang:proscala-library_3:${settings.scalaVersion}",
       mvn"org.scala-lang:scala-library:${settings.scalaVersion}",
       mvn"org.scala-lang:scala3-library_3:${settings.scalaVersion}",
       mvn"org.scala-lang:scala3-interfaces:${settings.scalaVersion}",
@@ -313,9 +353,8 @@ object fume extends Project:
   // `publishLocal` copy has different bytes and would be inlined, not externalized). Before the
   // first release, `make run` publishes locally and assembles against that instead.
   object launcher extends Component():
-    def mvnDeps = Seq(
-      mvn"dev.propensive:fume-client:${settings.fumeVersion}",
-      mvn"dev.propensive:soundness-cli:${settings.soundnessVersion}")
+    def mvnDeps =
+      mvn"dev.propensive:fume-client:${settings.fumeVersion}" +: settings.soundnessDeps
     def finalMainClass = "fume.fume"
     // A clean zip (no executable shell preamble) so the Burdock repackager can read and rewrite the
     // assembled JAR.

@@ -92,8 +92,6 @@ object EventStream:
      (using stdio: Stdio, monitor: Monitor)
   :   Optional[Outcome] =
 
-    import abstractables.durationAbstractable
-
     import scala.reflect.Selectable.reflectiveSelectable
 
     val loader: Classloader = classpath.classloader()
@@ -137,7 +135,7 @@ object EventStream:
               allFrames.tail.foreach { (frame: Data) => handle(probably.Streamer.read(frame)) }
 
             def drained(): Boolean =
-              scala.caps.unsafe.unsafeAssumeSeparate(safely(consumer.await(100L)).present)
+              scala.caps.unsafe.unsafeAssumeSeparate(safely(consumer.await(0.1*Second)).present)
 
             def spin(): Outcome =
               if drained() then Outcome.Completed(exit())

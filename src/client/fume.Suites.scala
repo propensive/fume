@@ -60,6 +60,8 @@ object Suites:
   def expand(base: Text, entry: Text): List[Text] =
     import filesystemBackends.virtualMachineFilesystem
     import filesystemOptions.dereferenceSymlinks.enabled
+    // Sorting now names its algorithm (soundness 0.64.0); timsort is the old default.
+    import sortingAlgorithms.timsort
     // Not yet re-exported through the `soundness` umbrella.
     import galilei.glob
 

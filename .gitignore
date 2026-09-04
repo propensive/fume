@@ -2,3 +2,5 @@
 .metals
 .bsp
 out
+fume
+fume.jar

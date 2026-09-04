@@ -387,10 +387,16 @@ object Render:
 
       case Block.Pending(refs) =>
         refs.each: ref =>
-          if terse then emit(e"${ref.id}  ${ref.name}  (pending)")
+          // Hoisted (here and in `renderTrace` below): substituting these field selections
+          // directly into the interpolation crashes the 3.9.0-p16 compiler inside the macro's
+          // implicit search (`wildApprox` assertion) and poisons `Out.println`'s `Printable`
+          // resolution; a typed local is equivalent and expands cleanly.
+          val id: Text = ref.id
+          val name: Text = ref.name
+          if terse then emit(e"$id  $name  (pending)")
           else
             val dot = e"${Fg(Palette.subdued)}(·)"
-            emit(e"  $dot ${Fg(Palette.informative)}(${ref.id}) ${Fg(Palette.subdued)}(${ref.name})")
+            emit(e"  $dot ${Fg(Palette.informative)}($id) ${Fg(Palette.subdued)}($name)")
 
   // ---------------------------------------------------------------- failures
 
@@ -407,14 +413,17 @@ object Render:
         if !crop then component.frames
         else (component.frames.stdlib.takeWhile(!_.className.starts(t"probably."))).to(List)
 
+      val className: Text = component.className
+      val message: Text = Figures.abbreviate(component.message)
+
       if terse then
-        Out.println(t"  ${component.className}: ${Figures.abbreviate(component.message)}")
+        Out.println(t"  $className: $message")
         frames.stdlib.take(3).foreach: frame =>
           val line = frame.line.let(_.show).or(t"?")
           Out.println(t"    at ${frame.className}.${frame.method} (${frame.file}:$line)")
       else
         Out.println:
-          e"  ${Fg(Palette.fail)}($Bold(${component.className})) ${Figures.abbreviate(component.message)}"
+          e"  ${Fg(Palette.fail)}($Bold($className)) $message"
 
         frames.each: frame =>
           val line = frame.line.let(_.show).or(t"?")
