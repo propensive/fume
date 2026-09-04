@@ -19,11 +19,19 @@ publishLocal:
 # Repackage the launcher assembly into a self-fetching launcher with Burdock. The
 # `burdock.externalize` macro wrapping `fume.fume` (in src/launcher/fume_launcher.scala) has
 # already embedded `META-INF/burdock.deps` at compile time; running the repackager rewrites the JAR
-# in place so published dependencies (including fume-client) become on-demand `Burdock-Require`
-# URLs (resolved via deps.dev) and unpublished ones are inlined from `~/.cache/burdock`.
+# in place so published dependencies become on-demand `Burdock-Require` URLs and unpublished ones
+# are inlined from `~/.cache/burdock`.
+#
+# Two publication homes are consulted: Maven Central (hashes resolved via deps.dev) for the
+# third-party dependencies, and — via the `--github` hint — the release assets of the Soundness
+# repository, whose per-component jars carry SHA-256 digests the repackager matches against the
+# classpath. The Soundness jars synced into `~/.ivy2/local` are the release assets byte-for-byte,
+# so every component externalizes; fume-client (until it has a published home of its own) and the
+# proscala toolchain jars (released only inside a tarball, which carries no per-jar digest) are
+# inlined. Set GITHUB_TOKEN to lift the API rate limit; the requests are otherwise anonymous.
 fume.jar: assembly
 	cp out/fume/launcher/assembly.dest/out.jar fume.jar
-	java -cp fume.jar soundness.repackage
+	java -cp fume.jar soundness.repackage --github propensive/soundness
 
 fume: fume.jar
 	java -Dbuild.executable=fume -jar fume.jar
