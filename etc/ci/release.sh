@@ -130,11 +130,28 @@ for i in $(seq 1 60); do
 done
 sed -i.bak 's/^fume-//; s/\.exe\t/\t/' "$MANIFEST"
 
+SNIPPET=""
 if java -cp out/fume/launcher/assembly.dest/out.jar ziggurat.Xeq dispatcher "$DIST/fume" "$MANIFEST"
-then gh release upload "$VERSION" --repo "$REPO" "$DIST/fume"
+then
+  gh release upload "$VERSION" --repo "$REPO" "$DIST/fume"
+
+  # The install one-liner for the notes: ziggurat's minimal bootstrap (lib/ziggurat/etc/launch
+  # — 106 bytes of POSIX shell, base64-armored), pointed at the polyglot script above, so the
+  # three layers compose: one-liner -> dispatcher script -> native executable, each download
+  # SHA-256-verified. The armored payload is constant; only the URL and hash vary per release.
+  SCRIPT_DIGEST=""
+  for i in $(seq 1 60); do
+    SCRIPT_DIGEST=$(gh api "repos/$REPO/releases/tags/$VERSION" \
+      --jq '.assets[] | select(.name == "fume") | .digest // ""' | sed 's/^sha256://')
+    [[ -n "$SCRIPT_DIGEST" ]] && break
+    sleep 5
+  done
+  if [[ -n "$SCRIPT_DIGEST" ]]; then
+    SNIPPET=$(printf 'Install (any POSIX shell):\n\n```sh\nopenssl base64 -d <<EOF | sh -s -- https://github.com/%s/releases/download/%s/fume %s\nZj1gbWt0ZW1wYDtjdXJsIC1zTG8gJGYgJDF8fHdnZXQgLXFPICRmICQxO2Nhc2UgYG9wZW5zc2wg\nZGdzdCAtc2hhMjU2ICRmYCBpbiAqJDIpY2htb2QgK3ggJGY7ZXhlYyAkZjtlc2Fj\nEOF\n```\n\n' "$REPO" "$VERSION" "$SCRIPT_DIGEST")
+  fi
 else echo "warning: ziggurat.Xeq has no dispatcher at the pinned Soundness; released without the bootstrap script" >&2
 fi
 
 gh release edit "$VERSION" --repo "$REPO" --notes \
-  "The \`fume\` polyglot bootstrap (a small any-shell script — rename to \`fume.bat\` or \`fume.ps1\` on Windows — which downloads the right executable below, verifies its checksum, replaces itself and re-invokes), one \`fume\` executable per platform, and the \`fume-client\` library each externalizes, resolving further dependencies from the Soundness and proscala releases and Maven Central on first run."
+  "${SNIPPET}The \`fume\` polyglot bootstrap (a small any-shell script — rename to \`fume.bat\` or \`fume.ps1\` on Windows — which downloads the right executable below, verifies its checksum, replaces itself and re-invokes), one \`fume\` executable per platform, and the \`fume-client\` library each externalizes, resolving further dependencies from the Soundness and proscala releases and Maven Central on first run."
 echo "release $VERSION complete: $ASSET_NAME + $(cd "$DIST" && echo fume*)"
