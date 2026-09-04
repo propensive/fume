@@ -22,16 +22,16 @@ publishLocal:
 # in place so published dependencies become on-demand `Burdock-Require` URLs and unpublished ones
 # are inlined from `~/.cache/burdock`.
 #
-# Two publication homes are consulted: Maven Central (hashes resolved via deps.dev) for the
-# third-party dependencies, and — via the `--github` hint — the release assets of the Soundness
-# repository, whose per-component jars carry SHA-256 digests the repackager matches against the
+# Three publication homes are consulted: Maven Central (hashes resolved via deps.dev) for the
+# third-party dependencies, and — via the `--github` hints — the release assets of the Soundness
+# and proscala repositories, whose per-jar SHA-256 digests the repackager matches against the
 # classpath. The Soundness jars synced into `~/.ivy2/local` are the release assets byte-for-byte,
-# so every component externalizes; fume-client (until it has a published home of its own) and the
-# proscala toolchain jars (released only inside a tarball, which carries no per-jar digest) are
-# inlined. Set GITHUB_TOKEN to lift the API rate limit; the requests are otherwise anonymous.
+# and the proscala release publishes the same jars its tarball carries, so both the components
+# and the fork toolchain externalize; only fume-client (until it has a published home of its own)
+# is inlined. Set GITHUB_TOKEN to lift the API rate limit; the requests are otherwise anonymous.
 fume.jar: assembly
 	cp out/fume/launcher/assembly.dest/out.jar fume.jar
-	java -cp fume.jar soundness.repackage --github propensive/soundness
+	java -cp fume.jar soundness.repackage --github propensive/soundness,propensive/proscala
 
 fume: fume.jar
 	java -Dbuild.executable=fume -jar fume.jar
