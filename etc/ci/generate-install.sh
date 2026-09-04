@@ -88,4 +88,17 @@ case ":\$PATH:" in
 esac
 
 echo "The first run fetches fume's dependencies; subsequent runs start instantly."
+
+# ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+# ┃                                                                                    ┃
+# ┃  If this script has been PRINTED to your terminal, it has not been run: you are    ┃
+# ┃  looking at the installer itself. To download and run it in one step, invoke:      ┃
+# ┃                                                                                    ┃
+# ┃      curl -fsSL https://fume.propensive.dev/ | sh                                  ┃
+# ┃                                                                                    ┃
+# ┃  or, if you have already saved it to a file:                                       ┃
+# ┃                                                                                    ┃
+# ┃      sh install.sh                                                                 ┃
+# ┃                                                                                    ┃
+# ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 EOF
