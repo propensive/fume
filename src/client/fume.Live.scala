@@ -116,7 +116,7 @@ final class Live(model: Model, initialWidth: Int, winched: juca.AtomicBoolean, i
   private val geometry: Live.Geometry = Live.Geometry(initialWidth, 24)
 
   private given decimalizer: Decimalizer = Decimalizer(4)
-  private given style: TableStyle = tableStyles.defaultTableStyle
+  private given style: TableStyle = tableStyles.thickTableStyle
 
   private val throttle: Long = 100L
 
@@ -245,7 +245,7 @@ final class Live(model: Model, initialWidth: Int, winched: juca.AtomicBoolean, i
           escritoire.Column[Row, Teletype, Teletype]
              (e"$Bold(Time)", TextAlignment.Right, sizing = Render.Rigid)(_.time) )
 
-    Scaffold[Row](defs*).tabulate(visible)
+    Scaffold[Row, Teletype](defs.stdlib*).tabulate(visible)
 
   // The current report, exactly the lines `Render` would print, as structured `Teletype`.
   private def renderedLines(): List[Teletype] =

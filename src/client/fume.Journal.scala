@@ -138,7 +138,10 @@ object Journal:
             totals = totals )
 
       active0 = active0.filter(_.id != id)
-      completed0 = (done :: completed0).stdlib.take(history).to(List)
+      // Typed before the bridge: the cons result's element type is otherwise still being
+      // inferred when `stdlib` is resolved.
+      val extended: List[Run] = done :: completed0
+      completed0 = extended.stdlib.take(history).to(List)
 
   def active: List[Run] = mutex(active0)
   def completed: List[Run] = mutex(completed0)

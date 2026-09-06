@@ -36,7 +36,7 @@ import java.lang as jl
 
 import soundness.*
 
-import systems.javaSystem
+import systems.javaBaseSystem
 
 // Discovery of Probably test suites on a user-supplied classpath. Suites are found ONLY through
 // the `META-INF/services/probably.Suite` index which the beneficence compiler plugin writes into
@@ -58,8 +58,8 @@ object Suites:
     entry.contains(t"*") || entry.contains(t"?") || entry.contains(t"[")
 
   def expand(base: Text, entry: Text): List[Text] =
-    import filesystemBackends.virtualMachineFilesystem
-    import filesystemOptions.dereferenceSymlinks.enabled
+    import filesystemBackends.javaBaseFilesystem
+    import filesystemOptions.dereferenceSymlinks
     // Sorting now names its algorithm (soundness 0.64.0); timsort is the old default.
     import sortingAlgorithms.timsort
     // Not yet re-exported through the `soundness` umbrella.

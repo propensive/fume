@@ -174,7 +174,7 @@ object Render:
       given style: TableStyle = tableStyles.minimalTableStyle
       tabulation.grid(width).render
     else
-      given style: TableStyle = tableStyles.defaultTableStyle
+      given style: TableStyle = tableStyles.thickTableStyle
       tabulation.grid(width).render
 
   // The winner's background: subdued towards the terminal background so the row's own
@@ -212,7 +212,7 @@ object Render:
                else Unset } ):
           row => datum(row(0).stdlib(index.n0), terse)
 
-    gridLines(Scaffold[(List[Datum], Int)](defs*).tabulate(indexed), width, terse).each(emit(_))
+    gridLines(Scaffold[(List[Datum], Int), Teletype](defs.stdlib*).tabulate(indexed), width, terse).each(emit(_))
 
   // ---------------------------------------------------------------- the results table
 
@@ -269,7 +269,7 @@ object Render:
                 sizing = Rigid): row =>
               if row.count < 2 || row.max == 0L then e"" else time(row.max, terse) )
 
-      gridLines(Scaffold[SummaryRow](defs*).tabulate(results), width, terse)
+      gridLines(Scaffold[SummaryRow, Teletype](defs.stdlib*).tabulate(results), width, terse)
       . each(Out.println(_))
 
   // ---------------------------------------------------------------- groups
@@ -406,7 +406,8 @@ object Render:
      (using Stdio)
   :   Unit =
 
-    trace.components.each: component =>
+    trace.components.each: component0 =>
+      val component: TestEvent.TraceComponent = component0 // typed first; see `Block.Pending`
       // A failure's trace ends where the test framework begins: everything from the first
       // `probably.` frame down is the runner and transport machinery, not the test.
       val frames: List[TestEvent.Frame] =

@@ -35,10 +35,10 @@ package fume
 import soundness.*
 
 import backstops.silentBackstop
-import executives.completions
+import executives.completionsExecutive
 import interpreters.posixInterpreter
 import logging.silentLogging
-import systems.javaSystem
+import systems.javaBaseSystem
 import threading.platformThreading
 
 // The Maven Central version of `fume-client`, mirrored in `build.mill`'s `settings.fumeVersion`.
@@ -530,7 +530,7 @@ private def classpathSetting()
         if entry.ends(t".jar") then Classpath.Entry.Jar(entry)
         else Classpath.Entry.Directory(entry)
 
-    LocalClasspath(entries*)
+    LocalClasspath(entries.stdlib*)
 
   given wd: WorkingDirectory = () => workingDirectory
 
