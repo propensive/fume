@@ -167,7 +167,7 @@ final class Model:
         update(ref, kind): entry =>
           entry.copy(completions = (coordinates, outcome) :: entry.completions)
 
-      case event@TestEvent.BenchmarkRecorded(ref, _, _, _, _, _, _, _, _, _, _, _, _) =>
+      case event@TestEvent.BenchmarkRecorded(ref, _, _, _, _, _, _, _, _, _, _, _, _, _) =>
         update(ref, t"bench") { entry => entry.copy(benches = event :: entry.benches) }
 
       case event@TestEvent.StrainRecorded(ref, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) =>

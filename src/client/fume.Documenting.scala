@@ -328,7 +328,8 @@ object Documenting:
         Column(t"μ", numeric = true),
         Column(t"σ", numeric = true),
         Column(t"Confidence", numeric = true),
-        Column(t"Throughput", numeric = true) )
+        Column(t"Throughput", numeric = true),
+        Column(t"Alloc·op¯¹", numeric = true) )
     + sizes
 
   private def benchMetricCells(bench: TestEvent.BenchmarkRecorded, sized: Boolean): List[Datum] =
@@ -340,12 +341,17 @@ object Documenting:
             bench.operationRate.lay(Datum.Blank)(Datum.Str(_)) )
       else Nil
 
+    // Bytes allocated per operation, when the harness measured it (a suite built against a
+    // Soundness whose `Bench` predates the field never reaches here: its fingerprint differs).
+    val allocation: Optional[Long] = bench.allocation
+
     List
       ( Datum.Num(bench.iterations),
         Datum.Time(bench.mean.toLong),
         Datum.Time(bench.sd.toLong),
         confidence(bench),
-        rate(bench) )
+        rate(bench),
+        allocation.lay(Datum.Blank)(Datum.Memory(_)) )
     + sizes
 
   // The baseline-relative datum of one benchmark against the anchor's, following the
