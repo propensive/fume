@@ -314,7 +314,7 @@ final class Live(model: Model, initialWidth: Int, winched: juca.AtomicBoolean, i
       stack
         ( scrolling(scroller),
           panel(minHeight = 1, maxHeight = 1):
-            val extent = summon[Extent^]
+            val extent = summon[Extent]
             extent.move(Prim, Prim)
             extent.put(bar) )
 

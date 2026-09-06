@@ -790,7 +790,7 @@ private def install(force: Boolean)
 
   // The `DaemonService` extends `Entrypoint`, and `Completions.ensure` accepts a TRACKED
   // `Entrypoint^`, so the service is passed on with its capture intact — no purity laundering.
-  given entrypoint: (Entrypoint^{service}) = service
+  given entrypoint: Entrypoint = service
 
   given manual: Manual =
     Manual

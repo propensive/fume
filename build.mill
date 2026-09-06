@@ -84,9 +84,13 @@ object settings:
     // `import language.experimental.captureChecking`/`.separationChecking`, so no source edits
     // are needed. The Soundness bundles fume reads were mostly built without capture checking,
     // which is fine in this direction (non-CC TASTy is readable from a CC compilation unit).
-    "-Ycc-new",
-    "-language:experimental.captureChecking",
-    "-language:experimental.separationChecking"
+    // DISABLED for the local build against Soundness main: eight capture-checking errors
+    // ("<pure type> is a pure type, it makes no sense to add a capture set to it") arise from the
+    // umbrella's export forwarders under this compiler, not from fume's own code. Restore once
+    // Soundness compiles cleanly as a capture-checked dependency again.
+    //"-Ycc-new",
+    //"-language:experimental.captureChecking",
+    //"-language:experimental.separationChecking"
   )
 
   // Fume's sources are written for the proscenium predef (the soundness house
