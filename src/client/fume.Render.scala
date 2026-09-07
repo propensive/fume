@@ -174,7 +174,7 @@ object Render:
       given style: TableStyle = tableStyles.minimalTableStyle
       tabulation.grid(width).render
     else
-      given style: TableStyle = tableStyles.defaultTableStyle
+      given style: TableStyle = tableStyles.thickTableStyle
       tabulation.grid(width).render
 
   // The winner's background: subdued towards the terminal background so the row's own

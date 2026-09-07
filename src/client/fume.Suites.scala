@@ -36,7 +36,7 @@ import java.lang as jl
 
 import soundness.*
 
-import systems.javaSystem
+import probably.TestEvent
 
 // Discovery of Probably test suites on a user-supplied classpath. Suites are found ONLY through
 // the `META-INF/services/probably.Suite` index which the beneficence compiler plugin writes into
@@ -58,8 +58,8 @@ object Suites:
     entry.contains(t"*") || entry.contains(t"?") || entry.contains(t"[")
 
   def expand(base: Text, entry: Text): List[Text] =
-    import filesystemBackends.virtualMachineFilesystem
-    import filesystemOptions.dereferenceSymlinks.enabled
+    import filesystemBackends.javaBaseFilesystem
+    import filesystemOptions.dereferenceSymlinks
     // Sorting now names its algorithm (soundness 0.64.0); timsort is the old default.
     import sortingAlgorithms.timsort
     // Not yet re-exported through the `soundness` umbrella.
@@ -173,50 +173,119 @@ object Suites:
       jl.System.setOut(out)
       jl.System.setErr(err)
 
-  // Tab-completion SUGGESTIONS for selection terms: each suite the selection admits is run
-  // with `--list` (its output captured, not printed — the suite body runs, tests do not),
-  // and every test contributes its stable 6-hex id — and its moniker, when it has one that
-  // a shell can complete unquoted — described by its kind and full path. Fast enough per
-  // keystroke because listing skips all execution, and evaluated LAZILY: the caller wraps
-  // this in the completion's update thunk, so it runs only when a term is being completed.
-  def terms(classpath: LocalClasspath, suite: Optional[Text]): List[Suggestion] =
-    val kindNames: List[Text] = List(t"test", t"bench", t"stress", t"profile")
+  // One test of a suite's SCHEDULE as tab-completion and `fume list --axes` see it: its wire
+  // ref, kind (`check`, `bench`, `stress` or `profile`), tags, and axes with the values (or
+  // declared bounds) a `--list` selection admits.
+  case class Scheduled
+     ( ref: TestEvent.Ref, kind: Text, tags: List[Text], axes: List[TestEvent.AxisSchedule] )
 
-    val kinds: List[Suggestion] =
-      kindNames.map: (kind: Text) =>
-        Suggestion(t"kind:$kind", t"run only ${kind}s")
+  // The schedule of one suite by the EVENT protocol (`--list` streamed as `TestScheduled`s), or
+  // `Unset` for a suite whose Probably cannot stream it (predating the event stream, or built
+  // against a Soundness with an incompatible event layout), which the caller lists as text.
+  def schedule(classpath: LocalClasspath, suite: Text, args: List[Text])(using Stdio, Monitor)
+  :   Optional[List[Scheduled]] =
 
-    val suites: List[Text] = suite.lay(discover(classpath)) { chosen => List(chosen) }
+    val rows: scala.collection.mutable.ListBuffer[Scheduled] =
+      scala.collection.mutable.ListBuffer()
 
-    val tests: List[Suggestion] =
-      suites.bind[List[Suggestion], Suggestion, List[Suggestion]]: suiteName =>
-        val buffer = java.io.ByteArrayOutputStream()
-        val print = java.io.PrintStream(buffer, true, "UTF-8")
-        val capture: Stdio = Stdio(print, print, null, termcapDefinitions.basicTermcap)
+    // The abort thunk is passed explicitly: the DEFAULT argument's root capability cannot flow
+    // into `safely`'s enclosing function under capture checking (as in `runSuite`).
+    val outcome: Optional[EventStream.Outcome] =
+      safely:
+        EventStream.stream(classpath, suite, t"--list" :: args)(
+          { case TestEvent.TestScheduled(ref, kind, _, tags, axes) =>
+              rows.append(Scheduled(ref, kind, tags, axes))
+            case _ => () },
+          () => false)
 
-        safely(invoke(classpath, suiteName, List(t"--list"))(using capture))
-        print.flush()
+    outcome match
+      case EventStream.Outcome.Completed(_) =>
+        val scheduled: List[Scheduled] = rows.toList.to(List)
+        scheduled
 
-        Text(buffer.toString("UTF-8").nn).cut(t"\n")
-        . bind[List[Suggestion], Suggestion, List[Suggestion]]: line =>
-            if line.length <= 8 then Nil else
-              val id: Text = line.keep(6)
-              val rest: Text = line.skip(8)
+      case _ =>
+        Unset
 
-              rest.cut(t"  ") match
-                case kind :: path =>
-                  val joined: Text = path.join(t"  ")
-                  val hash = Suggestion(id, t"$kind  $joined")
+  // The schedule of one suite from its TEXT listing (`<id>  <kind>  <path>`, the legacy
+  // protocol every Probably since `Suite#invoke` speaks): ids and paths only, with the last
+  // path segment taken as the moniker when it is a plain identifier (a name with spaces
+  // cannot complete unquoted); no tags, no axes. The suite's output is captured, not printed.
+  def listing(classpath: LocalClasspath, suite: Text, args: List[Text])(using Stdio)
+  :   List[Scheduled] =
 
-                  // The last path segment is the moniker when one was declared (a plain
-                  // identifier); a name with spaces cannot complete unquoted.
-                  val leaf: Text = joined.cut(t"/").stdlib.lastOption.getOrElse(t"")
+    val buffer = java.io.ByteArrayOutputStream()
+    val print = java.io.PrintStream(buffer, true, "UTF-8")
+    val capture: Stdio = Stdio(print, print, null, termcapDefinitions.basicTermcap)
 
-                  if leaf != t"" && !leaf.contains(t" ") && leaf != id
-                  then List(hash, Suggestion(leaf, t"$kind  $joined"))
-                  else List(hash)
+    safely(invoke(classpath, suite, t"--list" :: args)(using capture))
+    print.flush()
 
-                case _ =>
-                  Nil
+    Text(buffer.toString("UTF-8").nn).cut(t"\n").bind[List[Scheduled], Scheduled, List[Scheduled]]:
+      line =>
+        if line.length <= 8 then Nil else
+          val id: Text = line.keep(6)
 
-    kinds + (tests.distinct: List[Suggestion])
+          line.skip(8).cut(t"  ") match
+            case kind :: path =>
+              val segments: List[Text] = path.join(t"  ").cut(t"/")
+              val leaf: Text = segments.stdlib.lastOption.getOrElse(t"")
+
+              val moniker: Optional[Text] =
+                if leaf != t"" && !leaf.contains(t" ") && leaf != id then leaf else Unset
+
+              val kindName: Text = if kind == t"test" then t"check" else kind
+              List(Scheduled(TestEvent.Ref(id, leaf, moniker, segments, t"", 0), kindName, Nil, Nil))
+
+            case _ =>
+              Nil
+
+  // The schedule of one suite by whichever protocol it speaks, with its output captured rather
+  // than printed: the suite body runs, tests do not. Supervised here, since the caller (a
+  // completion thunk, or `fume list`) need not hold a `Monitor`.
+  def fetch(classpath: LocalClasspath, suite: Text, args: List[Text]): List[Scheduled] =
+    import threading.platformThreading
+
+    val buffer = java.io.ByteArrayOutputStream()
+    val print = java.io.PrintStream(buffer, true, "UTF-8")
+    given capture: Stdio = Stdio(print, print, null, termcapDefinitions.basicTermcap)
+
+    val streamed: Optional[List[Scheduled]] =
+      safely(supervise(schedule(classpath, suite, args)))
+
+    streamed.or(listing(classpath, suite, args))
+
+  // Every test on the classpath, from every suite's FULL schedule (no terms), cached in the
+  // daemon so completion is instant after the first keystroke. Keyed by the classpath entries'
+  // paths, modification times and sizes, as `Workspace` caches configurations: a rebuilt jar
+  // is rescheduled on the next keystroke, and an unbuilt one costs an empty schedule until it
+  // appears.
+  private val cache: scala.collection.concurrent.TrieMap[Text, List[Scheduled]] =
+    scala.collection.concurrent.TrieMap()
+
+  private def fingerprint(classpath: LocalClasspath): Text =
+    classpath.entries.map: entry =>
+      // A `LocalClasspath` decoded from fume's settings holds only jars and directories; the
+      // platform's own runtime image has no file to stat, and never carries a suite.
+      val path: Text = entry match
+        case Classpath.Entry.Jar(path)       => path
+        case Classpath.Entry.Directory(path) => path
+        case _                               => t"jrt"
+
+      val file = java.io.File(path.s)
+      t"$path@${file.lastModified}:${file.length}"
+    . join(t"\n")
+
+  def cached(classpath: LocalClasspath): List[Scheduled] =
+    val key: Text = fingerprint(classpath)
+
+    cache.get(key) match
+      case Some(schedule) =>
+        schedule
+
+      case _ =>
+        val schedule: List[Scheduled] =
+          discover(classpath).bind[List[Scheduled], Scheduled, List[Scheduled]]: suite =>
+            fetch(classpath, suite, Nil)
+
+        cache(key) = schedule
+        schedule

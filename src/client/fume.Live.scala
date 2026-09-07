@@ -116,7 +116,7 @@ final class Live(model: Model, initialWidth: Int, winched: juca.AtomicBoolean, i
   private val geometry: Live.Geometry = Live.Geometry(initialWidth, 24)
 
   private given decimalizer: Decimalizer = Decimalizer(4)
-  private given style: TableStyle = tableStyles.defaultTableStyle
+  private given style: TableStyle = tableStyles.thickTableStyle
 
   private val throttle: Long = 100L
 
