@@ -11,7 +11,7 @@
 ┃                          │   │   │   ╰─╯   ││   │ │   │ │   ││   ╰────╮                          ┃
 ┃                          ╰───╯   ╰────╌╰───╯╰───╯ ╰───╯ ╰───╯╰────────╯                          ┃
 ┃                                                                                                  ┃
-┃    Fume, version 0.1.0.                                                                          ┃
+┃    Fume, version 0.2.0.                                                                          ┃
 ┃    © Copyright 2026 Jon Pretty, Propensive OÜ.                                                   ┃
 ┃                                                                                                  ┃
 ┃    The primary distribution site is:                                                             ┃
@@ -42,7 +42,7 @@ import systems.javaBaseSystem
 import threading.platformThreading
 
 // The Maven Central version of `fume-client`, mirrored in `build.mill`'s `settings.fumeVersion`.
-val fumeVersion: Text = t"0.1.0"
+val fumeVersion: Text = t"0.2.0"
 
 // Fume's identity in configuration namespaces: every `Setting` below is read from its
 // command-line flag first, then (through `Configurator.default`) a `fume.`-prefixed system
@@ -804,7 +804,7 @@ private def install(force: Boolean)
 
   // The `DaemonService` extends `Entrypoint`, and `Completions.ensure` accepts a TRACKED
   // `Entrypoint^`, so the service is passed on with its capture intact — no purity laundering.
-  given entrypoint: Entrypoint = service
+  given entrypoint: (Entrypoint^{service}) = service
 
   given manual: Manual =
     Manual

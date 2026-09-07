@@ -38,7 +38,7 @@ object settings:
   // coordinate and the launcher's dependency coordinate cannot drift apart: burdock externalizes a
   // module only when the exact published jar bytes are on the launcher's classpath, so a mismatch
   // would silently fall back to inlining. Override at release time.
-  val fumeVersion = sys.env.getOrElse("FUME_VERSION", "0.1.0")
+  val fumeVersion = sys.env.getOrElse("FUME_VERSION", "0.2.0")
 
   val scalaOptions = Seq(
     // The fork's opt-in behaviours, enabled by name, exactly as the Soundness build enables
@@ -84,13 +84,9 @@ object settings:
     // `import language.experimental.captureChecking`/`.separationChecking`, so no source edits
     // are needed. The Soundness bundles fume reads were mostly built without capture checking,
     // which is fine in this direction (non-CC TASTy is readable from a CC compilation unit).
-    // DISABLED for the local build against Soundness main: eight capture-checking errors
-    // ("<pure type> is a pure type, it makes no sense to add a capture set to it") arise from the
-    // umbrella's export forwarders under this compiler, not from fume's own code. Restore once
-    // Soundness compiles cleanly as a capture-checked dependency again.
-    //"-Ycc-new",
-    //"-language:experimental.captureChecking",
-    //"-language:experimental.separationChecking"
+    "-Ycc-new",
+    "-language:experimental.captureChecking",
+    "-language:experimental.separationChecking"
   )
 
   // Fume's sources are written for the proscenium predef (the soundness house
@@ -365,6 +361,11 @@ object fume extends Project:
     // assembled JAR.
     def prependShellScript = ""
 
+  // A `Suite` is not a main class (Soundness #1963): the beneficence plugin writes the
+  // `META-INF/services/probably.Suite` index a host reads to discover suites, so the plugin
+  // must run on this module or `fume run -c` finds nothing. `fume.runTests` is a plain-`java`
+  // entry point that drives `Tests.invoke` in-process, for `make test` and the shared CI.
   object test extends Component(client):
     def mvnDeps = settings.soundnessDeps
-    def finalMainClass = "fume.Tests"
+    def scalacPluginMvnDeps = Seq(mvn"dev.propensive:beneficence-plugin:${settings.soundnessVersion}")
+    def finalMainClass = "fume.runTests"

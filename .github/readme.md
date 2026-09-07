@@ -97,7 +97,7 @@ make dev    # recompile fume.client on every source change
 
 To cut a release and build the self-fetching native launcher:
 ```sh
-make release VERSION=0.1.0   # signed publish of fume-client to Maven Central
+make release VERSION=0.2.0   # signed publish of fume-client to Maven Central
 # …wait for Central and deps.dev to index the jar…
 make fume                    # assemble, repackage with Burdock, emit the `fume` executable
 make install                 # copy it to ~/.local/bin

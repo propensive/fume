@@ -45,7 +45,7 @@ install: fume
 # jar and happens only in `make fume`).
 #
 # `clean fume.launcher` first: the launcher's dependency on fume-client is a fixed COORDINATE
-# (0.1.0), so Mill's cached resolution does not notice a fresh publishLocal under the same
+# (e.g. 0.2.0), so Mill's cached resolution does not notice a fresh publishLocal under the same
 # version, and the assembly silently bundles the previous jar.
 run: publishLocal
 	mill clean fume.launcher
@@ -55,7 +55,7 @@ run: publishLocal
 # Compile and run the test suite.
 test:
 	mill fume.test.assembly
-	java -cp out/fume/test/assembly.dest/out.jar fume.Tests
+	java -cp out/fume/test/assembly.dest/out.jar fume.runTests
 
 dev:
 	mill -w fume.client.compile

@@ -11,7 +11,7 @@
 ┃                          │   │   │   ╰─╯   ││   │ │   │ │   ││   ╰────╮                          ┃
 ┃                          ╰───╯   ╰────╌╰───╯╰───╯ ╰───╯ ╰───╯╰────────╯                          ┃
 ┃                                                                                                  ┃
-┃    Fume, version 0.1.0.                                                                          ┃
+┃    Fume, version 0.2.0.                                                                          ┃
 ┃    © Copyright 2026 Jon Pretty, Propensive OÜ.                                                   ┃
 ┃                                                                                                  ┃
 ┃    The primary distribution site is:                                                             ┃
@@ -314,7 +314,7 @@ final class Live(model: Model, initialWidth: Int, winched: juca.AtomicBoolean, i
       stack
         ( scrolling(scroller),
           panel(minHeight = 1, maxHeight = 1):
-            val extent = summon[Extent]
+            val extent = summon[Extent^]
             extent.move(Prim, Prim)
             extent.put(bar) )
 

@@ -17,4 +17,4 @@ jobs:
       publish_local: fume.client
       assembly:      fume.launcher.assembly
       test_assembly: fume.test.assembly
-      test_main:     fume.Tests
+      test_main:     fume.runTests

@@ -11,7 +11,7 @@
 ┃                          │   │   │   ╰─╯   ││   │ │   │ │   ││   ╰────╮                          ┃
 ┃                          ╰───╯   ╰────╌╰───╯╰───╯ ╰───╯ ╰───╯╰────────╯                          ┃
 ┃                                                                                                  ┃
-┃    Fume, version 0.1.0.                                                                          ┃
+┃    Fume, version 0.2.0.                                                                          ┃
 ┃    © Copyright 2026 Jon Pretty, Propensive OÜ.                                                   ┃
 ┃                                                                                                  ┃
 ┃    The primary distribution site is:                                                             ┃
@@ -56,7 +56,7 @@ object Tests extends Suite(m"Fume tests"):
   def run(): Unit =
     test(m"the version is set"):
       fumeVersion
-    . assert(_ == t"0.1.0")
+    . assert(_ == t"0.2.0")
 
     test(m"a config file is located in an ancestor directory"):
       read(project(t"tel 1.0\n\nclasspath out/tests.jar\n"), t"classpath")

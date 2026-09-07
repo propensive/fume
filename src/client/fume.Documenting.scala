@@ -11,7 +11,7 @@
 ┃                          │   │   │   ╰─╯   ││   │ │   │ │   ││   ╰────╮                          ┃
 ┃                          ╰───╯   ╰────╌╰───╯╰───╯ ╰───╯ ╰───╯╰────────╯                          ┃
 ┃                                                                                                  ┃
-┃    Fume, version 0.1.0.                                                                          ┃
+┃    Fume, version 0.2.0.                                                                          ┃
 ┃    © Copyright 2026 Jon Pretty, Propensive OÜ.                                                   ┃
 ┃                                                                                                  ┃
 ┃    The primary distribution site is:                                                             ┃

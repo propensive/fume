@@ -11,7 +11,7 @@
 ┃                          │   │   │   ╰─╯   ││   │ │   │ │   ││   ╰────╮                          ┃
 ┃                          ╰───╯   ╰────╌╰───╯╰───╯ ╰───╯ ╰───╯╰────────╯                          ┃
 ┃                                                                                                  ┃
-┃    Fume, version 0.1.0.                                                                          ┃
+┃    Fume, version 0.2.0.                                                                          ┃
 ┃    © Copyright 2026 Jon Pretty, Propensive OÜ.                                                   ┃
 ┃                                                                                                  ┃
 ┃    The primary distribution site is:                                                             ┃
@@ -68,7 +68,7 @@ object Render:
   // with NO maximum, so `Flex.solve` hands it everything the rigid columns leave and the
   // table spans the full line. Exactly one column of each fume table uses it.
   private[fume] object Stretch extends Columnar:
-    def flex[text: Textual { type Result = Char }](lines: Array[text], maxWidth: Int)
+    def flex[text: Textual { type Result = Char }](lines: Array[text]^{}, maxWidth: Int)
        (using Text is Measurable)
     :   Flex =
 
@@ -77,7 +77,7 @@ object Render:
       Flex(metrics, 1.0, Unset)
 
     def fit[text: Textual { type Result = Char }]
-       (lines: Array[text], width: Int, textAlign: TextAlignment)
+       (lines: Array[text]^{}, width: Int, textAlign: TextAlignment)
        (using Text is Measurable, Hyphenation)
     :   Sequence[text] =
 
@@ -87,7 +87,7 @@ object Render:
   // A rigid column: exactly its natural content width, never shrunk when the table is
   // squeezed — numeric figures (a duration and its unit) must not wrap.
   private[fume] object Rigid extends Columnar:
-    def flex[text: Textual { type Result = Char }](lines: Array[text], maxWidth: Int)
+    def flex[text: Textual { type Result = Char }](lines: Array[text]^{}, maxWidth: Int)
        (using Text is Measurable)
     :   Flex =
 
@@ -96,7 +96,7 @@ object Render:
       Flex(Metrics(metrics.natural, metrics.natural), 0.0, metrics.natural)
 
     def fit[text: Textual { type Result = Char }]
-       (lines: Array[text], width: Int, textAlign: TextAlignment)
+       (lines: Array[text]^{}, width: Int, textAlign: TextAlignment)
        (using Text is Measurable, Hyphenation)
     :   Sequence[text] =
 
@@ -208,7 +208,7 @@ object Render:
            ( title, align, sizing = sizing,
              decorate = { (row: (List[Datum], Int)) =>
                if !terse && highlight.has(row(1))
-               then ((line: Teletype) => e"$winnerBg($line)"): Optional[Teletype => Teletype]
+               then ((line: Teletype) => e"$winnerBg($line)"): Optional[Teletype -> Teletype]
                else Unset } ):
           row => datum(row(0).stdlib(index.n0), terse)
 

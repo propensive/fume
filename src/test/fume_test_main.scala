@@ -32,81 +32,39 @@
                                                                                                   */
 package fume
 
-import scala.collection.concurrent.TrieMap
+import java.lang as jl
+import java.util.concurrent.atomic as juca
 
 import soundness.*
+import probably.TestEvent
 
-import filesystemBackends.javaBaseFilesystem
+// Fume's own suite, run WITHOUT fume: a `Suite` has no `main` (the host — normally fume —
+// drives it through `invoke`), so this is the plain-`java` entry point `make test` and CI use,
+// printing one line per completed test and exiting with the suite's status (0 = passed,
+// 1 = failures, 2 = the suite threw). `fume run -c <test jar>` remains the full experience.
+@main
+def runTests(): Unit =
+  val passes = juca.AtomicInteger(0)
+  val failures = juca.AtomicInteger(0)
+  val out = jl.System.out.nn
 
-// The per-project workspace: a `.fume` directory in the invocation's working directory or the
-// nearest ancestor holding one — resolved upwards exactly like `.git`, so `fume` can be invoked
-// from anywhere inside a project. Its `config.tel` file is a TEL document of settings.
-//
-// The SCHEMA of `config.tel` is the settings themselves: each `Setting`'s camelCase name maps
-// to a kebab-case TEL keyword (the same derivation as its `--flag`), so a setting declared in
-// `fume_client.scala` is a configuration key here with no further wiring. Three value rules:
-//
-//   classpath out/tests.jar     # a keyword with an atom: the setting's value is that atom
-//   fail-fast                   # a bare keyword (a TEL flag): reads as `true`
-//   classpath out/util.jar      # a REPEATED keyword: the atoms join with ':', so a multi-entry
-//                               # classpath is written one entry per line
-//
-// Because fume runs as a daemon, parsed configurations are cached across invocations, keyed by
-// the config file's absolute path, and invalidated whenever its modification time or size
-// changes — so an edit to `config.tel` is honoured by the very next `fume` command with no
-// daemon restart. A file that fails to parse is treated (and cached) as absent rather than
-// aborting the command; `fume` never requires a configuration file to exist.
-object Workspace:
-  private case class Cached(modified: Long, size: Long, config: Optional[Tel])
+  val status = Tests.invoke(t"", event => event match
+    case TestEvent.TestCompleted(test, _, _, outcome, _, _) =>
+      if outcome.outcome == t"pass" || outcome.outcome == t"aspire-pass" then passes.incrementAndGet()
+      else failures.incrementAndGet()
+      out.println(t"[${outcome.outcome}] ${test.path.join(t" / ")}".s)
 
-  private val cache: TrieMap[Text, Cached] = TrieMap()
+    case TestEvent.DetailMessage(_, message) =>
+      out.println(t"    $message".s)
 
-  // The nearest `.fume/config.tel` at or above `directory`, or `Unset` if no ancestor has one.
-  // The FILE is what is sought: a `.fume` directory without a `config.tel` does not end the
-  // search, so an empty `.fume` (e.g. holding only future state like caches) is harmless.
-  def locate(directory: Text): Optional[Path on Linux] =
-    safely:
-      def recur(dir: Path on Linux): Optional[Path on Linux] =
-        val candidate = dir / Name[Linux](t".fume") / Name[Linux](t"config.tel")
-        if candidate.existent() then candidate else dir.parent.let(recur(_))
+    case TestEvent.DetailCompare(_, expected, found, _) =>
+      out.println(t"    expected: $expected".s)
+      out.println(t"    found:    $found".s)
 
-      recur(directory.as[Path on Linux])
+    case TestEvent.RunTerminated(error, _, _) =>
+      out.println(t"suite threw: ${error.components.map(_.message).join(t"; ")}".s)
 
-  // Reads and parses the file in two separately-scoped `safely` regions — one `Tactic` for the
-  // filesystem read, another for the TEL parse — rather than one region with a union `Tactic`:
-  // a single tactic would be captured by both the path-reader given and the TEL aggregator,
-  // which separation checking rejects as overlapping hidden capabilities.
-  private def parse(file: Path on Linux): Optional[Tel] =
-    safely(file.read[Data]).let { data => safely(data.read[Tel]) }
+    case _ => ())
 
-  // The parsed configuration governing `directory`, freshly stat-checked on every call. One
-  // `stat` yields both the modification time and the size, so the change check costs a single
-  // filesystem operation per invocation.
-  def config(directory: Text): Optional[Tel] =
-    locate(directory).let: file =>
-      safely(summon[FilesystemBackend on Linux].stat(file, true)).let: stat =>
-        val key: Text = file.encode
-
-        def reload(): Optional[Tel] =
-          val parsed: Optional[Tel] = parse(file)
-          cache(key) = Cached(stat.modified, stat.size, parsed)
-          parsed
-
-        cache.get(key) match
-          case Some(cached) if cached.modified == stat.modified && cached.size == stat.size =>
-            cached.config
-
-          case _ =>
-            reload()
-
-  // A configuration source for the `Setting` cascade: keyed by the setting's canonical
-  // camelCase name, translated to its kebab-case TEL keyword, and applying the three value
-  // rules above.
-  def configurator(directory: Text): Configurator =
-    name =>
-      config(directory).let: tel =>
-        val matches: List[Tel] = tel.fields(name.uncamel.kebab).to[List]
-
-        if matches.nil then Unset else
-          val atoms = matches.map(_.primaryAtom).filter(_ != t"")
-          if atoms.nil then t"true" else atoms.join(t":")
+  out.println(t"${passes.get} passed, ${failures.get} failed".s)
+  jl.System.exit(status)
