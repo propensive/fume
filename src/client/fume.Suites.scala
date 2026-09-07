@@ -65,7 +65,12 @@ object Suites:
     // Not yet re-exported through the `soundness` umbrella.
     import galilei.glob
 
-    if !wildcard(entry) then List(entry) else
+    // A relative entry is made absolute against the INVOCATION's directory here: the daemon
+    // serves many clients from many directories, and an entry left relative would resolve
+    // against the daemon's own, which is wherever it happened to be started.
+    def absolute(path: Text): Text = if path.starts(t"/") then path else t"$base/$path"
+
+    if !wildcard(entry) then List(absolute(entry)) else
       safely:
         val absolute: Boolean = entry.starts(t"/")
         val root: Path on Linux = (if absolute then t"/" else base).as[Path on Linux]
