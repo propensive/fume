@@ -409,7 +409,9 @@ object Documenting:
           val lead: List[Datum] =
             List(Datum.Hash(entry.ref.id), Datum.Title(entry.ref.name, 0))
 
-          entry.benches.prim.lay(lead + blankCells(if sized then 7 else 5)): bench =>
+          // As many blanks as there are metric columns, so a placeholder row is never shorter
+          // than the header it sits under.
+          entry.benches.prim.lay(lead + blankCells(benchMetricColumns(sized).stdlib.length)): bench =>
             lead + benchMetricCells(bench, sized)
 
       // The winner is marked only once EVERY scheduled row has its result: a leader among
