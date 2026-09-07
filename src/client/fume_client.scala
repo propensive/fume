@@ -758,8 +758,10 @@ private def runSuite
         trace.toString.tt.cut(t"\n").each { (line: Text) => Out.println(line) }
         (Exit.Fail(2), Unset)
 
-      case EventStream.Outcome.Incompatible =>
+      case EventStream.Outcome.Incompatible(theirs, ours) =>
         Render.announce(t"$suite was built against an incompatible Soundness; falling back")
+        Render.announce(t"  the suite's event schema is $theirs")
+        Render.announce(t"  fume's is                   $ours")
         (legacy(), Unset)
 
       case _ =>

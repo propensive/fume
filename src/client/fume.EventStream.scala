@@ -53,7 +53,8 @@ object EventStream:
 
   enum Outcome:
     case Completed(exit: Int)
-    case Incompatible
+    // The two schema fingerprints, the suite's and fume's own, as hex: the notice names both.
+    case Incompatible(theirs: Text, ours: Text)
     // A handler (the model or the live board) threw; the suite was stopped. Reported by the
     // caller once the board has left the alternate screen, so the trace is not lost with it.
     case Failed(error: Throwable)
@@ -129,7 +130,11 @@ object EventStream:
           val allFrames: sci.LazyList[Data] = frames(output.stream).stdlib
 
           if allFrames.isEmpty then Outcome.Completed(exit())
-          else if !matches(allFrames.head, probably.Streamer.fingerprint) then Outcome.Incompatible
+          else if !matches(allFrames.head, probably.Streamer.fingerprint) then
+            def hex(data: Data): Text =
+              sci.ArraySeq.unsafeWrapArray(data.mutable(using Unsafe)).map { b => f"${b & 0xff}%02x" }.mkString.tt
+
+            Outcome.Incompatible(hex(allFrames.head), hex(probably.Streamer.fingerprint))
           else
             // Frames are consumed on their own task, so the invocation thread stays free to
             // notice an abort (a trapped Ctrl+C) even while the chain is blocked mid-benchmark
