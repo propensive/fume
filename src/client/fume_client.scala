@@ -112,6 +112,47 @@ object ui:
   val Stress = Flag[Unit]("stress", false, Nil, "run stress tests; all kinds run when none is given")
   val Profile = Flag[Unit]("profile", false, Nil, "run profiles; all kinds run when none is given")
 
+  // The flag spellings of the selection grammar. Each lowers (`Selection.lower`) to the
+  // positional wire term the suite parses — `--kind bench,stress` to `kind:bench kind:stress`,
+  // `--tag slow` to `tag:slow`, `--axis N=4,8` to `N=4,8`, `--exclude tag:slow` to
+  // `not:tag:slow` — so suites see one grammar however a selection is spelt, while each flag
+  // gives tab-completion a clear anchor: its operand completes to the kinds, the tags on the
+  // classpath, or the axes and values of the tests the other arguments identify.
+  val Kind =
+    Setting[Text]
+      ( t"kind",
+        t"run only these kinds, comma-separated: test, bench, stress, profile",
+        aliases = proscenium.List('k') )
+
+  val Tag =
+    Flag[Repeated]
+      ( "tag",
+        true,
+        proscenium.List('t'),
+        "run only tests carrying any of these comma-separated tags; a repeated --tag must " +
+          "also match" )
+
+  val Axis =
+    Flag[Repeated]
+      ( "axis",
+        true,
+        proscenium.List('a'),
+        "run only the cells satisfying an axis constraint such as N=4,8, N=4..64 or N=4..; " +
+          "repeatable" )
+
+  val Exclude =
+    Flag[Repeated]
+      ( "exclude",
+        true,
+        proscenium.List('x'),
+        "exclude whatever this selection term would admit: a test, kind:bench, tag:slow or " +
+          "N=4; repeatable" )
+
+  val Axes = Flag[Unit]("axes", false, Nil, "with list: show each test's tags and axes")
+
+  val Tags =
+    Flag[Unit]("tags", false, Nil, "with list: show the distinct tags and how many tests carry each")
+
   val Fork = Flag[Unit]("fork", false, Nil, "run each suite in a separate JVM")
   val Force = Flag[Unit]("force", false, Nil, "overwrite existing files when installing")
   val Version = Flag[Unit]("version", false, Nil, "show fume's version")
@@ -205,7 +246,11 @@ def runClient(): Unit =
     def runSelection(rest: List[Argument]) =
       val classpath: Optional[LocalClasspath] = classpathSetting()
       val suite: Prospective[Text] = suiteFlag(classpath)
-      val kinds: List[Text] = selectedKinds
+      val kinds: List[Text] = selectedKinds + kindSetting().lay(Nil: List[Text])(List(_))
+      val words: List[Text] = Selection.words(rest.map { (argument: Argument) => argument() })
+      val tags: Prospective[Repeated] = tagFlag(classpath)
+      val axes: Prospective[Repeated] = axisFlag(classpath, words)
+      val excludes: Prospective[Repeated] = excludeFlag(classpath, words)
       val failFast: Boolean = ui.FailFast().or(false)
       val maxLoad: Optional[Text] = ui.MaxLoad()
       val durationScale: Optional[Text] = ui.DurationScale()
@@ -213,12 +258,7 @@ def runClient(): Unit =
       val fork: Boolean = ui.Fork().present
       val terms: List[Text] = selectionTerms(rest)
 
-      // Selection terms tab-complete to the REAL tests on the classpath: hash ids, monikers
-      // and `kind:` terms, discovered LAZILY — the update thunk runs only when the focused
-      // word is a term, so ordinary invocations never pay for the listing.
-      classpath.let: cp =>
-        selectionArguments(rest).each: argument =>
-          summon[Cli].suggest(argument, Suites.terms(cp, Unset), t"", t"")
+      completeTerms(classpath, rest)
 
       execute:
         given Stdio = summon[Invocation].stdio
@@ -230,8 +270,13 @@ def runClient(): Unit =
               Render.announce(t"no test suites were found on the classpath")
               NoSuites
             else
-              val kindTerms: List[Text] = kinds.map { (kind: Text) => t"kind:$kind" }
-              val selectionArgs: List[Text] = kindTerms + terms
+              val selectionArgs: List[Text] =
+                Selection.lower
+                  ( kinds,
+                    tags().lay(Nil: List[Text])(_.values),
+                    axes().lay(Nil: List[Text])(_.values),
+                    excludes().lay(Nil: List[Text])(_.values),
+                    terms )
 
               // A positive factor becomes probably's `--scale=<factor>`; anything else is
               // reported and dropped, like `--max-load` above, so that a mistyped multiplier
@@ -422,13 +467,23 @@ def runClient(): Unit =
       // `fume list [-c CLASSPATH] [-s SUITE] [--test|--bench|--stress|--profile] [TERMS…]` —
       // enumerate, without running anything, the tests admitted by the selection, in
       // `probably.Suite`'s `--list` format: `<6-hex-id>  <kind>  <slash/joined/path>`, one per
-      // line.
+      // line. With `--axes`, two more columns follow — the tags, and the axes with the values
+      // (or bounds) the selection admits — from each suite's streamed schedule; with `--tags`,
+      // the distinct tags across the selection with how many tests carry each.
       case ui.List() :: rest =>
         val classpath: Optional[LocalClasspath] = classpathSetting()
         val suite: Prospective[Text] = suiteFlag(classpath)
-        val kinds: List[Text] = selectedKinds
+        val kinds: List[Text] = selectedKinds + kindSetting().lay(Nil: List[Text])(List(_))
+        val words: List[Text] = Selection.words(rest.map { (argument: Argument) => argument() })
+        val tags: Prospective[Repeated] = tagFlag(classpath)
+        val axes: Prospective[Repeated] = axisFlag(classpath, words)
+        val excludes: Prospective[Repeated] = excludeFlag(classpath, words)
+        val showAxes: Boolean = ui.Axes().present
+        val showTags: Boolean = ui.Tags().present
         val fork: Boolean = ui.Fork().present
         val terms: List[Text] = selectionTerms(rest)
+
+        completeTerms(classpath, rest)
 
         execute:
           given Stdio = summon[Invocation].stdio
@@ -440,17 +495,44 @@ def runClient(): Unit =
                 Render.announce(t"no test suites were found on the classpath")
                 NoSuites
               else
-                val kindTerms: List[Text] = kinds.map { (kind: Text) => t"kind:$kind" }
-                val args: List[Text] = t"--list" :: kindTerms + terms
+                val selectionArgs: List[Text] =
+                  Selection.lower
+                    ( kinds,
+                      tags().lay(Nil: List[Text])(_.values),
+                      axes().lay(Nil: List[Text])(_.values),
+                      excludes().lay(Nil: List[Text])(_.values),
+                      terms )
 
-                def recur(remaining: List[Text], failed: Boolean): Boolean = remaining match
-                  case head :: tail =>
-                    recur(tail, invokeSuite(classpath, head, args, fork) != Exit.Ok || failed)
+                if showAxes || showTags then
+                  // A suite that cannot stream its schedule lists as text: ids and paths,
+                  // with no tags or axes to show.
+                  val schedule: List[Suites.Scheduled] =
+                    suites.bind[List[Suites.Scheduled], Suites.Scheduled, List[Suites.Scheduled]]:
+                      suite => Suites.fetch(classpath, suite, selectionArgs)
 
-                  case _ =>
-                    failed
+                  if showTags then
+                    schedule.flatMap(_.tags).distinct.each: tag =>
+                      Out.println(t"$tag  ${schedule.count(_.tags.has(tag))}")
 
-                if recur(suites, false) then TestsFailed else Exit.Ok
+                  if showAxes then
+                    schedule.each: test =>
+                      val kind: Text = if test.kind == t"check" then t"test" else test.kind
+                      val tags: Text = if test.tags.nil then t"-" else test.tags.join(t",")
+                      val path: Text = test.ref.path.join(t"/")
+                      Out.println(t"${test.ref.id}  $kind  $path  $tags  ${Suggest.axesText(test.axes)}")
+
+                  Exit.Ok
+                else
+                  val args: List[Text] = t"--list" :: selectionArgs
+
+                  def recur(remaining: List[Text], failed: Boolean): Boolean = remaining match
+                    case head :: tail =>
+                      recur(tail, invokeSuite(classpath, head, args, fork) != Exit.Ok || failed)
+
+                    case _ =>
+                      failed
+
+                  if recur(suites, false) then TestsFailed else Exit.Ok
 
             case _ =>
               Render.announce(t"at least one --classpath must be specified")
@@ -552,13 +634,66 @@ private def suiteFlag(classpath: Optional[LocalClasspath])(using Cli, Interprete
 
   ui.Suite()
 
+// Reads `--kind`, its operand completing to the kind names, comma-continued.
+private def kindSetting()(using Cli, Interpreter, Configurator): Optional[Text] =
+  given discoverable: (Text is Discoverable) = (operand, _) => Suggest.kinds(operand)
+  ui.Kind()
+
+// Reads `--tag`, its operand completing to the tags on the classpath, comma-continued. Like
+// every completion below, the schedule is consulted LAZILY — `Discoverable#discover` runs only
+// when this operand is the word being completed — and served from the daemon's cache.
+private def tagFlag(classpath: Optional[LocalClasspath])(using Cli, Interpreter)
+:   Prospective[Repeated] =
+
+  given discoverable: (Repeated is Discoverable) = (operand, _) =>
+    classpath.lay(List()) { cp => Suggest.tags(operand, Suites.cached(cp)) }
+
+  ui.Tag()
+
+// Reads `--axis`, its operand completing to the axes of the tests the other arguments
+// (`words`, already lowered) identify, then to the values of the axis once its `=` is typed.
+private def axisFlag(classpath: Optional[LocalClasspath], words: List[Text])
+   (using Cli, Interpreter)
+:   Prospective[Repeated] =
+
+  given discoverable: (Repeated is Discoverable) = (operand, _) =>
+    classpath.lay(List()) { cp => Suggest.axes(operand, words, Suites.cached(cp)) }
+
+  ui.Axis()
+
+// Reads `--exclude`, whose operand is any selection term and completes as a positional one.
+private def excludeFlag(classpath: Optional[LocalClasspath], words: List[Text])
+   (using Cli, Interpreter)
+:   Prospective[Repeated] =
+
+  given discoverable: (Repeated is Discoverable) = (operand, _) =>
+    classpath.lay(List()) { cp => Suggest(operand, words, Suites.cached(cp)) }
+
+  ui.Exclude()
+
+// Registers the completion of every positional selection term: the focused word completes to
+// the REAL tests on the classpath — ids, monikers, kinds, tags, and the axes and values of the
+// tests the OTHER words identify — from the daemon's cached schedule. Discovery is lazy: the
+// update thunk runs only when the focused word is a term, so ordinary invocations never pay
+// for the listing.
+private def completeTerms(classpath: Optional[LocalClasspath], rest: List[Argument])(using Cli)
+:   Unit =
+
+  classpath.let: cp =>
+    selectionArguments(rest).each: argument =>
+      val others: List[Text] =
+        Selection.words:
+          rest.filter(_.position != argument.position).map { (argument: Argument) => argument() }
+
+      summon[Cli].suggest(argument, Suggest(argument(), others, Suites.cached(cp)), t"", t"")
+
 // The raw Probably selection terms: every argument after the subcommand that is neither a flag
 // nor the operand of a value-taking flag. This does NOT interpret the terms — they are
 // forwarded verbatim to each suite — it only separates them from fume's own flags.
 private def selectionArguments(rest: List[Argument]): List[Argument] =
   val valueFlags: List[Flag] =
-    List(ui.Classpath.flag, ui.Suite, ui.FailFast.flag, ui.MaxLoad.flag, ui.DurationScale.flag,
-         ui.Target.flag)
+    List(ui.Classpath.flag, ui.Suite, ui.Kind.flag, ui.Tag, ui.Axis, ui.Exclude, ui.FailFast.flag,
+         ui.MaxLoad.flag, ui.DurationScale.flag, ui.Target.flag)
 
   def recur(args: List[Argument], terms: List[Argument]): List[Argument] = args match
     case head :: tail =>

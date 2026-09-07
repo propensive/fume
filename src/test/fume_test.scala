@@ -37,7 +37,50 @@ import java.nio.file as jnf
 
 import soundness.*
 
+// A wildcard import brings no givens: the `n"…"` tag literal's plane inference needs the
+// moniker and tag planes' `Nominative`s in lexical scope, by name. The compiler reports both
+// as unused — the literal's macro resolves them — but the tagged spread below does not
+// compile without them.
+import soundness.{nominative, taggingNominative}
+
+import probably.TestEvent
+
 object Tests extends Suite(m"Fume tests"):
+  private def ref(id: Text, moniker: Optional[Text], path: List[Text]): TestEvent.Ref =
+    TestEvent.Ref(id, path.stdlib.last, moniker, path, t"", 0)
+
+  private def axis
+     ( label: Text, domain: Text, values: List[Text], emergent: Boolean = false,
+       least: Optional[Double] = Unset, most: Optional[Double] = Unset )
+  :   TestEvent.AxisSchedule =
+
+    TestEvent.AxisSchedule(label, domain, emergent, values, least, most)
+
+  // A classpath's schedule as `Suites.cached` would yield it: a biaxial benchmark, a plain
+  // check without a moniker, a stress sweep with a bounded emergent axis, and a decimal spread.
+  private val schedule: List[Suites.Scheduled] =
+    List
+      ( Suites.Scheduled
+          ( ref(t"a1b2c3", t"parseJson", List(t"jacinta", t"parseJson")),
+            t"bench",
+            List(t"slow"),
+            List(axis(t"N", t"integral", List(t"4", t"8", t"64")),
+                 axis(t"parser", t"discrete", List(t"jacinta", t"circe"))) ),
+        Suites.Scheduled(ref(t"d4e5f6", Unset, List(t"jacinta", t"a plain test")), t"check", Nil, Nil),
+        Suites.Scheduled
+          ( ref(t"0a0b0c", t"sweep", List(t"turbulence", t"sweep")),
+            t"stress",
+            List(t"slow", t"heavy"),
+            List(axis(t"N", t"integral", Nil, emergent = true, least = 2.0, most = 16.0)) ),
+        Suites.Scheduled
+          ( ref(t"fff000", t"ratio", List(t"maths", t"ratio")),
+            t"check",
+            Nil,
+            List(axis(t"x", t"decimal", List(t"0.5", t"1.5"))) ) )
+
+  private def cores(suggestions: List[Suggestion]): List[Text] = suggestions.map(_.core)
+  private def texts(suggestions: List[Suggestion]): List[Text] = suggestions.map(_.text)
+
   // A fresh project directory whose `.fume/config.tel` holds `content`, with a nested
   // `sub/dir` to invoke from, so the upward search is exercised. Rooted in a unique temporary
   // directory per call.
@@ -255,4 +298,95 @@ object Tests extends Suite(m"Fume tests"):
     test(m"budgets render in seconds below a minute and minutes above"):
       List(Budget.show(12_300_000_000L), Budget.show(246_000_000_000L))
     . assert(_ == List(t"12.3s", t"4m06s"))
+
+    test(m"flags lower to wire terms: kinds, tags, axes, exclusions, then terms"):
+      Selection.lower
+        ( List(t"bench,stress", t"test"),
+          List(t"slow,network", t"nightly"),
+          List(t"N=4,8"),
+          List(t"tag:flaky"),
+          List(t"parseJson") )
+    . assert:
+        _ == List(t"kind:bench", t"kind:stress", t"kind:test", t"tag:slow,network", t"tag:nightly",
+                  t"N=4,8", t"not:tag:flaky", t"parseJson")
+
+    test(m"raw words lower the same way, skipping fume's other operands"):
+      Selection.words:
+        List(t"--bench", t"-t", t"slow", t"--axis=N=4", t"-x", t"tag:flaky", t"-c", t"out.jar",
+             t"--suite", t"x.Tests", t"parseJson", t"--fail-fast", t"--target=90", t"jacinta/**")
+    . assert:
+        _ == List(t"kind:bench", t"tag:slow", t"N=4", t"not:tag:flaky", t"parseJson", t"jacinta/**")
+
+    test(m"a bare word offers kinds, tags, ids and monikers, but no axes unidentified"):
+      cores(Suggest(t"", Nil, schedule))
+    . assert: cores =>
+        cores.has(t"kind:bench") && cores.has(t"tag:slow") && cores.has(t"tag:heavy")
+        && cores.has(t"a1b2c3") && cores.has(t"parseJson") && cores.has(t"d4e5f6")
+        && !cores.has(t"a plain test") && !cores.exists(_.ends(t"="))
+
+    test(m"a tag suggestion counts the tests carrying it"):
+      Suggest(t"", Nil, schedule).seek(_.core == t"tag:slow").let(_.description)
+    . assert(_ == t"2 tagged slow")
+
+    test(m"once a test is identified, its axes are offered as incomplete stubs"):
+      Suggest(t"", List(t"parseJson"), schedule).filter(_.core.ends(t"=")).map: suggestion =>
+        (suggestion.core, suggestion.incomplete)
+    . assert(_ == List((t"N=", true), (t"parser=", true)))
+
+    test(m"an integral axis offers its values and range templates"):
+      texts(Suggest(t"N=", List(t"parseJson"), schedule))
+    . assert(_ == List(t"N=4", t"N=8", t"N=64", t"N=4..64", t"N=4..", t"N=..64"))
+
+    test(m"after a comma the remaining values follow behind the typed prefix"):
+      Suggest(t"N=4,", List(t"parseJson"), schedule).map { s => (s.prefix, s.core) }
+    . assert(_ == List((t"N=4,", t"8"), (t"N=4,", t"64")))
+
+    test(m"an axis word offers nothing when no test is identified"):
+      Suggest(t"N=", List(t"kind:bench", t"tag:slow"), schedule)
+    . assert(_ == Nil)
+
+    test(m"a discrete axis offers its labels and no templates"):
+      texts(Suggest(t"parser=", List(t"a1b2c3"), schedule))
+    . assert(_ == List(t"parser=jacinta", t"parser=circe"))
+
+    test(m"an emergent axis offers range templates from its declared bounds"):
+      texts(Suggest(t"N=", List(t"sweep"), schedule))
+    . assert(_ == List(t"N=2..16", t"N=2..", t"N=..16"))
+
+    test(m"a decimal axis renders its extremes as written"):
+      texts(Suggest(t"x=", List(t"ratio"), schedule))
+    . assert(_ == List(t"x=0.5", t"x=1.5", t"x=0.5..1.5", t"x=0.5..", t"x=..1.5"))
+
+    test(m"a glob identifies tests, and kind: and tag: terms narrow them"):
+      ( texts(Suggest(t"N=", List(t"jacinta/**"), schedule)),
+        texts(Suggest(t"N=", List(t"**", t"kind:stress"), schedule)),
+        texts(Suggest(t"N=", List(t"**", t"tag:heavy"), schedule)) )
+    . assert:
+        _ == ( List(t"N=4", t"N=8", t"N=64", t"N=4..64", t"N=4..", t"N=..64"),
+               List(t"N=2..16", t"N=2..", t"N=..16"),
+               List(t"N=2..16", t"N=2..", t"N=..16") )
+
+    test(m"values from several identified tests union, and templates span them"):
+      texts(Suggest(t"N=", List(t"parseJson", t"sweep"), schedule))
+    . assert(_ == List(t"N=4", t"N=8", t"N=64", t"N=2..64", t"N=2..", t"N=..64"))
+
+    test(m"the --axis operand offers stubs until an = is typed"):
+      (cores(Suggest.axes(t"", List(t"parseJson"), schedule)), texts(Suggest.axes(t"parser=", List(t"parseJson"), schedule)))
+    . assert(_ == (List(t"N=", t"parser="), List(t"parser=jacinta", t"parser=circe")))
+
+    test(m"tag and kind operands continue after a comma"):
+      ( Suggest.tags(t"slow,", schedule).map { s => (s.prefix, s.core) },
+        Suggest.kinds(t"bench,").map(_.core) )
+    . assert(_ == (List((t"slow,", t"heavy")), List(t"test", t"stress", t"profile")))
+
+    test(m"axes render for listing as values or bounds"):
+      schedule.map { test => Suggest.axesText(test.axes) }
+    . assert(_ == List(t"N=4,8,64;parser=jacinta,circe", t"-", t"N=2..16", t"x=0.5,1.5"))
+
+    // A tagged, axial test of fume's own, so that `fume list --axes`, `tag:selection` and
+    // `scale=` completion can be exercised against this very suite.
+    test(m"the factor scales with the budget", n"selection")
+    . over(Axis(t"scale")(1L, 2L, 4L)): scale =>
+        Budget.factor(100_000_000_000L*scale, 100_000_000_000L)
+    . assert((scale, factor) => factor == t"$scale.000000000")
 
