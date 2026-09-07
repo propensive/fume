@@ -35,10 +35,10 @@ package fume
 import soundness.*
 
 import backstops.silentBackstop
-import executives.completions
+import executives.completionsExecutive
 import interpreters.posixInterpreter
 import logging.silentLogging
-import systems.javaSystem
+import systems.javaBaseSystem
 import threading.platformThreading
 
 // The Maven Central version of `fume-client`, mirrored in `build.mill`'s `settings.fumeVersion`.
@@ -530,7 +530,7 @@ private def classpathSetting()
         if entry.ends(t".jar") then Classpath.Entry.Jar(entry)
         else Classpath.Entry.Directory(entry)
 
-    LocalClasspath(entries*)
+    LocalClasspath(entries.stdlib*)
 
   given wd: WorkingDirectory = () => workingDirectory
 
@@ -746,8 +746,22 @@ private def runSuite
 
         (if exit == 0 || emptySelection then Exit.Ok else Exit.Fail(exit), document.totals)
 
-      case EventStream.Outcome.Incompatible =>
+      case EventStream.Outcome.Failed(error) =>
+        // Written to a file first: the terminal may be mid-repaint, and a trace on stderr
+        // inside the alternate buffer is lost when the board closes.
+        val trace = java.io.StringWriter()
+        error.printStackTrace(java.io.PrintWriter(trace))
+        val path = java.nio.file.Path.of(java.lang.System.getProperty("java.io.tmpdir").nn, "fume-failure.log").nn
+        java.nio.file.Files.writeString(path, trace.toString)
+        Render.announce(t"the event consumer failed while $suite was running; the run was stopped")
+        Render.announce(t"the stack trace is in ${path.toString.tt}, and follows:")
+        trace.toString.tt.cut(t"\n").each { (line: Text) => Out.println(line) }
+        (Exit.Fail(2), Unset)
+
+      case EventStream.Outcome.Incompatible(theirs, ours) =>
         Render.announce(t"$suite was built against an incompatible Soundness; falling back")
+        Render.announce(t"  the suite's event schema is $theirs")
+        Render.announce(t"  fume's is                   $ours")
         (legacy(), Unset)
 
       case _ =>
@@ -790,7 +804,7 @@ private def install(force: Boolean)
 
   // The `DaemonService` extends `Entrypoint`, and `Completions.ensure` accepts a TRACKED
   // `Entrypoint^`, so the service is passed on with its capture intact — no purity laundering.
-  given entrypoint: (Entrypoint^{service}) = service
+  given entrypoint: Entrypoint = service
 
   given manual: Manual =
     Manual

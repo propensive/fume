@@ -53,7 +53,11 @@ object EventStream:
 
   enum Outcome:
     case Completed(exit: Int)
-    case Incompatible
+    // The two schema fingerprints, the suite's and fume's own, as hex: the notice names both.
+    case Incompatible(theirs: Text, ours: Text)
+    // A handler (the model or the live board) threw; the suite was stopped. Reported by the
+    // caller once the board has left the alternate screen, so the trace is not lost with it.
+    case Failed(error: Throwable)
 
   // Splits a chunk chain into length-prefixed frames, lazily: nothing is pulled from the
   // (blocking, Relay-backed) chunk chain until the next frame is demanded, and partial bytes
@@ -126,19 +130,35 @@ object EventStream:
           val allFrames: sci.LazyList[Data] = frames(output.stream).stdlib
 
           if allFrames.isEmpty then Outcome.Completed(exit())
-          else if !matches(allFrames.head, probably.Streamer.fingerprint) then Outcome.Incompatible
+          else if !matches(allFrames.head, probably.Streamer.fingerprint) then
+            def hex(data: Data): Text =
+              sci.ArraySeq.unsafeWrapArray(data.mutable(using Unsafe)).map { b => f"${b & 0xff}%02x" }.mkString.tt
+
+            Outcome.Incompatible(hex(allFrames.head), hex(probably.Streamer.fingerprint))
           else
             // Frames are consumed on their own task, so the invocation thread stays free to
             // notice an abort (a trapped Ctrl+C) even while the chain is blocked mid-benchmark
             // waiting for the next event. Cancelling the tasks interrupts the blocked take.
+            // A failure in a handler (the model or the live board) must end the run with its
+            // cause on stderr, not leave the invocation polling a dead task for ever while the
+            // suite runs on unobserved.
+            val failure = java.util.concurrent.atomic.AtomicReference[Throwable | Null](null)
+
             val consumer = async:
-              allFrames.tail.foreach { (frame: Data) => handle(probably.Streamer.read(frame)) }
+              try allFrames.tail.foreach { (frame: Data) => handle(probably.Streamer.read(frame)) }
+              catch case error: Throwable =>
+                failure.set(error)
+                throw error
 
             def drained(): Boolean =
               scala.caps.unsafe.unsafeAssumeSeparate(safely(consumer.await(0.1*Second)).present)
 
             def spin(): Outcome =
-              if drained() then Outcome.Completed(exit())
+              val failed = failure.get()
+              if failed != null then
+                task.cancel()
+                Outcome.Failed(failed)
+              else if drained() then Outcome.Completed(exit())
               else if abort() then
                 consumer.cancel()
                 task.cancel()

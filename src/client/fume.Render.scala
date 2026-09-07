@@ -68,7 +68,7 @@ object Render:
   // with NO maximum, so `Flex.solve` hands it everything the rigid columns leave and the
   // table spans the full line. Exactly one column of each fume table uses it.
   private[fume] object Stretch extends Columnar:
-    def flex[text: Textual { type Result = Char }](lines: Array[text]^{}, maxWidth: Int)
+    def flex[text: Textual { type Result = Char }](lines: Array[text], maxWidth: Int)
        (using Text is Measurable)
     :   Flex =
 
@@ -77,7 +77,7 @@ object Render:
       Flex(metrics, 1.0, Unset)
 
     def fit[text: Textual { type Result = Char }]
-       (lines: Array[text]^{}, width: Int, textAlign: TextAlignment)
+       (lines: Array[text], width: Int, textAlign: TextAlignment)
        (using Text is Measurable, Hyphenation)
     :   Sequence[text] =
 
@@ -87,7 +87,7 @@ object Render:
   // A rigid column: exactly its natural content width, never shrunk when the table is
   // squeezed — numeric figures (a duration and its unit) must not wrap.
   private[fume] object Rigid extends Columnar:
-    def flex[text: Textual { type Result = Char }](lines: Array[text]^{}, maxWidth: Int)
+    def flex[text: Textual { type Result = Char }](lines: Array[text], maxWidth: Int)
        (using Text is Measurable)
     :   Flex =
 
@@ -96,7 +96,7 @@ object Render:
       Flex(Metrics(metrics.natural, metrics.natural), 0.0, metrics.natural)
 
     def fit[text: Textual { type Result = Char }]
-       (lines: Array[text]^{}, width: Int, textAlign: TextAlignment)
+       (lines: Array[text], width: Int, textAlign: TextAlignment)
        (using Text is Measurable, Hyphenation)
     :   Sequence[text] =
 
@@ -174,7 +174,7 @@ object Render:
       given style: TableStyle = tableStyles.minimalTableStyle
       tabulation.grid(width).render
     else
-      given style: TableStyle = tableStyles.defaultTableStyle
+      given style: TableStyle = tableStyles.thickTableStyle
       tabulation.grid(width).render
 
   // The winner's background: subdued towards the terminal background so the row's own
@@ -208,11 +208,11 @@ object Render:
            ( title, align, sizing = sizing,
              decorate = { (row: (List[Datum], Int)) =>
                if !terse && highlight.has(row(1))
-               then ((line: Teletype) => e"$winnerBg($line)"): Optional[Teletype -> Teletype]
+               then ((line: Teletype) => e"$winnerBg($line)"): Optional[Teletype => Teletype]
                else Unset } ):
           row => datum(row(0).stdlib(index.n0), terse)
 
-    gridLines(Scaffold[(List[Datum], Int)](defs*).tabulate(indexed), width, terse).each(emit(_))
+    gridLines(Scaffold[(List[Datum], Int), Teletype](defs.stdlib*).tabulate(indexed), width, terse).each(emit(_))
 
   // ---------------------------------------------------------------- the results table
 
@@ -269,7 +269,7 @@ object Render:
                 sizing = Rigid): row =>
               if row.count < 2 || row.max == 0L then e"" else time(row.max, terse) )
 
-      gridLines(Scaffold[SummaryRow](defs*).tabulate(results), width, terse)
+      gridLines(Scaffold[SummaryRow, Teletype](defs.stdlib*).tabulate(results), width, terse)
       . each(Out.println(_))
 
   // ---------------------------------------------------------------- groups
@@ -406,7 +406,8 @@ object Render:
      (using Stdio)
   :   Unit =
 
-    trace.components.each: component =>
+    trace.components.each: component0 =>
+      val component: TestEvent.TraceComponent = component0 // typed first; see `Block.Pending`
       // A failure's trace ends where the test framework begins: everything from the first
       // `probably.` frame down is the runner and transport machinery, not the test.
       val frames: List[TestEvent.Frame] =

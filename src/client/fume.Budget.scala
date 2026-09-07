@@ -74,7 +74,7 @@ object Budget:
       // flow into `safely`'s enclosing function under capture checking (as in `runSuite`).
       safely:
         EventStream.stream(classpath, suite, t"--list" :: args)(
-          { case TestEvent.TestScheduled(_, _, expected) => expected.let(total.addAndGet(_)).unit
+          { case TestEvent.TestScheduled(_, _, expected, _, _) => expected.let(total.addAndGet(_)).unit
             case _                                       => () },
           () => false)
       . unit

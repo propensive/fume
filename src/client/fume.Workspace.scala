@@ -36,7 +36,7 @@ import scala.collection.concurrent.TrieMap
 
 import soundness.*
 
-import filesystemBackends.virtualMachineFilesystem
+import filesystemBackends.javaBaseFilesystem
 
 // The per-project workspace: a `.fume` directory in the invocation's working directory or the
 // nearest ancestor holding one — resolved upwards exactly like `.git`, so `fume` can be invoked

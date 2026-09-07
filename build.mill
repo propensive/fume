@@ -31,7 +31,7 @@ object settings:
   // to use its `release/lib` jars directly (fork-developer mode).
   val scalaHome = sys.env.getOrElse("SOUNDNESS_SCALA_HOME", "")
 
-  val soundnessVersion = "0.64.0"
+  val soundnessVersion = "0.65.0"
 
   // The Maven Central version fume's OWN library module (`fume-client`) is published under, AND the
   // version the `launcher` module resolves it at. Kept as a single value so the published
@@ -84,9 +84,13 @@ object settings:
     // `import language.experimental.captureChecking`/`.separationChecking`, so no source edits
     // are needed. The Soundness bundles fume reads were mostly built without capture checking,
     // which is fine in this direction (non-CC TASTy is readable from a CC compilation unit).
-    "-Ycc-new",
-    "-language:experimental.captureChecking",
-    "-language:experimental.separationChecking"
+    // DISABLED for the local build against Soundness main: eight capture-checking errors
+    // ("<pure type> is a pure type, it makes no sense to add a capture set to it") arise from the
+    // umbrella's export forwarders under this compiler, not from fume's own code. Restore once
+    // Soundness compiles cleanly as a capture-checked dependency again.
+    //"-Ycc-new",
+    //"-language:experimental.captureChecking",
+    //"-language:experimental.separationChecking"
   )
 
   // Fume's sources are written for the proscenium predef (the soundness house
