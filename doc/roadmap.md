@@ -15,7 +15,7 @@ otherwise.
 
 - `src/client/fume_client.scala`: subcommands `run`, `list`, `install`, and a stubbed
   `watch`. Settings cascade flag → `fume.*` property → `FUME_*` environment variable →
-  `.fume/config.tel` (`Workspace`).
+  `.pyrocosm/fume/config.tel` (`Workspace`).
 - `src/client/fume.Journal.scala`: in-memory, daemon-lifetime, last 64 runs. Not persisted.
 - `fume.Model` → `fume.Documenting` → `fume.Doc.Document`: the fold of `probably.TestEvent`s
   and the derived report. `fume.Render` (TUI/terse) and `fume.Live` (Ultimatum board) are
@@ -57,7 +57,7 @@ otherwise.
   outcome, selection terms, *effective* settings with their sources, classpath entries with
   content digests, environment capture (JVM, OS, cores, load at start), per-suite
   `Doc.Document`s and totals. Derive TEL and JSON codecs; BinTEL for the event log.
-- **0.2 Persist the journal.** `.fume/runs/<id>/` holding `run.tel` plus `events.bintel`
+- **0.2 Persist the journal.** `.pyrocosm/fume/runs/<id>/` holding `run.tel` plus `events.bintel`
   per suite; the daemon's `Journal` becomes a cache over disk, surviving restarts. Add a
   `retention` setting, `fume runs` (list), `fume show <id|last>` (re-render a stored run)
   and `fume cancel <id>`. Run ids must be stable across daemons (timestamp plus counter).

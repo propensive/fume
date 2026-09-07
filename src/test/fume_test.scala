@@ -81,12 +81,12 @@ object Tests extends Suite(m"Fume tests"):
   private def cores(suggestions: List[Suggestion]): List[Text] = suggestions.map(_.core)
   private def texts(suggestions: List[Suggestion]): List[Text] = suggestions.map(_.text)
 
-  // A fresh project directory whose `.fume/config.tel` holds `content`, with a nested
+  // A fresh project directory whose `.pyrocosm/fume/config.tel` holds `content`, with a nested
   // `sub/dir` to invoke from, so the upward search is exercised. Rooted in a unique temporary
   // directory per call.
   private def project(content: Text): ji.File =
     val root = jnf.Files.createTempDirectory("fume-test").nn.toFile.nn
-    val fumeDir = ji.File(root, ".fume").nn
+    val fumeDir = ji.File(root, ".pyrocosm/fume").nn
     fumeDir.mkdirs()
     val nested = ji.File(root, "sub/dir").nn
     nested.mkdirs()
@@ -172,7 +172,7 @@ object Tests extends Suite(m"Fume tests"):
       val directory = project(t"tel 1.0\n\nclasspath out/old.jar\n")
       val first = read(directory, t"classpath")
       val root = directory.getParentFile.nn.getParentFile.nn
-      val file = ji.File(ji.File(root, ".fume"), "config.tel")
+      val file = ji.File(ji.File(root, ".pyrocosm/fume"), "config.tel")
       jnf.Files.write(file.toPath, "tel 1.0\n\nclasspath out/renewed.jar\n".getBytes("UTF-8"))
       (first, read(directory, t"classpath"))
     . assert(_ == (t"out/old.jar", t"out/renewed.jar"))

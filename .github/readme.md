@@ -37,10 +37,11 @@ project's configuration file.
 ## Configuration file
 
 A project configures fume with a [TEL](https://soundness.dev/tel/) document at
-`.fume/config.tel`, where the `.fume` directory sits in the project root (typically alongside
-`.git`); fume finds it from the current directory or any ancestor, so it can be invoked from
-anywhere inside the project. Because fume is a daemon, the parsed file is cached, but its
-timestamp and size are checked on every invocation, so edits take effect immediately.
+`.pyrocosm/fume/config.tel`, where the `.pyrocosm` directory sits in the project root (typically
+alongside `.git`) and holds one subdirectory per tool; fume finds the file from the current
+directory or any ancestor, so it can be invoked from anywhere inside the project. Because fume
+is a daemon, the parsed file is cached, but its timestamp and size are checked on every
+invocation, so edits take effect immediately.
 
 The schema is exactly fume's set of `Setting`s: each setting's camelCase name is a kebab-case
 TEL keyword. A keyword's atom is the setting's value; a bare keyword means `true`; a repeated

@@ -126,7 +126,7 @@ object settings:
     mvn"dev.propensive:probably-cli:$soundnessVersion",        // Suite and its runner
     mvn"dev.propensive:probably-events:$soundnessVersion",     // the BinTEL event stream
     mvn"dev.propensive:sedentary-core:$soundnessVersion",      // benchmarks and stress tests
-    mvn"dev.propensive:stratiform-core:$soundnessVersion",     // .fume/config.tel
+    mvn"dev.propensive:stratiform-core:$soundnessVersion",     // .pyrocosm/fume/config.tel
     mvn"dev.propensive:tessellate-core:$soundnessVersion",     // Flow.wrap for report text
     mvn"dev.propensive:ultimatum-core:$soundnessVersion",      // the scrolling viewport
     mvn"dev.propensive:ziggurat-core:$soundnessVersion")       // Xeq.dispatcher, for releases

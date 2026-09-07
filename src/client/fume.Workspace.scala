@@ -38,9 +38,11 @@ import soundness.*
 
 import filesystemBackends.javaBaseFilesystem
 
-// The per-project workspace: a `.fume` directory in the invocation's working directory or the
-// nearest ancestor holding one — resolved upwards exactly like `.git`, so `fume` can be invoked
-// from anywhere inside a project. Its `config.tel` file is a TEL document of settings.
+// The per-project workspace: a `.pyrocosm/fume` directory in the invocation's working directory
+// or the nearest ancestor holding one — resolved upwards exactly like `.git`, so `fume` can be
+// invoked from anywhere inside a project. `.pyrocosm` is the project's shared directory, one
+// subdirectory per tool, so fume's own state never sits at the project root. Its `config.tel`
+// file is a TEL document of settings.
 //
 // The SCHEMA of `config.tel` is the settings themselves: each `Setting`'s camelCase name maps
 // to a kebab-case TEL keyword (the same derivation as its `--flag`), so a setting declared in
@@ -61,13 +63,15 @@ object Workspace:
 
   private val cache: TrieMap[Text, Cached] = TrieMap()
 
-  // The nearest `.fume/config.tel` at or above `directory`, or `Unset` if no ancestor has one.
-  // The FILE is what is sought: a `.fume` directory without a `config.tel` does not end the
-  // search, so an empty `.fume` (e.g. holding only future state like caches) is harmless.
+  // The nearest `.pyrocosm/fume/config.tel` at or above `directory`, or `Unset` if no ancestor
+  // has one. The FILE is what is sought: neither a `.pyrocosm` holding only other tools'
+  // directories, nor a `.pyrocosm/fume` without a `config.tel` (e.g. holding only future state
+  // like caches), ends the search.
   def locate(directory: Text): Optional[Path on Linux] =
     safely:
       def recur(dir: Path on Linux): Optional[Path on Linux] =
-        val candidate = dir / Name[Linux](t".fume") / Name[Linux](t"config.tel")
+        val candidate =
+          dir / Name[Linux](t".pyrocosm") / Name[Linux](t"fume") / Name[Linux](t"config.tel")
         if candidate.existent() then candidate else dir.parent.let(recur(_))
 
       recur(directory.as[Path on Linux])

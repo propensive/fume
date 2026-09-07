@@ -86,10 +86,10 @@ object ui:
   // classloader, never `java.class.path` or the system classloader, which under Burdock see
   // only the slim pre-repackage jar.
   //
-  // A `Setting`, not a `Flag`, so a project can fix its classpath once in `.fume/config.tel`
-  // (one `classpath` entry per line — see `Workspace`) instead of repeating it on every
-  // invocation; `-c`/`--classpath` and the `fume.classpath` property/`FUME_CLASSPATH` variable
-  // override it, all as ':'-separated entries.
+  // A `Setting`, not a `Flag`, so a project can fix its classpath once in
+  // `.pyrocosm/fume/config.tel` (one `classpath` entry per line — see `Workspace`) instead of
+  // repeating it on every invocation; `-c`/`--classpath` and the `fume.classpath`
+  // property/`FUME_CLASSPATH` variable override it, all as ':'-separated entries.
   val Classpath =
     Setting[LocalClasspath]
       ( t"classpath",
@@ -166,8 +166,8 @@ object ui:
 
   // The load gate: hold the run back until the system's 1-minute load average has fallen
   // below this value. A `Setting`, so a benchmarking workspace can fix a house threshold in
-  // `.fume/config.tel` (`maxLoad 0.5`) and still override it per invocation; `--max-load`,
-  // the `fume.max.load` property and `FUME_MAX_LOAD` all reach it.
+  // `.pyrocosm/fume/config.tel` (`maxLoad 0.5`) and still override it per invocation;
+  // `--max-load`, the `fume.max.load` property and `FUME_MAX_LOAD` all reach it.
   //
   // `Setting[Text]`, decoded where it is read: distillate's `Double is Decodable in Text`
   // demands an ambient `Tactic`, and declaring a fume-local given for a type as common as
@@ -233,10 +233,10 @@ def runClient(): Unit =
   cli:
     // The full configuration cascade for every `Setting` read below: the command-line flag
     // always wins (handled structurally by `Setting`), then `fume.*` system properties, then
-    // `FUME_*` environment variables, then the workspace's `.fume/config.tel` — resolved from
-    // the INVOCATION's working directory (each daemon client has its own), never the daemon
-    // process's. This local given takes precedence over `Configurator.default`, which it
-    // extends by one source.
+    // `FUME_*` environment variables, then the workspace's `.pyrocosm/fume/config.tel` —
+    // resolved from the INVOCATION's working directory (each daemon client has its own),
+    // never the daemon process's. This local given takes precedence over
+    // `Configurator.default`, which it extends by one source.
     given configurator: Configurator =
       Configurator.properties ++ Configurator.environment
       ++ Workspace.configurator(summon[Cli].workingDirectory.directory())
@@ -563,8 +563,8 @@ def runClient(): Unit =
 
         execute(install(force))
 
-      // A bare `fume` runs: the workspace's `.fume/config.tel` supplies the classpath, so
-      // the zero-argument invocation is the everyday one.
+      // A bare `fume` runs: the workspace's `.pyrocosm/fume/config.tel` supplies the
+      // classpath, so the zero-argument invocation is the everyday one.
       case Nil =>
         runSelection(List())
 
