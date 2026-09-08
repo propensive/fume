@@ -74,6 +74,7 @@ object ui:
   val List = Subcommand("list", "list the tests and benchmarks on the classpath")
   val Watch = Subcommand("watch", "watch the classpath jars and rerun tests on change")
   val Install = Subcommand("install", "install shell tab-completions and the fume manpage")
+  val Serve = Subcommand("serve", "serve the dashboard of runs on the web until Ctrl+C")
 
   // The classpath holding compiled test suites. Suites on it are discovered ONLY through the
   // `META-INF/services/probably.Suite` index which the beneficence compiler plugin writes;
@@ -163,6 +164,10 @@ object ui:
   // environment variable. Like a flag, a setting must be read outside `execute` to register
   // for tab-completion.
   val FailFast = Setting[Boolean](t"failFast", t"stop after the first failing test")
+
+  // The port `fume serve` listens on; `--port`, the `fume.port` property, `FUME_PORT` and
+  // `port` in the workspace's config all reach it.
+  val Port = Setting[Text](t"port", t"the port on which `fume serve` serves the dashboard")
 
   // The load gate: hold the run back until the system's 1-minute load average has fallen
   // below this value. A `Setting`, so a benchmarking workspace can fix a house threshold in
@@ -323,6 +328,10 @@ def runClient(): Unit =
               val terse: Boolean = fume.GithubActions.terse
               val tty: Boolean = summon[DaemonService[?]].cliInput == ethereal.Stdin.Terminal
 
+              // The board's frontend drives the terminal through the invocation's console, a
+              // tracked capability sealed here for the run, as flame does for its commands.
+              given Console = scala.caps.unsafe.unsafeAssumePure(summon[Cli])
+
               // Ctrl+C at the client arrives here as a trapped SIGINT: the current suite's
               // event consumption stops, its partial report renders, and no further suite
               // starts. (The suite's threads — and any measurement JVMs a staged benchmark
@@ -330,16 +339,9 @@ def runClient(): Unit =
               val aborted: java.util.concurrent.atomic.AtomicBoolean =
                 java.util.concurrent.atomic.AtomicBoolean(false)
 
-              val winched: java.util.concurrent.atomic.AtomicBoolean =
-                java.util.concurrent.atomic.AtomicBoolean(false)
-
               trap:
                 case Interrupt.Int =>
                   aborted.set(true)
-                  SignalResponse.Accept
-
-                case Interrupt.Winch =>
-                  winched.set(true)
                   SignalResponse.Accept
 
               // The load gate, if `--max-load` asked for one. It is entered AFTER the signal
@@ -386,8 +388,7 @@ def runClient(): Unit =
                     val suiteStarted: Long = java.lang.System.currentTimeMillis
 
                     val (exit, suiteTotals) =
-                      runSuite(classpath, head, args, fork, width, terse, tty,
-                          aborted, winched)
+                      runSuite(classpath, head, args, fork, width, terse, tty, aborted, journalId)
                     val passed = exit == Exit.Ok
                     Journal.record(journalId, head, passed, suiteTotals, suiteStarted)
 
@@ -540,6 +541,64 @@ def runClient(): Unit =
 
       // `fume watch …` — as `run`, but watch the OUTPUT jars named by `--classpath` (something
       // else does the compiling) and rerun the selection whenever one changes.
+      // `fume serve [--port]` — serve the dashboard: every run the daemon has journalled, the
+      // ones in flight live. Runs started from any shell while it serves register their boards,
+      // so a browser and a terminal watch the same cells.
+      case ui.Serve() :: _ =>
+        val port: Int = ui.Port() match
+          case text: Text => text.s.toIntOption.getOrElse(8090)
+          case _          => 8090
+
+        execute:
+          given Stdio = summon[Invocation].stdio
+          import probates.cancelProbate
+          import strategies.throwUnsafely
+          import webserverErrorPages.minimalErrorPage
+
+          val stdio: Stdio = summon[Stdio]
+          val tty: Boolean = summon[DaemonService[?]].cliInput == ethereal.Stdin.Terminal
+          val aborted: java.util.concurrent.atomic.AtomicBoolean =
+            java.util.concurrent.atomic.AtomicBoolean(false)
+
+          trap:
+            case Interrupt.Int =>
+              aborted.set(true)
+              SignalResponse.Accept
+
+          val dashboard = fume.Dashboard()
+          val served: java.util.concurrent.atomic.AtomicBoolean = java.util.concurrent.atomic.AtomicBoolean(false)
+
+          // The frontend holds the monitor and the error page, which outlive it; vouched pure so
+          // it can be stopped from here.
+          val frontend: pyrocosm.WebFrontend =
+            scala.caps.unsafe.unsafeAssumePure(pyrocosm.WebFrontend(port))
+
+          Server.serving = true
+
+          async:
+            try frontend.run(dashboard.interface)(dashboard.handle)
+            finally served.set(true)
+
+          Render.announce(t"serving the fume dashboard at http://localhost:$port/ (Ctrl+C to stop)")
+
+          // On a terminal the launcher forwards Ctrl+C as a byte rather than a signal, so the
+          // input is read for it here, as the load gate does.
+          val input: Live.Input = Live.Input(aborted)
+
+          def loop(): Unit =
+            if tty then while stdio.in.available() > 0 do input.offer(stdio.in.read())
+            dashboard.refresh()
+
+            if !aborted.get && !served.get then
+              snooze(0.25*Second)
+              loop()
+
+          loop()
+          Server.serving = false
+          frontend.stop()
+          Render.announce(t"the dashboard has stopped")
+          Exit.Ok
+
       case ui.Watch() :: _ =>
         val classpath: Optional[LocalClasspath] = classpathSetting()
         val suite: Prospective[Text] = suiteFlag(classpath)
@@ -775,8 +834,8 @@ private def runSuite
      terse: Boolean,
      tty: Boolean,
      aborted: java.util.concurrent.atomic.AtomicBoolean,
-     winched: java.util.concurrent.atomic.AtomicBoolean )
-   (using Stdio, WorkingDirectory, Monitor, Environment)
+     journal: Int )
+   (using Stdio, WorkingDirectory, Monitor, Environment, Console)
 :   (Exit, Optional[Doc.Totals]) =
 
   import probates.cancelProbate
@@ -787,91 +846,74 @@ private def runSuite
   else
     val model = Model()
 
-    // The live board is worthless where nobody watches: terse mode (CI, Claude Code) folds
-    // events quietly, and a piped invocation (the launcher reports whether the client is on
-    // a terminal) renders once at the end instead.
-    //
-    // On a terminal, the launcher holds the client tty in RAW mode: Ctrl+C arrives as the
-    // byte 0x03 on stdin, never as a signal, so an input pump owns stdin for the run —
-    // dispatching keypresses to the abort flag and size-probe replies to the board.
-    val input: Optional[Live.Input] = if tty then Live.Input(aborted) else Unset
+    // The live board, shown in the terminal by Pyrocosm's frontend: skipped in terse mode (CI,
+    // Claude Code), where events fold quietly, and for a piped invocation (the launcher reports
+    // whether the client is on a terminal), which renders once at the end instead. The `--list`
+    // pre-run schedules every test so the board shows what is coming; the board itself opens a
+    // second later, so a run that finishes at once never flashes the alternate screen. Leaving
+    // the board (Escape, Ctrl+C or Ctrl+D) before the run is over aborts it.
+    // The board is built whenever someone can see it: on this terminal, or through the
+    // dashboard `fume serve` is serving, which shows the same cells.
+    val shown: Boolean = !terse && tty
+    val board: Optional[fume.Board] = if shown || Server.serving then fume.Board(model, suite) else Unset
 
-    val live: Optional[Live] =
-      if terse || !tty then Unset
-      else input.let { input => Live(model, width, winched, input) }
-
-    // With a live board coming, a listing pre-pass seeds the schedule: the suite runs with
-    // `--list` on the EVENT protocol, emitting one `TestScheduled` per admitted test — with
-    // its real ref, so paths group correctly whatever characters the names contain — and
-    // every scheduled test appears in its table immediately, blank, filling in as its
-    // result arrives.
-    if live.present then
-      // The abort thunk is passed explicitly: the DEFAULT argument's root capability
-      // cannot flow into `safely`'s enclosing function under capture checking.
+    if board.present then
       safely(EventStream.stream(classpath, suite, t"--list" :: args)(model.handle(_), () => false))
       . unit
 
-    // The one-second trigger: if the suite is still producing when this fires, the board
-    // starts painting; `activate` is a no-op once `finish` has run.
-    //
-    // `1*Second`, not `snooze(1000L)`: `snooze`'s `Long` overload counts NANOSECONDS, so the
-    // bare literal made this (and the two loops below) fire immediately and spin.
-    val timer = async:
-      snooze(1*Second)
-      live.let(_.activate())
+    board.let { board => Server.attach(journal, board) }
 
-    // The resize pulse, owned by the invocation so it outlives the timer: each beat lets
-    // the board react to a forwarded SIGWINCH.
-    val pulse = async:
-      def loop(): Unit =
-        snooze(0.2*Second)
-        live.let(_.pulse())
-        loop()
+    // The frontend holds the run's monitor and its terminal-error tactic, which outlive it; it
+    // is vouched pure so it can be held and stopped from here.
+    val frontend: Optional[pyrocosm.TerminalFrontend] = if !shown then Unset else board.let: _ =>
+      import strategies.throwUnsafely
+      import fume.Figures.measurable
+      import tableStyles.thickTableStyle
+      import palettes.solarizedDarkGaugePalette
+      scala.caps.unsafe.unsafeAssumePure(pyrocosm.TerminalFrontend(Occupancy.Fullscreen))
 
-      loop()
+    // Fulfilled when the board has closed and the terminal is restored, so the report below
+    // prints onto the ordinary screen.
+    val closed: Promise[Unit] = Promise()
 
-    // The stdin pump: every byte the client's terminal sends is dispatched — Ctrl+C to the
-    // abort flag, CSI replies to the size probe.
-    val pump = async:
-      def loop(): Unit =
-        input.let: input =>
-          val stdio = summon[Stdio]
-
-          if stdio.in.available() > 0 then
-            input.offer(stdio.in.read()) match
-              case Live.Key.Up   => live.let(_.scroll(-1))
-              case Live.Key.Down => live.let(_.scroll(1))
-              case _             => ()
-          else snooze(0.03*Second)
-
-        if input.present then loop()
-
-      loop()
+    frontend.let: frontend =>
+      async:
+        try
+          snooze(1*Second)
+          board.let: board =>
+            if !model.finished then
+              frontend.run(board.interface):
+                case pyrocosm.Event.Closed => if !model.finished then aborted.set(true)
+                case _                     => ()
+        finally closed.offer(())
 
     val outcome =
       EventStream.stream(classpath, suite, args)
         ( { event =>
               model.handle(event)
-              live.let(_.tick()) },
+              board.let(_.refresh()) },
           () => aborted.get )
 
-    live.let(_.finish())
-    timer.cancel()
-    pulse.cancel()
-    pump.cancel()
+    frontend.let: frontend =>
+      frontend.stop()
+      safely(closed.attend())
+
+    board.let: board =>
+      board.refresh(force = true)
+      Server.detach(journal, suite, Blocks.document(Documenting.document(model.state())))
 
     outcome match
       case EventStream.Outcome.Completed(exit) if exit == EventStream.abortExit =>
         Render.announce(t"aborted; the partial report follows")
         val document = Documenting.document(model.state())
-        Render.suite(document, live.let(_.columns).or(width), terse)
+        Render.suite(document, width, terse)
         (Exit.Fail(exit), document.totals)
 
       case EventStream.Outcome.Completed(exit) =>
         val document = Documenting.document(model.state())
         // The report replays onto the primary buffer at the terminal's REAL width — the
         // board probed it — rather than the COLUMNS guess.
-        Render.suite(document, live.let(_.columns).or(width), terse)
+        Render.suite(document, width, terse)
 
         // A suite reports failure (exit 1) when NOTHING was admitted: right when it is
         // invoked alone, wrong when fume fans a kind filter (`--bench`) across every suite

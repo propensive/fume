@@ -18,7 +18,7 @@ otherwise.
   `.pyrocosm/fume/config.tel` (`Workspace`).
 - `src/client/fume.Journal.scala`: in-memory, daemon-lifetime, last 64 runs. Not persisted.
 - `fume.Model` → `fume.Documenting` → `fume.Doc.Document`: the fold of `probably.TestEvent`s
-  and the derived report. `fume.Render` (TUI/terse) and `fume.Live` (Ultimatum board) are
+  and the derived report. `fume.Render` (TUI/terse) and `fume.Board` (a Pyrocosm interface shown by its terminal frontend, from the blocks `fume.Blocks` derives) are
   the only renderers. `fume.GithubActions` gives partial CI output.
 - `fume.EventStream`: BinTEL frames with a schema fingerprint, so the raw event stream is
   already a versioned wire format worth persisting verbatim.
@@ -115,11 +115,14 @@ otherwise.
 
 ## Phase 2: Web front-end
 
-- **2.1 `fume serve`.** A perihelion server hosted by the daemon (localhost, chosen port,
-  optional token). Job list mirroring the TUI: active and completed runs from the persisted
-  journal. Selecting an active run opens a WebSocket that replays the stored event log and
-  then tails live events (the same `Model` fold, run in the page's server session); a
-  completed run renders its stored document. Push-based, like flame's `/socket`.
+- **2.1 `fume serve`** (first cut done). Pyrocosm's `WebFrontend`, hosted by the daemon on
+  `--port` (default 8090), serves a `Dashboard` interface: the journal's active and completed
+  runs as navigation, the chosen run as the main panel and its progress as status. A run
+  started from any shell while the server is up registers its `Board` with `Server`, so the
+  page tails the same `Live` cells the terminal board shows, pushed as patches over one
+  WebSocket per tab; a finished run keeps its final blocks and totals in the registry.
+  Still to do: an access token, replaying the persisted event log (3.x) rather than the
+  daemon's memory, and per-tab selection (today every tab shares one selection).
 - **2.2 Live SVG charts** (savagery) for multi-axis benchmarks and stress tests: numeric
   axes as line/area with confidence bands, discrete axes as grouped bars, stress as
   throughput and p50/p90/p99 against concurrency, updating as `BenchmarkRecorded` and

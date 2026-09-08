@@ -32,51 +32,39 @@
                                                                                                   */
 package fume
 
-import java.util.concurrent.atomic as juca
+import java.lang as jl
 
 import soundness.*
 
-import probably.TestEvent
+import pyrocosm.{Block, Hints, Inline, Interface, Panel, hints}
 
+// The live board as a Pyrocosm interface: one primary panel of the run's blocks, following the
+// newest results, and a status panel with the run's progress. `refresh` rebuilds both from the
+// model, at most ten times a second, and the frontend showing them repaints.
+final class Board(model: Model, val title: Text):
+  private val throttle: Long = 100L
 
-// What remains of the hand-rolled live board, which Pyrocosm's `Board` and `TerminalFrontend`
-// replaced: the byte-level key decoder the load gate (`Load`) still reads the raw terminal
-// with while it waits for the machine to go quiet, to notice Ctrl+C and Ctrl+D.
-object Live:
-  enum Key:
-    case Idle, Up, Down
+  @scala.caps.unsafe.untrackedCaptures
+  @volatile
+  private var painted: Long = 0L
 
-  final class Input(aborted: juca.AtomicBoolean):
-    val reply: juca.AtomicReference[String | Null] = juca.AtomicReference(null)
+  val results: pyrocosm.Live[List[Block]] = pyrocosm.Live(Nil)
+  val progress: pyrocosm.Live[List[Block]] = pyrocosm.Live(Nil)
 
-    @scala.caps.unsafe.untrackedCaptures
-    private var pending: String = ""
-    @scala.caps.unsafe.untrackedCaptures
-    private var collecting: Boolean = false
+  def refresh(force: Boolean = false): Unit =
+    val now = jl.System.currentTimeMillis
 
-    def offer(byte: Int): Key =
-      if byte == 3 || byte == 4 then
-        aborted.set(true)
-        Key.Idle
-      else if byte == 27 then
-        collecting = true
-        pending = ""
-        Key.Idle
-      else if collecting then
-        if pending == "[" && byte == 'A'.toInt then
-          collecting = false
-          Key.Up
-        else if pending == "[" && byte == 'B'.toInt then
-          collecting = false
-          Key.Down
-        else if byte == 'R'.toInt then
-          reply.set(pending)
-          collecting = false
-          Key.Idle
-        else if pending.length > 15 then
-          collecting = false
-          Key.Idle
-        else
-          pending = pending + byte.toChar
-          Key.Idle
-      else Key.Idle
+    if force || now - painted >= throttle then
+      painted = now
+      val state = model.state()
+      results() = Blocks.board(state)
+      progress() = List(Blocks.progress(state))
+
+  val interface: Interface =
+    Interface
+      ( Inline.text(title),
+        List
+          ( Panel(Panel.Id(t"results"), Panel.Role.Primary, Unset, results, Panel.Priority.Essential,
+                hints = Hints(hints.Follow, hints.terminal.Border.None)),
+            Panel(Panel.Id(t"progress"), Panel.Role.Status, Unset, progress, Panel.Priority.Essential,
+                hints = Hints(hints.terminal.Border.None)) ) )

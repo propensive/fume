@@ -40,6 +40,10 @@ object settings:
   // would silently fall back to inlining. Override at release time.
   val fumeVersion = sys.env.getOrElse("FUME_VERSION", "0.2.0")
 
+  // The Pyrocosm release the board is built on (from `~/.ivy2/local`, installed by
+  // `make publishLocal` in the Pyrocosm repository, until it is released).
+  val pyrocosmVersion = "0.1.0"
+
   val scalaOptions = Seq(
     // The fork's opt-in behaviours, enabled by name, exactly as the Soundness build enables
     // them (fume compiles the same idioms from the same TASTy): every capture-checking
@@ -129,7 +133,10 @@ object settings:
     mvn"dev.propensive:stratiform-core:$soundnessVersion",     // .pyrocosm/fume/config.tel
     mvn"dev.propensive:tessellate-core:$soundnessVersion",     // Flow.wrap for report text
     mvn"dev.propensive:ultimatum-core:$soundnessVersion",      // the scrolling viewport
-    mvn"dev.propensive:ziggurat-core:$soundnessVersion")       // Xeq.dispatcher, for releases
+    mvn"dev.propensive:ziggurat-core:$soundnessVersion",       // Xeq.dispatcher, for releases
+    mvn"dev.propensive:pyrocosm-model:$pyrocosmVersion",       // the board's semantic model
+    mvn"dev.propensive:pyrocosm-terminal:$pyrocosmVersion",    // its terminal frontend,
+    mvn"dev.propensive:pyrocosm-web:$pyrocosmVersion")         // and its web frontend
 
 // Exposes the fork compiler's `release/lib` jars (from a local build via `settings.scalaHome`, or
 // downloaded from the `settings.scalaRelease` GitHub release) as a Maven-layout repository,
