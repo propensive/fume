@@ -40,8 +40,11 @@ object settings:
   // would silently fall back to inlining. Override at release time.
   val fumeVersion = sys.env.getOrElse("FUME_VERSION", "0.2.0")
 
-  // The Pyrocosm release the board is built on (from `~/.ivy2/local`, installed by
-  // `make publishLocal` in the Pyrocosm repository, until it is released).
+  // The Pyrocosm release the board is built on, resolved from `~/.ivy2/local` like the
+  // Soundness components: installed from Pyrocosm's GitHub Releases by the shared CI workflow's
+  // `extra_releases` input (see .github/workflows/ci.yml), or locally by Soundness's sync script
+  // pointed at Pyrocosm, or by `make publishLocal` in the Pyrocosm repository for an unreleased
+  // version. The repackager names propensive/pyrocosm among its hints so the jars externalize.
   val pyrocosmVersion = "0.1.0"
 
   val scalaOptions = Seq(

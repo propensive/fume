@@ -31,7 +31,7 @@ publishLocal:
 # is inlined. Set GITHUB_TOKEN to lift the API rate limit; the requests are otherwise anonymous.
 fume.jar: assembly
 	cp out/fume/launcher/assembly.dest/out.jar fume.jar
-	java -cp fume.jar soundness.repackage --github propensive/fume,propensive/soundness,propensive/proscala
+	java -cp fume.jar soundness.repackage --github propensive/fume,propensive/pyrocosm,propensive/soundness,propensive/proscala
 
 fume: fume.jar
 	java -Dbuild.executable=fume -jar fume.jar
