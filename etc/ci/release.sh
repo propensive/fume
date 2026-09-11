@@ -91,7 +91,7 @@ echo "released $ASSET_NAME ($DIGEST)"
 ./mill fume.launcher.assembly
 cp out/fume/launcher/assembly.dest/out.jar fume.jar
 java -cp fume.jar soundness.repackage \
-  --github propensive/fume,propensive/soundness,propensive/proscala | tee /tmp/fume-release-repackage.log
+  --github propensive/fume,propensive/pyrocosm,propensive/soundness,propensive/proscala | tee /tmp/fume-release-repackage.log
 
 # The whole point of the two-step dance: refuse to ship an executable that quietly inlined the
 # library instead of referring to the release.

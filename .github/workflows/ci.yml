@@ -18,3 +18,6 @@ jobs:
       assembly:      fume.launcher.assembly
       test_assembly: fume.test.assembly
       test_main:     fume.runTests
+      # The Pyrocosm release the board is built on (`pyrocosmVersion` in build.mill), synced
+      # from its own GitHub Releases like the Soundness release.
+      extra_releases: propensive/pyrocosm=0.1.0
