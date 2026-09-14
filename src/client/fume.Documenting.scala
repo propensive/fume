@@ -55,15 +55,18 @@ object Documenting:
     val results: List[SummaryRow] = summaries(state, measurements = false)
 
     val totals: Totals =
-      def add(totals: Totals, status: Status): Totals = status match
-        case Status.Suite      => totals
-        case Status.Pass       => totals.copy(passed = totals.passed + 1)
-        case Status.Bench      => totals.copy(passed = totals.passed + 1)
-        case Status.Stress     => totals.copy(passed = totals.passed + 1)
-        case Status.Profile    => totals.copy(passed = totals.passed + 1)
-        case Status.AspirePass => totals.copy(aspirePassed = totals.aspirePassed + 1)
-        case Status.AspireFail => totals.copy(aspireFailed = totals.aspireFailed + 1)
-        case _                 => totals.copy(failed = totals.failed + 1)
+      def add(totals0: Totals, status: Status): Totals =
+        val totals = totals0.record(status)
+
+        status match
+          case Status.Suite      => totals0
+          case Status.Pass       => totals.copy(passed = totals.passed + 1)
+          case Status.Bench      => totals.copy(passed = totals.passed + 1)
+          case Status.Stress     => totals.copy(passed = totals.passed + 1)
+          case Status.Profile    => totals.copy(passed = totals.passed + 1)
+          case Status.AspirePass => totals.copy(aspirePassed = totals.aspirePassed + 1)
+          case Status.AspireFail => totals.copy(aspireFailed = totals.aspireFailed + 1)
+          case _                 => totals.copy(failed = totals.failed + 1)
 
       counted.fold(Totals.zero) { (totals, row) => add(totals, row.status) }
 

@@ -163,7 +163,15 @@ object Doc:
   // One row of the global results table, aggregating a test's runs across all its cells.
   case class SummaryRow(status: Status, ref: TestEvent.Ref, count: Int, min: Long, max: Long, avg: Long)
 
-  case class Totals(passed: Int, failed: Int, aspirePassed: Int, aspireFailed: Int):
+  // The counts of a run, and the DISTINCT statuses its tests took (suites excluded), for the
+  // legend to explain only the marks that appear.
+  case class Totals
+    ( passed:       Int,
+      failed:       Int,
+      aspirePassed: Int,
+      aspireFailed: Int,
+      statuses:     List[Status] ):
+
     def total: Int = passed + failed + aspirePassed + aspireFailed
     def pass: Boolean = failed == 0 && total > 0
 
@@ -172,10 +180,14 @@ object Doc:
         ( passed + other.passed,
           failed + other.failed,
           aspirePassed + other.aspirePassed,
-          aspireFailed + other.aspireFailed )
+          aspireFailed + other.aspireFailed,
+          (statuses + other.statuses).distinct )
+
+    def record(status: Status): Totals =
+      if statuses.has(status) then this else copy(statuses = statuses + List(status))
 
   object Totals:
-    def zero: Totals = Totals(0, 0, 0, 0)
+    def zero: Totals = Totals(0, 0, 0, 0, Nil)
 
   case class Document
     ( results:        List[SummaryRow],

@@ -620,8 +620,9 @@ object Render:
     renderFatal(document, terse, github)
     if document.nothingMatched then Out.println(t"No tests matched the selection.")
 
-  // The end of the whole run: aggregate totals, the PASS/FAIL banner, and the status legend.
-  def finale(totals: Totals, terse: Boolean)(using Stdio): Unit =
+  // The end of the whole run: aggregate totals, the PASS/FAIL banner, and the status legend,
+  // which explains only the marks the run produced, in as many columns as `width` fits.
+  def finale(totals: Totals, width: Int, terse: Boolean)(using Stdio): Unit =
     if totals.total == 0 then Out.println(if terse then t"No tests were run." else t"")
     else if terse then
       val summary = t"${totals.passed} passed, ${totals.failed} failed, "
@@ -681,26 +682,18 @@ object Render:
 
       Out.println(t"─"*72)
 
+      // The legend's canonical order, of which only the statuses the run produced are shown.
       val allStatuses: List[Status] =
         List
           ( Status.Pass, Status.Bench, Status.Stress, Status.Profile, Status.AspirePass,
             Status.Throws, Status.Fail, Status.AspireFail, Status.Mixed, Status.CheckThrows )
 
-      // Printed with index loops rather than `grouped(_).each` closures: a lambda whose
-      // parameter is a `List` and whose body uses the `Stdio` capability leaks the list's
-      // reach capability into the surrounding scope under capture checking.
       // A named function rather than a lambda: an interpolation inside a lambda passed to
       // `map` crashes the 3.9.0-p16 compiler inside implicit search (`wildApprox` assertion).
-      def legend(status: Status): Teletype = (e"  ${status.symbol} ${status.describe}": Teletype).pad(20)
+      def legend(status: Status): Teletype = e"${status.symbol} ${status.describe}"
 
-      val cells: List[Teletype] = allStatuses.map(legend(_))
-      val gap: Teletype = e" "
-      var cell = 0
-
-      while cell < cells.size do
-        val row: Teletype = cells.excerpt(cell, cell + 4).fold(e"")(_ + gap + _)
-        Out.println(row)
-        cell += 4
+      val cells: List[Teletype] = allStatuses.filter(totals.statuses.has(_)).map(legend(_))
+      cells.columnate(width, gap = 3).each(Out.println(_))
 
       Out.println(t"─"*72)
 

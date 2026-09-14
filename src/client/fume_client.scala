@@ -420,7 +420,7 @@ def runClient(): Unit =
               // The banner renders over the aggregate of every event-run suite; when every
               // suite ran legacy (each rendered its own banner already), only the summary
               // line prints.
-              totals.let(Render.finale(_, terse))
+              totals.let(Render.finale(_, width, terse))
 
               // `0 of 0 suites passed` would read like a clean run; nothing ran at all. This
               // is the shape of an abort — Ctrl+C at the load gate, or before the first suite
