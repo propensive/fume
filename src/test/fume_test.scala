@@ -78,6 +78,21 @@ object Tests extends Suite(m"Fume tests"):
             Nil,
             List(axis(t"x", t"decimal", List(t"0.5", t"1.5"))) ) )
 
+  // A small tree of suites and tests, as `Model` sees it: a root suite with a test of its own
+  // declared before two sub-suites of one test each.
+  private val root   = ref(t"ffffff", Unset, List(t"root"))
+  private val suiteA = ref(t"aaaaaa", Unset, List(t"root", t"A"))
+  private val suiteB = ref(t"bbbbbb", Unset, List(t"root", t"B"))
+  private val testX  = ref(t"000001", Unset, List(t"root", t"x"))
+  private val testA1 = ref(t"000002", Unset, List(t"root", t"A", t"a1"))
+  private val testB1 = ref(t"000003", Unset, List(t"root", t"B", t"b1"))
+  private val passed = TestEvent.Outcome(t"pass", 1L, Unset)
+
+  private def paths(state: Model.State): List[Text] =
+    state.lines.map:
+      case Model.Line.SuiteLine(ref)   => ref.path.join(t"/")
+      case Model.Line.EntryLine(entry) => entry.ref.path.join(t"/")
+
   private def cores(suggestions: List[Suggestion]): List[Text] = suggestions.map(_.core)
   private def texts(suggestions: List[Suggestion]): List[Text] = suggestions.map(_.text)
 
@@ -382,6 +397,31 @@ object Tests extends Suite(m"Fume tests"):
     test(m"axes render for listing as values or bounds"):
       schedule.map { test => Suggest.axesText(test.axes) }
     . assert(_ == List(t"N=4,8,64;parser=jacinta,circe", t"-", t"N=2..16", t"x=0.5,1.5"))
+
+    test(m"a listing pre-pass announcing every suite before any test still nests by declaration"):
+      val model = Model()
+      model.handle(TestEvent.SuiteStarted(root, 0L))
+      model.handle(TestEvent.SuiteStarted(suiteA, 0L))
+      model.handle(TestEvent.SuiteStarted(suiteB, 0L))
+      model.handle(TestEvent.TestScheduled(testX, t"check", Unset, Nil, Nil))
+      model.handle(TestEvent.TestScheduled(testA1, t"check", Unset, Nil, Nil))
+      model.handle(TestEvent.TestScheduled(testB1, t"check", Unset, Nil, Nil))
+      paths(model.state())
+    . assert(_ == List(t"root", t"root/x", t"root/A", t"root/A/a1", t"root/B", t"root/B/b1"))
+
+    test(m"a plain run's lines keep their arrival order"):
+      val model = Model()
+      model.handle(TestEvent.SuiteStarted(root, 0L))
+      model.handle(TestEvent.TestCompleted(testX, t"check", Nil, passed, Nil, 0L))
+      model.handle(TestEvent.SuiteStarted(suiteA, 0L))
+      model.handle(TestEvent.TestCompleted(testA1, t"check", Nil, passed, Nil, 0L))
+      model.handle(TestEvent.SuiteEnded(suiteA, 0L))
+      model.handle(TestEvent.SuiteStarted(suiteB, 0L))
+      model.handle(TestEvent.TestCompleted(testB1, t"check", Nil, passed, Nil, 0L))
+      model.handle(TestEvent.SuiteEnded(suiteB, 0L))
+      model.handle(TestEvent.SuiteEnded(root, 0L))
+      paths(model.state())
+    . assert(_ == List(t"root", t"root/x", t"root/A", t"root/A/a1", t"root/B", t"root/B/b1"))
 
     // A tagged, axial test of fume's own, so that `fume list --axes`, `tag:selection` and
     // `scale=` completion can be exercised against this very suite.

@@ -43,7 +43,10 @@ import probably.TestEvent
 // snapshot (`state()`) is immutable, so renderers never race the consuming thread.
 object Model:
   // One line of the results display, in declaration order: suites interleave with the tests
-  // beneath them exactly as the (depth-first) run visits them.
+  // beneath them exactly as the (depth-first) run visits them. That order is RECONSTRUCTED
+  // from each ref's path when a snapshot is taken (see `order`), not taken from arrival: a
+  // `--list` pre-pass runs the whole suite body (every `SuiteStarted`) before it emits a single
+  // `TestScheduled`, so by arrival every suite would precede every test.
   enum Line:
     case SuiteLine(ref: TestEvent.Ref)
     case EntryLine(entry: Entry)
@@ -195,8 +198,62 @@ final class Model:
 
   def finished: Boolean = mutex(completed0.present || fatal0.present)
 
+  // The lines in depth-first declaration order, whatever order they arrived in. Each line's
+  // sort key is the RANK of each of its ancestor suites (shortest first), then its own: an
+  // entry ranks by its arrival index, and a suite by the index of the first entry beneath it
+  // (its own only when it has none). A suite's key is thus a prefix of every descendant's, so
+  // it sorts immediately ahead of them; and among siblings, a suite takes the place of its
+  // first test rather than the place it was announced — which, after a listing pre-pass, is
+  // ahead of every test. In a plain run a suite is announced before its first test anyway,
+  // so the order is exactly arrival order.
+  private def order(lines: List[Line]): List[Line] =
+    val indexed: scala.List[(Line, Int)] = lines.stdlib.zipWithIndex
+
+    def pathOf(line: Line): scala.List[Text] = line match
+      case Line.SuiteLine(ref)   => ref.path.stdlib
+      case Line.EntryLine(entry) => entry.ref.path.stdlib
+
+    def key(path: scala.List[Text]): Text = suitePath(path.to(List))
+
+    val own: scala.collection.mutable.HashMap[Text, Int] = scala.collection.mutable.HashMap()
+    val least: scala.collection.mutable.HashMap[Text, Int] = scala.collection.mutable.HashMap()
+
+    indexed.foreach:
+      case (Line.SuiteLine(ref), index) =>
+        own.getOrElseUpdate(key(ref.path.stdlib), index)
+
+      case (Line.EntryLine(entry), index) =>
+        val path = entry.ref.path.stdlib
+        (1 until path.length).foreach: n =>
+          val ancestor = key(path.take(n))
+          if !least.contains(ancestor) then least(ancestor) = index
+
+    def rank(path: scala.List[Text]): Option[Int] =
+      val ancestor = key(path)
+      least.get(ancestor).orElse(own.get(ancestor))
+
+    def sortKey(line: Line, index: Int): scala.List[Int] =
+      val path = pathOf(line)
+      val ancestors: scala.List[Int] = (1 until path.length).toList.flatMap { n => rank(path.take(n)) }
+
+      line match
+        case Line.SuiteLine(_)   => ancestors :+ rank(path).getOrElse(index)
+        case Line.EntryLine(_)   => ancestors :+ index
+
+    // Lexicographic: the first differing rank decides; a key that is a prefix of the other
+    // (a suite against one of its descendants) comes first.
+    def precedes(left: scala.List[Int], right: scala.List[Int]): Boolean =
+      left.zip(right).find { (l, r) => l != r } match
+        case Some((l, r)) => l < r
+        case None         => left.length <= right.length
+
+    val keyed: scala.List[(Line, scala.List[Int])] =
+      indexed.map { (line, index) => (line, sortKey(line, index)) }
+
+    keyed.sortWith { (left, right) => precedes(left(1), right(1)) }.map(_(0)).to(List)
+
   def state(): State = mutex:
-    val lines: List[Line] =
+    val lines: List[Line] = order:
       lines0.reverse.map: token =>
         if token.starts(t"s:")
         then Line.SuiteLine(suites0(token.skip(2)).option.get)
