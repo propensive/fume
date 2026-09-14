@@ -31,14 +31,14 @@ object settings:
   // to use its `release/lib` jars directly (fork-developer mode).
   val scalaHome = sys.env.getOrElse("SOUNDNESS_SCALA_HOME", "")
 
-  val soundnessVersion = "0.65.0"
+  val soundnessVersion = "0.66.0"
 
   // The Maven Central version fume's OWN library module (`fume-client`) is published under, AND the
   // version the `launcher` module resolves it at. Kept as a single value so the published
   // coordinate and the launcher's dependency coordinate cannot drift apart: burdock externalizes a
   // module only when the exact published jar bytes are on the launcher's classpath, so a mismatch
   // would silently fall back to inlining. Override at release time.
-  val fumeVersion = sys.env.getOrElse("FUME_VERSION", "0.2.0")
+  val fumeVersion = sys.env.getOrElse("FUME_VERSION", "0.3.0")
 
   // The Pyrocosm release the board is built on, resolved from `~/.ivy2/local` like the
   // Soundness components: installed from Pyrocosm's GitHub Releases by the shared CI workflow's
@@ -136,7 +136,6 @@ object settings:
     mvn"dev.propensive:stratiform-core:$soundnessVersion",     // .pyrocosm/fume/config.tel
     mvn"dev.propensive:tessellate-core:$soundnessVersion",     // Flow.wrap for report text
     mvn"dev.propensive:ultimatum-core:$soundnessVersion",      // the scrolling viewport
-    mvn"dev.propensive:ziggurat-core:$soundnessVersion",       // Xeq.dispatcher, for releases
     mvn"dev.propensive:pyrocosm-model:$pyrocosmVersion",       // the board's semantic model
     mvn"dev.propensive:pyrocosm-terminal:$pyrocosmVersion",    // its terminal frontend,
     mvn"dev.propensive:pyrocosm-web:$pyrocosmVersion")         // and its web frontend

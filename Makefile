@@ -57,7 +57,13 @@ test:
 	mill fume.test.assembly
 	java -cp out/fume/test/assembly.dest/out.jar fume.runTests
 
+# Install the pinned pyrocosm release into the local ivy repository, as CI does, so a local build
+# resolves the released jars rather than whatever a pyrocosm checkout's `publishLocal` last
+# installed: the pinned version, or `VERSION=X.Y.Z`. Soundness itself is left alone.
+sync-releases:
+	./etc/ci/sync-releases.sh $(VERSION)
+
 dev:
 	mill -w fume.client.compile
 
-.PHONY: assembly release publishLocal run test dev install
+.PHONY: sync-releases assembly release publishLocal run test dev install
