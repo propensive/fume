@@ -96,8 +96,10 @@ object Workspace:
           cache(key) = Cached(stat.modified, stat.size, parsed)
           parsed
 
-        cache.get(key) match
-          case Some(cached) if cached.modified == stat.modified && cached.size == stat.size =>
+        val cached: Optional[Cached] = cache.getOrElse(key, Unset)
+
+        cached match
+          case cached: Cached if cached.modified == stat.modified && cached.size == stat.size =>
             cached.config
 
           case _ =>

@@ -36,6 +36,9 @@ import scala.math
 
 import soundness.*
 
+import denominative.dysasymptotics.linearSize
+import sortingAlgorithms.timsort
+
 import probably.TestEvent
 
 // The single structural pass over an accumulated event `Model`: builds the renderer-agnostic
@@ -62,13 +65,13 @@ object Documenting:
         case Status.AspireFail => totals.copy(aspireFailed = totals.aspireFailed + 1)
         case _                 => totals.copy(failed = totals.failed + 1)
 
-      counted.stdlib.foldLeft(Totals.zero) { (totals, row) => add(totals, row.status) }
+      counted.fold(Totals.zero) { (totals, row) => add(totals, row.status) }
 
     Document(results, totals, groups(state), state.details, state.fatal, state.nothingMatched)
 
-  private def parent(path: List[Text]): List[Text] = (path.stdlib.dropRight(1)).to(List)
+  private def parent(path: List[Text]): List[Text] = path.skip(1, Rtl)
 
-  def depth(ref: TestEvent.Ref): Int = (ref.path.stdlib.length - 1).max(0)
+  def depth(ref: TestEvent.Ref): Int = (ref.path.size - 1).max(0)
 
   // The collective status of one entry's outcomes.
   def entryStatus(entry: Entry): Status = entry.kind.or(t"check") match
@@ -99,7 +102,7 @@ object Documenting:
             val path = entry.ref.path
             // Every proper prefix of the test's path is an ancestor suite's path.
             def prefixes(n: Int, acc: List[List[Text]]): List[List[Text]] =
-              if n >= path.stdlib.length then acc else prefixes(n + 1, (path.stdlib.take(n)).to(List) :: acc)
+              if n >= path.size then acc else prefixes(n + 1, path.keep(n) :: acc)
             prefixes(1, Nil)
 
         case _ =>
@@ -125,11 +128,11 @@ object Documenting:
             entry.completions.map { completion => completion(1).duration }
 
           if durations.nil then Nil else
-            val avg: Long = durations.stdlib.foldLeft(0L)(_ + _)/durations.stdlib.length
-            val min: Long = durations.stdlib.foldLeft(Long.MaxValue)(_.min(_))
-            val max: Long = durations.stdlib.foldLeft(0L)(_.max(_))
+            val avg: Long = durations.fold(0L)(_ + _)/durations.size
+            val min: Long = durations.fold(Long.MaxValue)(_.min(_))
+            val max: Long = durations.fold(0L)(_.max(_))
 
-            List(SummaryRow(entryStatus(entry), entry.ref, durations.stdlib.length, min, max, avg))
+            List(SummaryRow(entryStatus(entry), entry.ref, durations.size, min, max, avg))
 
   // The display text and numeric value of one coordinate.
   def coordText(coordinate: TestEvent.Coordinate): Text =
@@ -218,7 +221,7 @@ object Documenting:
 
             val time: Datum =
               if durations.nil then Datum.Blank
-              else Datum.Time(durations.stdlib.foldLeft(0L)(_ + _)/durations.stdlib.length)
+              else Datum.Time(durations.fold(0L)(_ + _)/durations.size)
 
             List(Datum.Str(value), Datum.Mark(outcomeStatus(outcomes)), time)
 
@@ -271,7 +274,7 @@ object Documenting:
       recur(combined, Nil, Nil)
 
     if distinct.exists(_.domain == t"discrete") then distinct
-    else (distinct.stdlib.sortBy(coordNumeric(_))).to(List)
+    else distinct.order(coordNumeric(_))
 
   // The biaxial grid: the first axis's values are rows, the second's are columns, and each
   // cell holds only the headline datum; absent combinations render as gaps.
@@ -316,7 +319,7 @@ object Documenting:
     if throughput(bench) == 0L then Datum.Blank else Datum.Rate(throughput(bench))
 
   private def blankCells(count: Int): List[Datum] =
-    (scala.List.fill(count)(Datum.Blank: Datum)).to(List)
+    List.fill(count)(Datum.Blank: Datum)
 
   private def benchMetricColumns(sized: Boolean): List[Column] =
     val sizes: List[Column] =
@@ -411,18 +414,18 @@ object Documenting:
 
           // As many blanks as there are metric columns, so a placeholder row is never shorter
           // than the header it sits under.
-          entry.benches.prim.lay(lead + blankCells(benchMetricColumns(sized).stdlib.length)): bench =>
+          entry.benches.prim.lay(lead + blankCells(benchMetricColumns(sized).size)): bench =>
             lead + benchMetricCells(bench, sized)
 
       // The winner is marked only once EVERY scheduled row has its result: a leader among
       // stragglers is not yet the best.
       val highlight: List[Int] =
         if plain.nil || plain.exists(_.benches.nil) then Nil else
-          val rates: scala.List[Long] =
-            plain.map { entry => entry.benches.prim.lay(0L)(throughput(_)) }.stdlib
+          val rates: List[Long] = plain.map { entry => entry.benches.prim.lay(0L)(throughput(_)) }
+          val best: Long = rates.maximum.or(0L)
 
-          val best = rates.max
-          if best == 0L then Nil else List(rates.indexOf(best))
+          if best == 0L then Nil
+          else rates.where(_ == best).lay(Nil: List[Int]) { ordinal => List(ordinal.n0) }
 
       if rows.nil then Nil else
         List(Block.Table
@@ -541,21 +544,20 @@ object Documenting:
         curves.bind[List[Long], Long, List[Long]] { curve => curve(1).map(_.concurrency.toLong) }
 
       val shared: List[Long] =
-        if curves.stdlib.length < 2 then all.distinct
-        else
-          (all.stdlib.groupBy { step => step }.filter(_(1).length > 1).keys.toList).to(List)
+        if curves.size < 2 then all.distinct
+        else all.distinct.filter { step => all.count(_ == step) > 1 }
 
-      val chosen: List[Long] = if shared.stdlib.length > 1 then shared else all.distinct
-      (chosen.stdlib.sorted).to(List)
+      val chosen: List[Long] = if shared.size > 1 then shared else all.distinct
+      chosen.sort
 
     val sparkline: List[Block] =
-      if steps.stdlib.length < 2 then Nil else
+      if steps.size < 2 then Nil else
         val peakRate: Long =
           val rates: List[Long] =
             curves.bind[List[Long], Long, List[Long]]: curve =>
               curve(1).map(strainThroughput(_))
 
-          rates.stdlib.foldLeft(1L)(_.max(_))
+          rates.fold(1L)(_.max(_))
 
         val sequence: List[Spark] =
           curves.map: (entry, curve) =>
@@ -588,14 +590,14 @@ object Documenting:
         (entry, curve) =>
           val best: Optional[TestEvent.StrainRecorded] =
             curve.seek(_.sustained).or:
-              curve.stdlib.maxByOption(strainThroughput(_)).optional
+              curve.maximize(strainThroughput(_))
 
           best.lay(Nil) { strain => List(entry -> strain) }
 
     val bestRate: Long =
-      peaks.map { peak => strainThroughput(peak(1)) }.stdlib.foldLeft(0L)(_.max(_))
+      peaks.map { peak => strainThroughput(peak(1)) }.fold(0L)(_.max(_))
 
-    val ranked: Boolean = peaks.stdlib.length > 1 && bestRate > 0L
+    val ranked: Boolean = peaks.size > 1 && bestRate > 0L
 
     val summary: List[Block] =
       if peaks.nil && pending.nil then Nil else
@@ -612,7 +614,7 @@ object Documenting:
 
         val rows: List[List[Datum]] =
           val sorted: List[(Entry, TestEvent.StrainRecorded)] =
-            (peaks.stdlib.sortBy { peak => -strainThroughput(peak(1)) }).to(List)
+            peaks.order { peak => -strainThroughput(peak(1)) }
 
           sorted.map: (entry, strain) =>
             val rate: Long = strainThroughput(strain)

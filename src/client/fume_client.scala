@@ -546,7 +546,7 @@ def runClient(): Unit =
       // so a browser and a terminal watch the same cells.
       case ui.Serve() :: _ =>
         val port: Int = ui.Port() match
-          case text: Text => text.s.toIntOption.getOrElse(8090)
+          case text: Text => safely(text.as[Int]).or(8090)
           case _          => 8090
 
         execute:
@@ -671,7 +671,7 @@ private def classpathSetting()
         if entry.ends(t".jar") then Classpath.Entry.Jar(entry)
         else Classpath.Entry.Directory(entry)
 
-    LocalClasspath(entries.stdlib*)
+    LocalClasspath(entries*)
 
   given wd: WorkingDirectory = () => workingDirectory
 

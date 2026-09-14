@@ -43,11 +43,13 @@ import soundness.*
 // compile without them.
 import soundness.{nominative, taggingNominative}
 
+import denominative.dysasymptotics.linearSize
+
 import probably.TestEvent
 
 object Tests extends Suite(m"Fume tests"):
   private def ref(id: Text, moniker: Optional[Text], path: List[Text]): TestEvent.Ref =
-    TestEvent.Ref(id, path.stdlib.last, moniker, path, t"", 0)
+    TestEvent.Ref(id, path.last.or(t""), moniker, path, t"", 0)
 
   private def axis
      ( label: Text, domain: Text, values: List[Text], emergent: Boolean = false,

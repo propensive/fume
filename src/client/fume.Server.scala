@@ -37,6 +37,8 @@ import java.util.concurrent as juc
 
 import soundness.*
 
+import denominative.dysasymptotics.linearSize
+
 import pyrocosm.{Action, Block, Event, Hints, Inline, Interface, Panel, Tone, hints}
 
 // The runs the daemon has seen, for the web front-end: the board of every suite in flight,
@@ -117,7 +119,7 @@ final class Dashboard():
       case Journal.Outcome.Failed  => Inline.Toned(Tone.Failure, List(Inline.Symbol(pyrocosm.Glyph.Cross)))
       case Journal.Outcome.Aborted => Inline.Toned(Tone.Warning, List(Inline.Symbol(pyrocosm.Glyph.Warning)))
 
-    val name: Text = run.current.or(run.suites.stdlib.lastOption.map(_.suite).getOrElse(run.scheduled.stdlib.headOption.getOrElse(t"run ${run.id}")))
+    val name: Text = run.current.or(run.suites.last.let(_.suite).or(run.scheduled.prim.or(t"run ${run.id}")))
     val label: List[Inline] =
       List(standing, Inline.Textual(t" "), Inline.Emphasis(Inline.text(name)), Inline.Textual(t" "),
           Inline.Toned(Tone.Muted, Inline.text(t"${when(run.started)} · ${run.client}")))
@@ -131,7 +133,7 @@ final class Dashboard():
     val active = Journal.active
     val completed = Journal.completed
 
-    if selected.absent then active.stdlib.headOption.orElse(completed.stdlib.headOption).foreach { run => selected = run.id }
+    if selected.absent then (active + completed).prim.let { run => selected = run.id }
 
     val items: List[Block.Item] = (active + completed).map(runItem)
     val listing: List[Block] = if items.nil then List(Block.paragraph(t"No runs yet.")) else List(Block.Listing(false, items))
@@ -143,10 +145,10 @@ final class Dashboard():
     selected.let: run =>
       val board = Server.board(run)
       val finished = Server.done(run)
-      val live: AnyRef | Null = board.lay(null: AnyRef | Null) { board => board.results().stdlib }
-      val changed = lastRun != run || finished.stdlib.length != lastFinished || !(live.asInstanceOf[AnyRef] eq lastLive.asInstanceOf[AnyRef])
+      val live: AnyRef | Null = board.lay(null: AnyRef | Null) { board => board.results().asInstanceOf[AnyRef] }
+      val changed = lastRun != run || finished.size != lastFinished || !(live.asInstanceOf[AnyRef] eq lastLive.asInstanceOf[AnyRef])
       lastRun = run
-      lastFinished = finished.stdlib.length
+      lastFinished = finished.size
       lastLive = live
 
       if changed then

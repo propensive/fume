@@ -36,6 +36,8 @@ import java.lang as jl
 
 import soundness.*
 
+import denominative.dysasymptotics.linearSize
+
 // The daemon's record of test runs: every `run` invocation is entered in the journal when it
 // starts and moves to the completed list when it finishes. The journal lives in the DAEMON,
 // which outlives each client, so it accumulates the history of every run the daemon has
@@ -83,7 +85,7 @@ object Journal:
 
     def running: Boolean = finished.absent
     def duration: Optional[Long] = finished.let(_ - started)
-    def failures: Int = suites.stdlib.count(!_.passed)
+    def failures: Int = suites.count(!_.passed)
 
   // The completed runs kept in memory. Old enough runs fall off the end: the daemon is
   // long-lived, and an unbounded history would grow without limit.
@@ -138,10 +140,10 @@ object Journal:
             totals = totals )
 
       active0 = active0.filter(_.id != id)
-      // Typed before the bridge: the cons result's element type is otherwise still being
-      // inferred when `stdlib` is resolved.
+      // Typed first: the cons result's element type is otherwise still being inferred when
+      // `keep` is resolved.
       val extended: List[Run] = done :: completed0
-      completed0 = extended.stdlib.take(history).to(List)
+      completed0 = extended.keep(history)
 
   def active: List[Run] = mutex(active0)
   def completed: List[Run] = mutex(completed0)

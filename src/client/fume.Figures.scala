@@ -34,6 +34,8 @@ package fume
 
 import soundness.*
 
+import denominative.dysasymptotics.linearAccess
+
 // Numeric formatting shared by fume's renderers: one implementation decides digits and
 // units; the renderers decide only colour and styling. A port of probably's `Format`, plus
 // the Student's-t quantile table needed to recompute a benchmark's confidence interval from
@@ -76,7 +78,7 @@ object Figures:
   // shows at least the thinnest bar.
   def bar(samples: Long, max: Long): Text =
     val eighths = (if max == 0L then 0L else samples*320L/max).max(if samples > 0L then 1L else 0L)
-    t"█"*(eighths/8L).toInt + partials.stdlib((eighths%8L).toInt)
+    t"█"*(eighths/8L).toInt + partials((eighths%8L).toInt.z).or(t"")
 
   val sparkBlocks: List[Text] = List(t"▁", t"▂", t"▃", t"▄", t"▅", t"▆", t"▇", t"█")
 
@@ -109,4 +111,4 @@ object Figures:
       case 98 => 6
       case _  => 7
 
-    table.stdlib(band).stdlib(index)
+    table(band.z).let(_(index.z)).or(0.0)

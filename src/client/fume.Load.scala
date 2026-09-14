@@ -38,6 +38,8 @@ import java.util.concurrent.atomic as juca
 
 import soundness.*
 
+import denominative.dysasymptotics.linearAccess
+
 import fume.Figures.measurable
 
 // The load gate: `--max-load` holds a run back until the machine is quiet enough to measure
@@ -99,8 +101,10 @@ object Load:
 
   // `₄`, `₁₆`: the value in Unicode subscript digits.
   private def subscript(value: Int): Text =
-    if value < 10 then subscripts.stdlib(value)
-    else t"${subscript(value/10)}${subscripts.stdlib(value%10)}"
+    if value < 10 then subscripts(value.z).or(t"")
+    else
+      val digit: Text = subscripts((value%10).z).or(t"")
+      t"${subscript(value/10)}$digit"
 
   // The ruler above the bar: a `╷` at each power of two the scale covers, labelled with the
   // value in subscript digits, e.g. `╷₄     ╷₈     ╷₁₆`. Powers below 1 are marked but not
@@ -134,7 +138,7 @@ object Load:
   // empty — its background colour says which — and an eighth-block glyph where the boundary
   // between fill and track falls inside the cell.
   def glyph(eighths: Int): Text =
-    if eighths == 0 || eighths == 8 then t" " else Figures.partials.stdlib(eighths)
+    if eighths == 0 || eighths == 8 then t" " else Figures.partials(eighths.z).or(t"")
 
   // The bar itself: eighth-block granularity, and two colours — the portion of the bar below
   // the target load is `pass`, the portion above it `warning`, so an overloaded machine shows

@@ -32,9 +32,9 @@
                                                                                                   */
 package fume
 
-import scala.collection.immutable as sci
-
 import soundness.*
+
+import denominative.dysasymptotics.{linearAccess, linearSize}
 
 import probably.TestEvent
 
@@ -81,8 +81,7 @@ object Render:
        (using Text is Measurable, Hyphenation)
     :   Sequence[text] =
 
-      Sequence.from:
-        lines.readable.to(sci.IndexedSeq).flatMap { line => Flow.wrap(line, width).stdlib }.toVector
+      lines.to[List].bind[Sequence[text], text, List[text]] { line => Flow.wrap(line, width) }.to[Sequence]
 
   // A rigid column: exactly its natural content width, never shrunk when the table is
   // squeezed — numeric figures (a duration and its unit) must not wrap.
@@ -100,21 +99,23 @@ object Render:
        (using Text is Measurable, Hyphenation)
     :   Sequence[text] =
 
-      Sequence.from:
-        lines.readable.to(sci.IndexedSeq).flatMap { line => Flow.wrap(line, width).stdlib }.toVector
+      lines.to[List].bind[Sequence[text], text, List[text]] { line => Flow.wrap(line, width) }.to[Sequence]
 
   // ---------------------------------------------------------------- data rendering
 
   private def figure(figure: Figures.Figure, units: List[Text], terse: Boolean): Teletype =
+    // Hoisted (see `Block.Pending` below): an indexed selection substituted directly into the
+    // interpolation crashes the compiler inside the macro's implicit search.
+    val unit: Text = if figure.unit >= 3 then t"" else units(figure.unit.z).or(t"")
+
     if figure.unit >= 3 then figure.whole.teletype
-    else if terse then e"${figure.whole}.${figure.fraction} ${units.stdlib(figure.unit)}"
+    else if terse then e"${figure.whole}.${figure.fraction} $unit"
     else
       val color = figure.unit match
         case 0 => Palette.cold
         case 1 => Palette.warm
         case _ => Palette.hot
 
-      val unit = units.stdlib(figure.unit)
       e"${Fg(Palette.foreground)}(${figure.whole}.${figure.fraction}) ${Fg(color)}($unit)"
 
   private def time(n: Long, terse: Boolean): Teletype =
@@ -210,9 +211,9 @@ object Render:
                if !terse && highlight.has(row(1))
                then ((line: Teletype) => e"$winnerBg($line)"): Optional[Teletype -> Teletype]
                else Unset } ):
-          row => datum(row(0).stdlib(index.n0), terse)
+          row => datum(row(0)(index).or(Datum.Blank), terse)
 
-    gridLines(Scaffold[(List[Datum], Int), Teletype](defs.stdlib*).tabulate(indexed), width, terse).each(emit(_))
+    gridLines(Scaffold[(List[Datum], Int), Teletype](defs*).tabulate(indexed), width, terse).each(emit(_))
 
   // ---------------------------------------------------------------- the results table
 
@@ -269,7 +270,7 @@ object Render:
                 sizing = Rigid): row =>
               if row.count < 2 || row.max == 0L then e"" else time(row.max, terse) )
 
-      gridLines(Scaffold[SummaryRow, Teletype](defs.stdlib*).tabulate(results), width, terse)
+      gridLines(Scaffold[SummaryRow, Teletype](defs*).tabulate(results), width, terse)
       . each(Out.println(_))
 
   // ---------------------------------------------------------------- groups
@@ -327,8 +328,8 @@ object Render:
         printTable(columns, rows, width, terse, highlight)(emit)
 
       case Block.Sparkline(steps, sequence) =>
-        val labelWidth = sequence.map(_.label.length).stdlib.foldLeft(1)(_.max(_))
-        val stepWidth = steps.map(_.show.length).stdlib.foldLeft(1)(_.max(_)) + 2
+        val labelWidth = sequence.map(_.label.length).fold(1)(_.max(_))
+        val stepWidth = steps.map(_.show.length).fold(1)(_.max(_)) + 2
 
         emit:
           val headings: Text = steps.map { (step: Long) => step.show.pad(stepWidth, Rtl) }.join
@@ -341,12 +342,12 @@ object Render:
               cell.lay(if terse then t"·".pad(stepWidth, Rtl).teletype
                        else e"${Fg(Palette.subdued)}(${t"·".pad(stepWidth, Rtl)})"):
                 (level: Int, subduedCell: Boolean) =>
-                  val text = Figures.sparkBlocks.stdlib(level - 1).pad(stepWidth, Rtl)
+                  val text = Figures.sparkBlocks((level - 1).z).or(t"").pad(stepWidth, Rtl)
                   if terse then text.teletype
                   else if subduedCell then e"${Fg(Palette.subdued)}($text)"
                   else e"${Fg(Palette.accented)}($text)"
 
-            . stdlib.foldLeft(e"")(_ + _)
+            . fold(e"")(_ + _)
 
           val summary: Teletype = spark.sustained.lay(e""): (n: Long, throughput: Long) =>
             if terse then e"  sustained $n @ $throughput op/s" else
@@ -367,11 +368,11 @@ object Render:
           if terse then emit(e"${ref.id}  ${ref.name}")
           else emit(e"$Bold(${Fg(Palette.foreground)}(${ref.name}))")
 
-        val maxSamples: Long = frames.map(_.samples).stdlib.foldLeft(0L)(_.max(_))
+        val maxSamples: Long = frames.map(_.samples).fold(0L)(_.max(_))
 
         def name(frame: TestEvent.Hotspot): Text = t"${frame.className}#${frame.method}"
 
-        val nameWidth: Int = frames.map(name(_).length).stdlib.foldLeft(0)(_.max(_))
+        val nameWidth: Int = frames.map(name(_).length).fold(0)(_.max(_))
 
         frames.each: (frame: TestEvent.Hotspot) =>
           val percent = Figures.percent(Figures.basisPoints(frame.samples.toDouble, total.toDouble))
@@ -412,14 +413,14 @@ object Render:
       // `probably.` frame down is the runner and transport machinery, not the test.
       val frames: List[TestEvent.Frame] =
         if !crop then component.frames
-        else (component.frames.stdlib.takeWhile(!_.className.starts(t"probably."))).to(List)
+        else component.frames.keep(!_.className.starts(t"probably."))
 
       val className: Text = component.className
       val message: Text = Figures.abbreviate(component.message)
 
       if terse then
         Out.println(t"  $className: $message")
-        frames.stdlib.take(3).foreach: frame =>
+        frames.keep(3).each: frame =>
           val line = frame.line.let(_.show).or(t"?")
           Out.println(t"    at ${frame.className}.${frame.method} (${frame.file}:$line)")
       else
@@ -454,7 +455,7 @@ object Render:
     // rows highlighted.
     val interesting = rows.filter(_.kind != t"same")
 
-    if !interesting.nil && rows.stdlib.length > 1 then
+    if !interesting.nil && rows.size > 1 then
       val defs =
         List
           ( escritoire.Column[TestEvent.CompareRow, Teletype, Teletype](e""): row =>
@@ -550,7 +551,7 @@ object Render:
 
       val explanation =
         if active.nil then t"No tests were active when a fatal error occurred."
-        else t"A fatal error occurred while $activeNames ${if active.stdlib.length == 1 then t"was" else t"were"} running."
+        else t"A fatal error occurred while $activeNames ${if active.size == 1 then t"was" else t"were"} running."
 
       if github then
         val className = trace.components.prim.let(_.className).or(t"")
@@ -688,15 +689,17 @@ object Render:
       // Printed with index loops rather than `grouped(_).each` closures: a lambda whose
       // parameter is a `List` and whose body uses the `Stdio` capability leaks the list's
       // reach capability into the surrounding scope under capture checking.
-      val cells: sci.IndexedSeq[Teletype] =
-        allStatuses.stdlib.map: status =>
-          (e"  ${status.symbol} ${status.describe}": Teletype).pad(20)
-        . toIndexedSeq
+      // A named function rather than a lambda: an interpolation inside a lambda passed to
+      // `map` crashes the 3.9.0-p16 compiler inside implicit search (`wildApprox` assertion).
+      def legend(status: Status): Teletype = (e"  ${status.symbol} ${status.describe}": Teletype).pad(20)
 
+      val cells: List[Teletype] = allStatuses.map(legend(_))
+      val gap: Teletype = e" "
       var cell = 0
 
-      while cell < cells.length do
-        Out.println(cells.slice(cell, cell + 4).foldLeft(e"")(_ + e" " + _): Teletype)
+      while cell < cells.size do
+        val row: Teletype = cells.excerpt(cell, cell + 4).fold(e"")(_ + gap + _)
+        Out.println(row)
         cell += 4
 
       Out.println(t"─"*72)
@@ -735,12 +738,12 @@ object GithubActions:
      (using Stdio, Environment)
   :   Unit =
 
+    def one(value: Optional[Text]): List[Text] = value.lay(Nil: List[Text]) { text => List(text) }
+
     val props: List[Text] =
-      List
-        ( file.let(workspaceRelative(_)).let { path => t"file=${escapeProperty(path)}" }.option,
-          line.let { value => t"line=${value.show}" }.option,
-          title.let { value => t"title=${escapeProperty(value)}" }.option )
-      . bind[List[Text], Text, List[Text]](_.to(List))
+      one(file.let(workspaceRelative(_)).let { path => t"file=${escapeProperty(path)}" })
+      + one(line.let { value => t"line=${value.show}" })
+      + one(title.let { value => t"title=${escapeProperty(value)}" })
 
     val header = if props.nil then t"" else t" ${props.join(t",")}"
     Out.println(t"::error$header::${escape(message)}")

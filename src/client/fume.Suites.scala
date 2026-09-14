@@ -36,6 +36,8 @@ import java.lang as jl
 
 import soundness.*
 
+import denominative.dysasymptotics.linearSize
+
 import probably.TestEvent
 
 // Discovery of Probably test suites on a user-supplied classpath. Suites are found ONLY through
@@ -190,8 +192,8 @@ object Suites:
   def schedule(classpath: LocalClasspath, suite: Text, args: List[Text])(using Stdio, Monitor)
   :   Optional[List[Scheduled]] =
 
-    val rows: scala.collection.mutable.ListBuffer[Scheduled] =
-      scala.collection.mutable.ListBuffer()
+    // Accumulated in reverse and inverted at the end, as `Model` does.
+    var rows: List[Scheduled] = Nil
 
     // The abort thunk is passed explicitly: the DEFAULT argument's root capability cannot flow
     // into `safely`'s enclosing function under capture checking (as in `runSuite`).
@@ -199,14 +201,13 @@ object Suites:
       safely:
         EventStream.stream(classpath, suite, t"--list" :: args)(
           { case TestEvent.TestScheduled(ref, kind, _, tags, axes) =>
-              rows.append(Scheduled(ref, kind, tags, axes))
+              rows = Scheduled(ref, kind, tags, axes) :: rows
             case _ => () },
           () => false)
 
     outcome match
       case EventStream.Outcome.Completed(_) =>
-        val scheduled: List[Scheduled] = rows.toList.to(List)
-        scheduled
+        rows.reverse
 
       case _ =>
         Unset
@@ -233,7 +234,7 @@ object Suites:
           line.skip(8).cut(t"  ") match
             case kind :: path =>
               val segments: List[Text] = path.join(t"  ").cut(t"/")
-              val leaf: Text = segments.stdlib.lastOption.getOrElse(t"")
+              val leaf: Text = segments.last.or(t"")
 
               val moniker: Optional[Text] =
                 if leaf != t"" && !leaf.contains(t" ") && leaf != id then leaf else Unset
@@ -283,14 +284,12 @@ object Suites:
   def cached(classpath: LocalClasspath): List[Scheduled] =
     val key: Text = fingerprint(classpath)
 
-    cache.get(key) match
-      case Some(schedule) =>
-        schedule
+    val cached: Optional[List[Scheduled]] = cache.getOrElse(key, Unset)
 
-      case _ =>
-        val schedule: List[Scheduled] =
-          discover(classpath).bind[List[Scheduled], Scheduled, List[Scheduled]]: suite =>
-            fetch(classpath, suite, Nil)
+    cached.or:
+      val schedule: List[Scheduled] =
+        discover(classpath).bind[List[Scheduled], Scheduled, List[Scheduled]]: suite =>
+          fetch(classpath, suite, Nil)
 
-        cache(key) = schedule
-        schedule
+      cache(key) = schedule
+      schedule

@@ -35,9 +35,9 @@ package fume
 import java.io as ji
 import java.lang as jl
 
-import scala.collection.immutable as sci
-
 import soundness.*
+
+import alphabets.hexLowerCase
 
 import probates.cancelProbate
 
@@ -64,23 +64,34 @@ object EventStream:
   // accumulate across chunk boundaries in an immutable array. A trailing partial frame (a
   // truncated stream) is dropped.
   private def frames(chunks: Chain[Data]): Chain[Data] =
-    def recur(buffer: sci.ArraySeq[Byte], rest: sci.LazyList[Data]): Chain[Data] = Chain.defer:
+    def join(left: Data, right: Data): Data =
+      val out = Array.allocate[Byte](left.length + right.length)
+      out.place(left, 0, 0, left.length)
+      out.place(right, 0, left.length, right.length)
+      Array.freeze(out)
+
+    def slice(data: Data, from: Int, until: Int): Data =
+      val out = Array.allocate[Byte](until - from)
+      out.place(data, from, 0, until - from)
+      Array.freeze(out)
+
+    def recur(buffer: Data, rest: Chain[Data]): Chain[Data] = Chain.defer:
+      def byte(index: Int): Int = buffer.readUnchecked(index) & 0xff
+
       if buffer.length >= 4 then
-        val length =
-          ((buffer(0) & 0xff) << 24) | ((buffer(1) & 0xff) << 16)
-            | ((buffer(2) & 0xff) << 8) | (buffer(3) & 0xff)
+        val length = (byte(0) << 24) | (byte(1) << 16) | (byte(2) << 8) | byte(3)
 
         if buffer.length >= 4 + length then
-          val frame: Data = Array.from(buffer.slice(4, 4 + length))
-          Chain.cons(frame, recur(buffer.drop(4 + length), rest))
+          val frame: Data = slice(buffer, 4, 4 + length)
+          Chain.cons(frame, recur(slice(buffer, 4 + length, buffer.length), rest))
         else pull(buffer, rest)
       else pull(buffer, rest)
 
-    def pull(buffer: sci.ArraySeq[Byte], rest: sci.LazyList[Data]): Chain[Data] =
-      if rest.isEmpty then Chain.empty
-      else recur(buffer ++ sci.ArraySeq.unsafeWrapArray(rest.head.mutable(using Unsafe)), rest.tail)
+    def pull(buffer: Data, rest: Chain[Data]): Chain[Data] = rest match
+      case chunk #:: more => recur(join(buffer, chunk), more)
+      case _              => Chain.empty
 
-    recur(sci.ArraySeq.empty[Byte], chunks.stdlib)
+    recur(Array.empty[Byte], chunks)
 
   // Runs `suite` (loaded from the isolating classloader over `classpath`) with the event
   // protocol, feeding each decoded event to `handle` as it arrives, and returning the run's
@@ -119,53 +130,52 @@ object EventStream:
             loader.use(instance.asInstanceOf[Streamable].stream(suite, arguments, output))
 
           def matches(left: Data, right: Data): Boolean =
-            sci.ArraySeq.unsafeWrapArray(left.mutable(using Unsafe))
-              == sci.ArraySeq.unsafeWrapArray(right.mutable(using Unsafe))
+            java.util.Arrays.equals(Array.unsafeJvm(left), Array.unsafeJvm(right))
 
           // The task is single-owner and awaited exactly once after the frame chain is
           // exhausted; the separation checker cannot see that through the capture-polymorphic
           // `await`, hence the (sanctioned, narrow) `unsafeAssumeSeparate`.
           def exit(): Int = scala.caps.unsafe.unsafeAssumeSeparate(unsafely(task.await()))
 
-          val allFrames: sci.LazyList[Data] = frames(output.stream).stdlib
+          frames(output.stream) match
+            case first #:: _ if !matches(first, probably.Streamer.fingerprint) =>
+              def hex(data: Data): Text = data.serialize[Hex]
+              Outcome.Incompatible(hex(first), hex(probably.Streamer.fingerprint))
 
-          if allFrames.isEmpty then Outcome.Completed(exit())
-          else if !matches(allFrames.head, probably.Streamer.fingerprint) then
-            def hex(data: Data): Text =
-              sci.ArraySeq.unsafeWrapArray(data.mutable(using Unsafe)).map { b => f"${b & 0xff}%02x" }.mkString.tt
+            case first #:: rest =>
+              // Frames are consumed on their own task, so the invocation thread stays free to
+              // notice an abort (a trapped Ctrl+C) even while the chain is blocked mid-benchmark
+              // waiting for the next event. Cancelling the tasks interrupts the blocked take.
+              // A failure in a handler (the model or the live board) must end the run with its
+              // cause on stderr, not leave the invocation polling a dead task for ever while the
+              // suite runs on unobserved.
+              val failure = java.util.concurrent.atomic.AtomicReference[Throwable | Null](null)
 
-            Outcome.Incompatible(hex(allFrames.head), hex(probably.Streamer.fingerprint))
-          else
-            // Frames are consumed on their own task, so the invocation thread stays free to
-            // notice an abort (a trapped Ctrl+C) even while the chain is blocked mid-benchmark
-            // waiting for the next event. Cancelling the tasks interrupts the blocked take.
-            // A failure in a handler (the model or the live board) must end the run with its
-            // cause on stderr, not leave the invocation polling a dead task for ever while the
-            // suite runs on unobserved.
-            val failure = java.util.concurrent.atomic.AtomicReference[Throwable | Null](null)
+              val consumer = async:
+                try rest.each { (frame: Data) => handle(probably.Streamer.read(frame)) }
+                catch case error: Throwable =>
+                  failure.set(error)
+                  throw error
 
-            val consumer = async:
-              try allFrames.tail.foreach { (frame: Data) => handle(probably.Streamer.read(frame)) }
-              catch case error: Throwable =>
-                failure.set(error)
-                throw error
+              def drained(): Boolean =
+                scala.caps.unsafe.unsafeAssumeSeparate(safely(consumer.await(0.1*Second)).present)
 
-            def drained(): Boolean =
-              scala.caps.unsafe.unsafeAssumeSeparate(safely(consumer.await(0.1*Second)).present)
+              def spin(): Outcome =
+                val failed = failure.get()
+                if failed != null then
+                  task.cancel()
+                  Outcome.Failed(failed)
+                else if drained() then Outcome.Completed(exit())
+                else if abort() then
+                  consumer.cancel()
+                  task.cancel()
+                  Outcome.Completed(abortExit)
+                else spin()
 
-            def spin(): Outcome =
-              val failed = failure.get()
-              if failed != null then
-                task.cancel()
-                Outcome.Failed(failed)
-              else if drained() then Outcome.Completed(exit())
-              else if abort() then
-                consumer.cancel()
-                task.cancel()
-                Outcome.Completed(abortExit)
-              else spin()
+              spin()
 
-            spin()
+            case _ =>
+              Outcome.Completed(exit())
 
         finally
           stdio.out.flush()
