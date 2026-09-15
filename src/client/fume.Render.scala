@@ -546,7 +546,7 @@ object Render:
      (using Stdio, Environment)
   :   Unit =
 
-    document.fatal.let: (trace, active) =>
+    document.fatals.each: (trace, active) =>
       val activeNames = active.map(_.name).join(t", ")
 
       val explanation =

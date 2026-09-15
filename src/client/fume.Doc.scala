@@ -183,6 +183,16 @@ object Doc:
           aspireFailed + other.aspireFailed,
           (statuses + other.statuses).distinct )
 
+    // The totals accrued between two snapshots of a run: one suite's share of the whole. The
+    // statuses seen are the later snapshot's; they only ever grow.
+    def -(other: Totals): Totals =
+      Totals
+        ( passed - other.passed,
+          failed - other.failed,
+          aspirePassed - other.aspirePassed,
+          aspireFailed - other.aspireFailed,
+          statuses )
+
     def record(status: Status): Totals =
       if statuses.has(status) then this else copy(statuses = statuses + List(status))
 
@@ -194,5 +204,5 @@ object Doc:
       totals:         Totals,
       groups:         List[Group],
       failures:       List[(TestEvent.Ref, List[TestEvent])],
-      fatal:          Optional[(TestEvent.Trace, List[TestEvent.Ref])],
+      fatals:         List[(TestEvent.Trace, List[TestEvent.Ref])],
       nothingMatched: Boolean )
