@@ -33,8 +33,14 @@ fume.jar: assembly
 	cp out/fume/launcher/assembly.dest/out.jar fume.jar
 	java -cp fume.jar soundness.repackage --github propensive/fume,propensive/pyrocosm,propensive/soundness,propensive/proscala
 
-fume: fume.jar
-	java -Dbuild.executable=fume -jar fume.jar
+# Package the repackaged JAR as a native executable for this machine with the pinned `xeq` builder
+# script (fetched into dist/xeq and verified against etc/xeq.tsv).
+fume: fume.jar xeq-fetch
+	dist/xeq build --jar fume.jar --out fume
+
+# Fetch the pinned `xeq` builder script into dist/xeq.
+xeq-fetch:
+	./etc/ci/xeq-fetch.sh
 
 install: fume
 	cp fume ${HOME}/.local/bin/
@@ -66,4 +72,4 @@ sync-releases:
 dev:
 	mill -w fume.client.compile
 
-.PHONY: sync-releases assembly release publishLocal run test dev install
+.PHONY: xeq-fetch sync-releases assembly release publishLocal run test dev install

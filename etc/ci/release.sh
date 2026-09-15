@@ -52,6 +52,10 @@ if [[ -n "$(git status --porcelain)" ]]; then
   echo "fatal: the working tree is not clean" >&2; exit 1
 fi
 
+# The `xeq` builder script packages the executables and the dispatcher. Fetch (and verify) it
+# before anything is published, so a failed download cannot leave a half-made release behind.
+etc/ci/xeq-fetch.sh
+
 # Build the library from scratch and publish it locally: the launcher's compile classpath will
 # hold exactly these bytes, so these are the bytes that must be released.
 ./mill clean fume >/dev/null
@@ -101,24 +105,23 @@ then
   exit 1
 fi
 
-# One executable per supported platform, all assembled here: producing an Ethereal executable
-# is byte-patching a bare runner stub and appending the (platform-independent) repackaged JAR,
-# not compilation, so `-Dbuild.target` cross-"builds" every platform from this machine. The
-# stubs are fetched from the Soundness `runners` release and digest-verified by the assembler.
+# One executable per supported platform, all assembled here: an XEQ executable is a bare runner
+# stub, a configuration record and the (platform-independent) repackaged JAR joined end to end,
+# not compiled, so `xeq build --target` cross-"builds" every platform from this machine. The
+# stubs are fetched from the pinned `xeq` release and digest-verified by the script.
 PLATFORMS="linux-x64 linux-arm64 macos-x64 macos-arm64 windows-x64"
 DIST=$(mktemp -d)
 for platform in $PLATFORMS; do
   ext=""; [[ "$platform" == windows-* ]] && ext=".exe"
-  java "-Dbuild.executable=$DIST/fume-$platform$ext" "-Dbuild.target=$platform" -jar fume.jar
+  dist/xeq build --jar fume.jar --out "$DIST/fume-$platform$ext" --target "$platform"
 done
 gh release upload "$VERSION" --repo "$REPO" "$DIST"/fume-*
 
 # The `fume` polyglot bootstrap: a small any-shell script (rename to fume.bat/fume.ps1 on
 # Windows) embedding each executable's URL and checksum, which downloads the right one,
-# verifies it, replaces itself and re-invokes. Built by ziggurat's `Xeq.dispatcher`, run from
-# the fat launcher assembly (ziggurat-core is among fume's dependencies for exactly this).
+# verifies it, replaces itself and re-invokes. Built by `xeq dispatch`.
 # The manifest needs the executables' digests, which GitHub computes asynchronously — poll as
-# for the library. If the pinned Soundness predates `dispatcher`, warn and release without.
+# for the library.
 MANIFEST=$(mktemp)
 for i in $(seq 1 60); do
   gh api "repos/$REPO/releases/tags/$VERSION" --jq \
@@ -131,25 +134,21 @@ done
 sed -i.bak 's/^fume-//; s/\.exe\t/\t/' "$MANIFEST"
 
 SNIPPET=""
-if java -cp out/fume/launcher/assembly.dest/out.jar ziggurat.Xeq dispatcher "$DIST/fume" "$MANIFEST"
-then
-  gh release upload "$VERSION" --repo "$REPO" "$DIST/fume"
+dist/xeq dispatch --out "$DIST/fume" --manifest "$MANIFEST"
+gh release upload "$VERSION" --repo "$REPO" "$DIST/fume"
 
-  # The install one-liner for the notes: ziggurat's minimal bootstrap (lib/ziggurat/etc/launch
-  # — 106 bytes of POSIX shell, base64-armored), pointed at the polyglot script above, so the
-  # three layers compose: one-liner -> dispatcher script -> native executable, each download
-  # SHA-256-verified. The armored payload is constant; only the URL and hash vary per release.
-  SCRIPT_DIGEST=""
-  for i in $(seq 1 60); do
-    SCRIPT_DIGEST=$(gh api "repos/$REPO/releases/tags/$VERSION" \
-      --jq '.assets[] | select(.name == "fume") | .digest // ""' | sed 's/^sha256://')
-    [[ -n "$SCRIPT_DIGEST" ]] && break
-    sleep 5
-  done
-  if [[ -n "$SCRIPT_DIGEST" ]]; then
-    SNIPPET=$(printf 'Install (any POSIX shell):\n\n```sh\nopenssl base64 -d <<EOF | sh -s -- https://github.com/%s/releases/download/%s/fume %s\nZj1gbWt0ZW1wYDtjdXJsIC1zTG8gJGYgJDF8fHdnZXQgLXFPICRmICQxO2Nhc2UgYG9wZW5zc2wg\nZGdzdCAtc2hhMjU2ICRmYCBpbiAqJDIpY2htb2QgK3ggJGY7ZXhlYyAkZjtlc2Fj\nEOF\n```\n\n' "$REPO" "$VERSION" "$SCRIPT_DIGEST")
-  fi
-else echo "warning: ziggurat.Xeq has no dispatcher at the pinned Soundness; released without the bootstrap script" >&2
+# The install one-liner for the notes: a minimal bootstrap (106 bytes of POSIX shell,
+# base64-armored), pointed at the polyglot script above, so the three layers compose: one-liner
+# -> dispatcher script -> native executable, each download SHA-256-verified. The armored payload is constant; only the URL and hash vary per release.
+SCRIPT_DIGEST=""
+for i in $(seq 1 60); do
+  SCRIPT_DIGEST=$(gh api "repos/$REPO/releases/tags/$VERSION" \
+    --jq '.assets[] | select(.name == "fume") | .digest // ""' | sed 's/^sha256://')
+  [[ -n "$SCRIPT_DIGEST" ]] && break
+  sleep 5
+done
+if [[ -n "$SCRIPT_DIGEST" ]]; then
+  SNIPPET=$(printf 'Install (any POSIX shell):\n\n```sh\nopenssl base64 -d <<EOF | sh -s -- https://github.com/%s/releases/download/%s/fume %s\nZj1gbWt0ZW1wYDtjdXJsIC1zTG8gJGYgJDF8fHdnZXQgLXFPICRmICQxO2Nhc2UgYG9wZW5zc2wg\nZGdzdCAtc2hhMjU2ICRmYCBpbiAqJDIpY2htb2QgK3ggJGY7ZXhlYyAkZjtlc2Fj\nEOF\n```\n\n' "$REPO" "$VERSION" "$SCRIPT_DIGEST")
 fi
 
 # The installer served from https://fume.propensive.dev/ (`curl -fsSL … | sh`): plain POSIX
