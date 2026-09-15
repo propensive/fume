@@ -126,19 +126,24 @@ object Suggest:
     val n: Int = count(tag, schedule)
     t"$n tagged $tag"
 
+  // Every term suggestion is an operand VALUE, not a subcommand: the help tree (the manpage that
+  // `fume install` writes) is built by probing the suggestions at each prefix, and descending into
+  // terms would enumerate every ordering of the tests on the classpath.
   private def kindSuggestion(kind: Text): Suggestion =
-    Suggestion(t"kind:$kind", describeKind(kind))
+    Suggestion(t"kind:$kind", describeKind(kind), operand = true)
 
   private def tagSuggestion(schedule: List[Suites.Scheduled])(tag: Text): Suggestion =
     val description: Text = tagged(tag, schedule)
-    Suggestion(t"tag:$tag", description)
+    Suggestion(t"tag:$tag", description, operand = true)
 
   private def testSuggestions(test: Suites.Scheduled): List[Suggestion] =
     val path: Text = test.ref.path.join(t"/")
     val kind: Text = if test.kind == t"check" then t"test" else test.kind
     val description: Text = t"$kind  $path"
-    val hash = Suggestion(test.ref.id, description)
-    test.ref.moniker.lay(List(hash)) { moniker => List(hash, Suggestion(moniker, description)) }
+    val hash = Suggestion(test.ref.id, description, operand = true)
+
+    test.ref.moniker.lay(List(hash)): moniker =>
+      List(hash, Suggestion(moniker, description, operand = true))
 
   private def stub(axis: Text): Suggestion =
     val description: Text = t"constrain the $axis axis"
