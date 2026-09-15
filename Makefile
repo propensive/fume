@@ -6,10 +6,10 @@ assembly:
 	mill fume.launcher.assembly
 
 # Publish fume to GitHub Releases: the fume-client jar first, then — once its digest is
-# indexed — the repackaged `fume` executable, added to the same release. See etc/ci/release.sh
-# for the two-step ordering and its verification.
+# indexed — the repackaged `fume` executable, added to the same release. See release-launcher.sh
+# in propensive/.github (run through etc/shared) for the two-step ordering and its verification.
 release:
-	./etc/ci/release.sh $(VERSION)
+	./etc/shared release-launcher.sh fume "fume-client" $(VERSION)
 
 # Publish the library to the local ~/.ivy2 (config sanity check only — local bytes differ from
 # Central, so burdock will NOT externalize a locally-published copy).
@@ -40,7 +40,7 @@ fume: fume.jar xeq-fetch
 
 # Fetch the pinned `xeq` builder script into dist/xeq.
 xeq-fetch:
-	./etc/ci/xeq-fetch.sh
+	./etc/shared xeq-fetch.sh
 
 install: fume
 	cp fume ${HOME}/.local/bin/
@@ -67,7 +67,7 @@ test:
 # resolves the released jars rather than whatever a pyrocosm checkout's `publishLocal` last
 # installed: the pinned version, or `VERSION=X.Y.Z`. Soundness itself is left alone.
 sync-releases:
-	./etc/ci/sync-releases.sh $(VERSION)
+	./etc/shared sync-releases.sh propensive/pyrocosm pyrocosmVersion $(VERSION)
 
 dev:
 	mill -w fume.client.compile
