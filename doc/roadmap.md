@@ -70,7 +70,8 @@ otherwise.
 - **0.4 Full execution configurability and user-defined commands.** Every variable of a
   run reachable from the cascade: per-kind defaults, JVM options and environment for forked
   suites, suite parallelism, per-test timeouts, random seed, retry/flaky policy, tags
-  (`--tag nightly`). A `command` block in `config.tel` names a set of flags, settings and
+  (`--tag nightly`). Suite parallelism needs the `System.out`/`err` swap in `EventStream` to
+  become per-stream rather than global. A `command` block in `config.tel` names a set of flags, settings and
   selection terms, so `fume quick` or `fume nightly` runs it directly; built-in subcommands
   win on a name clash, and user commands appear in tab-completion and the manpage like
   built-ins. Add `fume config` to print effective settings and where each came from, and

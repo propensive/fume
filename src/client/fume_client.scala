@@ -34,6 +34,8 @@ package fume
 
 import soundness.*
 
+import probably.TestEvent
+
 import backstops.silentBackstop
 import executives.completionsExecutive
 import interpreters.posixInterpreter
@@ -299,13 +301,105 @@ def runClient(): Unit =
               then Render.announce
                      (t"--target and --duration-scale are mutually exclusive; using --duration-scale")
 
-              // With a budget (and no explicit factor), the schedule pre-pass prices the
-              // selection and the factor is derived. A budget that buys nothing — no timed
-              // tests admitted, or no suite able to stream its schedule — changes nothing.
+              val width: Int = safely(Environment.columns.as[Int]).or(120)
+              val terse: Boolean = fume.GithubActions.terse
+              val tty: Boolean = summon[DaemonService[?]].cliInput == ethereal.Stdin.Terminal
+
+              import probates.cancelProbate
+              import denominative.dysasymptotics.linearSize
+
+              // The board's frontend drives the terminal through the invocation's console, a
+              // tracked capability sealed here for the run, as flame does for its commands.
+              given Console = scala.caps.unsafe.unsafeAssumePure(summon[Cli])
+
+              // Ctrl+C at the client arrives here as a trapped SIGINT: the current suite's
+              // event consumption stops, the partial report renders, and no further suite
+              // starts. (The suite's threads — and any measurement JVMs a staged benchmark
+              // has spawned — are cancelled, not awaited.)
+              val aborted: java.util.concurrent.atomic.AtomicBoolean =
+                java.util.concurrent.atomic.AtomicBoolean(false)
+
+              trap:
+                case Interrupt.Int =>
+                  aborted.set(true)
+                  SignalResponse.Accept
+
+              // ONE model and ONE board for the whole run: every suite's events fold into the
+              // same model, so the progress gauge counts every scheduled test of the run and
+              // the report renders once, at the end, grouped by suite. (`--fork` runs suites
+              // as separate processes whose events never reach fume, so it has no board.)
+              //
+              // The live board, shown in the terminal by Pyrocosm's frontend, is skipped in
+              // terse mode (CI, Claude Code), where events fold quietly, and for a piped
+              // invocation (the launcher reports whether the client is on a terminal), which
+              // renders once at the end instead. It is built whenever someone can see it: on
+              // this terminal, or through the dashboard `fume serve` is serving.
+              val model = Model()
+              val shown: Boolean = !terse && tty && !fork
+
+              val title: Text = suites match
+                case List(only) => only
+                case _          => t"${suites.size} suites"
+
+              val board: Optional[fume.Board] =
+                if (shown || Server.serving) && !fork then fume.Board(model, title) else Unset
+
+              // The listing pre-pass over every suite: each runs with `--list` on the event
+              // protocol, emitting one `TestScheduled` per admitted test — with its real ref,
+              // so paths group correctly whatever characters the names contain. The schedule
+              // seeds the model (so every test appears in the board's table immediately,
+              // blank, filling in as its result arrives) and prices a `--target` budget. It
+              // runs only when either is wanted, and decides — once, for the whole classpath —
+              // whether the suites can stream at all: `false` sends the run down the legacy
+              // path without opening a board.
+              //
+              // Each suite streams in a FRESH classloader, here and in the run below, and not
+              // only because a suite memoizes its runner on first use: a suite that INVOKES
+              // another top-level suite as a nested one (as proscenium's does) memoizes that
+              // suite's runner too, so a later invocation of it in the same loader would emit
+              // its results into the earlier, closed stream — and report nothing.
+              val wantsBudget: Boolean = target.present && scaleTerm.absent
+
+              val schedule: scala.collection.mutable.ListBuffer[TestEvent.TestScheduled] =
+                scala.collection.mutable.ListBuffer()
+
+              val listed: Optional[Boolean] =
+                if fork || (board.absent && !wantsBudget) then Unset else
+                  def collect(event: TestEvent): Unit =
+                    model.handle(event)
+
+                    event match
+                      case scheduled: TestEvent.TestScheduled => schedule.append(scheduled)
+                      case _                                  => ()
+
+                  // The abort thunk is passed explicitly: the DEFAULT argument's root
+                  // capability cannot flow into `safely`'s enclosing function under capture
+                  // checking.
+                  def recur(remaining: List[Text]): Boolean = remaining match
+                    case head :: tail =>
+                      model.enter(head)
+
+                      val outcome: Optional[EventStream.Outcome] =
+                        safely:
+                          EventStream.stream(classpath, head, t"--list" :: selectionArgs)
+                            (collect(_), () => false)
+
+                      outcome match
+                        case EventStream.Outcome.Completed(_) => recur(tail)
+                        case _                                => false
+
+                    case _ =>
+                      true
+
+                  recur(suites)
+
+              // With a budget (and no explicit factor), the schedule prices the selection and
+              // the factor is derived. A budget that buys nothing — no timed tests admitted,
+              // or no suite able to stream its schedule — changes nothing.
               val budgetTerm: Optional[Text] =
-                if scaleTerm.present || target.absent then Unset else
+                if !wantsBudget then Unset else
                   target.let(Budget.parse(_)).lay(Unset: Optional[Text]): nanos =>
-                    val priced: Long = Budget.expected(classpath, suites, selectionArgs)
+                    val priced: Long = Budget.expected(schedule.toList.to(List))
 
                     if priced == 0L then
                       Render.announce(t"the selection has no timed measurements; ignoring --target")
@@ -323,26 +417,6 @@ def runClient(): Unit =
                 scaleTerm.or(budgetTerm).lay(Nil: List[Text])(List(_))
 
               val args: List[Text] = scaleTerms + selectionArgs
-
-              val width: Int = safely(Environment.columns.as[Int]).or(120)
-              val terse: Boolean = fume.GithubActions.terse
-              val tty: Boolean = summon[DaemonService[?]].cliInput == ethereal.Stdin.Terminal
-
-              // The board's frontend drives the terminal through the invocation's console, a
-              // tracked capability sealed here for the run, as flame does for its commands.
-              given Console = scala.caps.unsafe.unsafeAssumePure(summon[Cli])
-
-              // Ctrl+C at the client arrives here as a trapped SIGINT: the current suite's
-              // event consumption stops, its partial report renders, and no further suite
-              // starts. (The suite's threads — and any measurement JVMs a staged benchmark
-              // has spawned — are cancelled, not awaited.)
-              val aborted: java.util.concurrent.atomic.AtomicBoolean =
-                java.util.concurrent.atomic.AtomicBoolean(false)
-
-              trap:
-                case Interrupt.Int =>
-                  aborted.set(true)
-                  SignalResponse.Accept
 
               // The load gate, if `--max-load` asked for one. It is entered AFTER the signal
               // trap above, so Ctrl+C during the wait sets `aborted` and the run below then
@@ -368,47 +442,182 @@ def runClient(): Unit =
                     args,
                     suites )
 
-              // Each suite renders its own report as its event stream ends; the verdict
-              // comes from its exit status, and the totals — when the suite ran by the
-              // event protocol — accumulate towards the whole-run banner.
-              def recur
-                 ( remaining: List[Text],
-                   failures: Int,
-                   ran: Int,
-                   totals: Optional[Doc.Totals] )
-              :   (Int, Int, Optional[Doc.Totals]) =
+              board.let { board => Server.attach(journalId, board) }
 
+              // The frontend holds the run's monitor and its terminal-error tactic, which
+              // outlive it; it is vouched pure so it can be held and stopped from here. The
+              // board opens a second into the run, so a run that finishes at once never
+              // flashes the alternate screen, and stays up until the LAST suite has streamed
+              // (`model.finish()` below). Leaving it (Escape, Ctrl+C or Ctrl+D) before then
+              // aborts the run.
+              val frontend: Optional[pyrocosm.TerminalFrontend] = if !shown then Unset else board.let: _ =>
+                import strategies.throwUnsafely
+                import fume.Figures.measurable
+                import tableStyles.thickTableStyle
+                import palettes.solarizedDarkGaugePalette
+                scala.caps.unsafe.unsafeAssumePure(pyrocosm.TerminalFrontend(Occupancy.Fullscreen))
+
+              // Fulfilled when the board has closed and the terminal is restored, so the
+              // report below prints onto the ordinary screen.
+              val closed: Promise[Unit] = Promise()
+
+              frontend.let: frontend =>
+                async:
+                  try
+                    snooze(1*Second)
+                    board.let: board =>
+                      if !model.finished then
+                        frontend.run(board.interface):
+                          case pyrocosm.Event.Closed => if !model.finished then aborted.set(true)
+                          case _                     => ()
+                  finally closed.offer(())
+
+              // A handler failure (the model or the board threw) per suite, reported once the
+              // board has left the alternate screen so the trace is not lost with it.
+              val consumerFailures: scala.collection.mutable.ListBuffer[(Text, Throwable)] =
+                scala.collection.mutable.ListBuffer()
+
+              // The LEGACY loop: each suite runs through `Suite#invoke` in-process (or, with
+              // `--fork`, in its own JVM) and renders its own report, so only the verdict —
+              // its exit status — reaches fume. Also the tail of an event run whose classpath
+              // turned out unable to stream.
+              def legacyRun(remaining: List[Text], failures: Int, ran: Int): (Int, Int) =
                 remaining match
                   case _ if aborted.get =>
-                    (failures, ran, totals)
+                    (failures, ran)
 
                   case head :: tail =>
                     Render.announce(t"running $head")
                     Journal.began(journalId, head)
                     val suiteStarted: Long = java.lang.System.currentTimeMillis
-
-                    val (exit, suiteTotals) =
-                      runSuite(classpath, head, args, fork, width, terse, tty, aborted, journalId)
-                    val passed = exit == Exit.Ok
-                    Journal.record(journalId, head, passed, suiteTotals, suiteStarted)
-
-                    if suiteTotals.absent then
-                      Render.announce:
-                        if passed then t"$head: passed" else t"$head: FAILED"
-
+                    val passed: Boolean = invokeSuite(classpath, head, args, fork) == Exit.Ok
+                    Journal.record(journalId, head, passed, Unset, suiteStarted)
+                    Render.announce(if passed then t"$head: passed" else t"$head: FAILED")
                     val failures2 = if passed then failures else failures + 1
 
-                    val totals2: Optional[Doc.Totals] =
-                      suiteTotals.lay(totals): suiteTotals =>
-                        totals.lay(suiteTotals)(_ + suiteTotals)
-
-                    if !passed && failFast then (failures2, ran + 1, totals2)
-                    else recur(tail, failures2, ran + 1, totals2)
+                    if !passed && failFast then (failures2, ran + 1)
+                    else legacyRun(tail, failures2, ran + 1)
 
                   case _ =>
-                    (failures, ran, totals)
+                    (failures, ran)
 
-              val (failures, ran, totals) = recur(suites, 0, 0, Unset)
+              // The EVENT loop: each suite streams, from its own classloader, into the one
+              // model. A suite's own totals — for the journal, and for the empty-selection
+              // rule — are the difference between the document before and after it ran.
+              // Yields the suites left unrun when the classpath proves unable to stream (only
+              // ever on the first suite, when no listing pass decided it earlier), for the
+              // legacy loop.
+              def eventRun(remaining: List[Text], failures: Int, ran: Int)
+              :   (Int, Int, List[Text]) =
+
+                remaining match
+                  case _ if aborted.get =>
+                    (failures, ran, Nil: List[Text])
+
+                  case head :: tail =>
+                    // The board owns the screen while it is up; a line printed beneath it
+                    // would be lost when the screen is restored.
+                    if board.absent then Render.announce(t"running $head")
+                    Journal.began(journalId, head)
+                    val suiteStarted: Long = java.lang.System.currentTimeMillis
+                    val before: Doc.Document = Documenting.document(model.state())
+                    model.enter(head)
+
+                    val outcome: Optional[EventStream.Outcome] =
+                      EventStream.stream(classpath, head, args)
+                        ( { event =>
+                              model.handle(event)
+                              board.let(_.refresh()) },
+                          () => aborted.get )
+
+                    def next(passed: Boolean, totals: Optional[Doc.Totals]): (Int, Int, List[Text]) =
+                      Journal.record(journalId, head, passed, totals, suiteStarted)
+                      val failures2 = if passed then failures else failures + 1
+
+                      if !passed && failFast then (failures2, ran + 1, Nil: List[Text])
+                      else eventRun(tail, failures2, ran + 1)
+
+                    outcome match
+                      case EventStream.Outcome.Completed(exit) =>
+                        val after: Doc.Document = Documenting.document(model.state())
+                        val suiteTotals: Doc.Totals = after.totals - before.totals
+                        val suiteFatal: Boolean = after.fatals.size > before.fatals.size
+
+                        // A suite reports failure (exit 1) when NOTHING was admitted: right
+                        // when it is invoked alone, wrong when fume fans a kind filter
+                        // (`--bench`) across every suite on the classpath — a suite with no
+                        // benchmarks is not a failing suite.
+                        val emptySelection: Boolean =
+                          exit == 1 && suiteTotals.total == 0 && !suiteFatal
+
+                        next(exit == 0 || emptySelection, suiteTotals)
+
+                      case EventStream.Outcome.Failed(error) =>
+                        consumerFailures.append((head, error))
+                        next(false, Unset)
+
+                      case EventStream.Outcome.Incompatible(theirs, ours) =>
+                        Render.announce
+                          (t"the classpath was built against an incompatible Soundness; using the legacy run")
+                        Render.announce(t"  the suites' event schema is $theirs")
+                        Render.announce(t"  fume's is                   $ours")
+                        (failures, ran, remaining)
+
+                      case _ =>
+                        Render.announce(t"the classpath predates event streaming; using the legacy run")
+                        (failures, ran, remaining)
+
+                  case _ =>
+                    (failures, ran, Nil: List[Text])
+
+              // The streaming decision is made ONCE per classpath: by the listing pass when it
+              // ran, otherwise by the first suite of the run. Whichever way, the event suites'
+              // report renders first and the tail runs legacy.
+              val result: (Int, Int, Optional[Doc.Totals]) =
+                if fork then
+                  val (failures, ran) = legacyRun(suites, 0, 0)
+                  (failures, ran, Unset)
+                else if listed == false then
+                  Render.announce(t"the classpath cannot stream test events; using the legacy run")
+                  val (failures, ran) = legacyRun(suites, 0, 0)
+                  (failures, ran, Unset)
+                else
+                  val (failures, ran, rest) = eventRun(suites, 0, 0)
+                  model.finish()
+
+                  frontend.let: frontend =>
+                    frontend.stop()
+                    safely(closed.attend())
+
+                  val document = Documenting.document(model.state())
+
+                  board.let: board =>
+                    board.refresh(force = true)
+                    Server.detach(journalId, title, Blocks.document(document))
+
+                  consumerFailures.each: (suite, error) =>
+                    // Written to a file first: the terminal may be mid-repaint, and a trace
+                    // on stderr inside the alternate buffer is lost when the board closes.
+                    val trace = java.io.StringWriter()
+                    error.printStackTrace(java.io.PrintWriter(trace))
+                    val path = java.nio.file.Path.of(java.lang.System.getProperty("java.io.tmpdir").nn, "fume-failure.log").nn
+                    java.nio.file.Files.writeString(path, trace.toString)
+                    Render.announce(t"the event consumer failed while $suite was running; the suite was stopped")
+                    Render.announce(t"the stack trace is in ${path.toString.tt}, and follows:")
+                    trace.toString.tt.cut(t"\n").each { (line: Text) => Out.println(line) }
+
+                  val totals: Optional[Doc.Totals] =
+                    if ran == 0 then Unset else
+                      if aborted.get then Render.announce(t"aborted; the partial report follows")
+                      Render.suite(document, width, terse)
+                      document.totals
+
+                  val (failures2, ran2) =
+                    if rest.nil then (failures, ran) else legacyRun(rest, failures, ran)
+
+                  (failures2, ran2, totals)
+
+              val (failures, ran, totals) = result
 
               val outcome: Journal.Outcome =
                 if aborted.get then Journal.Outcome.Aborted
@@ -418,7 +627,7 @@ def runClient(): Unit =
               Journal.finish(journalId, outcome, totals)
 
               // The banner renders over the aggregate of every event-run suite; when every
-              // suite ran legacy (each rendered its own banner already), only the summary
+              // suite ran legacy (each rendered its own report already), only the summary
               // line prints.
               totals.let(Render.finale(_, width, terse))
 
@@ -815,135 +1024,6 @@ private def invokeSuite(classpath: LocalClasspath, suite: Text, args: List[Text]
     Suites.invoke(classpath, suite, args).or:
       Render.announce(t"$suite could not be run in-process; running it in a separate JVM")
       forkSuite(classpath, suite, args)
-
-// Runs one suite by the EVENT PROTOCOL: `EventStream.stream` runs it in the isolating
-// classloader; the events fold into a `Model` (live-painted by an Ultimatum board if the
-// suite is still producing after one second), and the report renders from the model when
-// the stream ends. Returns the suite's totals alongside its exit, for the whole-run banner.
-//
-// A suite whose Probably predates the event stream falls back to the legacy in-process run
-// (it renders its own report), and one predating `Suite#invoke` falls back further to a
-// forked JVM; an INCOMPATIBLE event schema (a different Soundness) falls back likewise,
-// with a distinct notice.
-private def runSuite
-   ( classpath: LocalClasspath,
-     suite: Text,
-     args: List[Text],
-     fork: Boolean,
-     width: Int,
-     terse: Boolean,
-     tty: Boolean,
-     aborted: java.util.concurrent.atomic.AtomicBoolean,
-     journal: Int )
-   (using Stdio, WorkingDirectory, Monitor, Environment, Console)
-:   (Exit, Optional[Doc.Totals]) =
-
-  import probates.cancelProbate
-
-  def legacy(): Exit = invokeSuite(classpath, suite, args, fork = false)
-
-  if fork then (forkSuite(classpath, suite, args), Unset)
-  else
-    val model = Model()
-
-    // The live board, shown in the terminal by Pyrocosm's frontend: skipped in terse mode (CI,
-    // Claude Code), where events fold quietly, and for a piped invocation (the launcher reports
-    // whether the client is on a terminal), which renders once at the end instead. The `--list`
-    // pre-run schedules every test so the board shows what is coming; the board itself opens a
-    // second later, so a run that finishes at once never flashes the alternate screen. Leaving
-    // the board (Escape, Ctrl+C or Ctrl+D) before the run is over aborts it.
-    // The board is built whenever someone can see it: on this terminal, or through the
-    // dashboard `fume serve` is serving, which shows the same cells.
-    val shown: Boolean = !terse && tty
-    val board: Optional[fume.Board] = if shown || Server.serving then fume.Board(model, suite) else Unset
-
-    if board.present then
-      safely(EventStream.stream(classpath, suite, t"--list" :: args)(model.handle(_), () => false))
-      . unit
-
-    board.let { board => Server.attach(journal, board) }
-
-    // The frontend holds the run's monitor and its terminal-error tactic, which outlive it; it
-    // is vouched pure so it can be held and stopped from here.
-    val frontend: Optional[pyrocosm.TerminalFrontend] = if !shown then Unset else board.let: _ =>
-      import strategies.throwUnsafely
-      import fume.Figures.measurable
-      import tableStyles.thickTableStyle
-      import palettes.solarizedDarkGaugePalette
-      scala.caps.unsafe.unsafeAssumePure(pyrocosm.TerminalFrontend(Occupancy.Fullscreen))
-
-    // Fulfilled when the board has closed and the terminal is restored, so the report below
-    // prints onto the ordinary screen.
-    val closed: Promise[Unit] = Promise()
-
-    frontend.let: frontend =>
-      async:
-        try
-          snooze(1*Second)
-          board.let: board =>
-            if !model.finished then
-              frontend.run(board.interface):
-                case pyrocosm.Event.Closed => if !model.finished then aborted.set(true)
-                case _                     => ()
-        finally closed.offer(())
-
-    val outcome =
-      EventStream.stream(classpath, suite, args)
-        ( { event =>
-              model.handle(event)
-              board.let(_.refresh()) },
-          () => aborted.get )
-
-    frontend.let: frontend =>
-      frontend.stop()
-      safely(closed.attend())
-
-    board.let: board =>
-      board.refresh(force = true)
-      Server.detach(journal, suite, Blocks.document(Documenting.document(model.state())))
-
-    outcome match
-      case EventStream.Outcome.Completed(exit) if exit == EventStream.abortExit =>
-        Render.announce(t"aborted; the partial report follows")
-        val document = Documenting.document(model.state())
-        Render.suite(document, width, terse)
-        (Exit.Fail(exit), document.totals)
-
-      case EventStream.Outcome.Completed(exit) =>
-        val document = Documenting.document(model.state())
-        // The report replays onto the primary buffer at the terminal's REAL width — the
-        // board probed it — rather than the COLUMNS guess.
-        Render.suite(document, width, terse)
-
-        // A suite reports failure (exit 1) when NOTHING was admitted: right when it is
-        // invoked alone, wrong when fume fans a kind filter (`--bench`) across every suite
-        // on the classpath — a suite with no benchmarks is not a failing suite.
-        val emptySelection: Boolean =
-          exit == 1 && document.totals.total == 0 && document.fatal.absent
-
-        (if exit == 0 || emptySelection then Exit.Ok else Exit.Fail(exit), document.totals)
-
-      case EventStream.Outcome.Failed(error) =>
-        // Written to a file first: the terminal may be mid-repaint, and a trace on stderr
-        // inside the alternate buffer is lost when the board closes.
-        val trace = java.io.StringWriter()
-        error.printStackTrace(java.io.PrintWriter(trace))
-        val path = java.nio.file.Path.of(java.lang.System.getProperty("java.io.tmpdir").nn, "fume-failure.log").nn
-        java.nio.file.Files.writeString(path, trace.toString)
-        Render.announce(t"the event consumer failed while $suite was running; the run was stopped")
-        Render.announce(t"the stack trace is in ${path.toString.tt}, and follows:")
-        trace.toString.tt.cut(t"\n").each { (line: Text) => Out.println(line) }
-        (Exit.Fail(2), Unset)
-
-      case EventStream.Outcome.Incompatible(theirs, ours) =>
-        Render.announce(t"$suite was built against an incompatible Soundness; falling back")
-        Render.announce(t"  the suite's event schema is $theirs")
-        Render.announce(t"  fume's is                   $ours")
-        (legacy(), Unset)
-
-      case _ =>
-        Render.announce(t"$suite predates event streaming; using the legacy run")
-        (legacy(), Unset)
 
 private def showVersion()(using invocation: Invocation): Exit =
   given Stdio = invocation.stdio

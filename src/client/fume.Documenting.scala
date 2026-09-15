@@ -70,7 +70,11 @@ object Documenting:
 
       counted.fold(Totals.zero) { (totals, row) => add(totals, row.status) }
 
-    Document(results, totals, groups(state), state.details, state.fatal, state.nothingMatched)
+    // "No tests matched" is a verdict on the WHOLE selection: a suite with no admitted test
+    // says nothing when another suite's tests ran.
+    val nothingMatched: Boolean = state.nothingMatched > 0 && totals.total == 0
+
+    Document(results, totals, groups(state), state.details, state.fatals, nothingMatched)
 
   private def parent(path: List[Text]): List[Text] = path.skip(1, Rtl)
 

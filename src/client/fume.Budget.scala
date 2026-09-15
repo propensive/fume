@@ -32,8 +32,6 @@
                                                                                                   */
 package fume
 
-import java.util.concurrent.atomic as juca
-
 import soundness.*
 
 import fume.Figures.measurable
@@ -59,27 +57,12 @@ object Budget:
       safely(digits.as[Double]).lay(Unset: Optional[Long]): value =>
         if value > 0.0 then (value*multiplier*1e9).toLong else Unset
 
-  // The sum, in nanoseconds, of every admitted timed test's expected measuring time, across
-  // all the suites of the run. A suite that cannot stream (pre-event, or an incompatible
-  // Soundness) contributes nothing — its measurements will simply run at their declared
-  // lengths — and untimed checks carry no estimate to add.
-  def expected(classpath: LocalClasspath, suites: List[Text], args: List[Text])
-     (using Stdio, Monitor)
-  :   Long =
-
-    val total: juca.AtomicLong = juca.AtomicLong(0L)
-
-    suites.each: suite =>
-      // The abort thunk is passed explicitly: the DEFAULT argument's root capability cannot
-      // flow into `safely`'s enclosing function under capture checking (as in `runSuite`).
-      safely:
-        EventStream.stream(classpath, suite, t"--list" :: args)(
-          { case TestEvent.TestScheduled(_, _, expected, _, _) => expected.let(total.addAndGet(_)).unit
-            case _                                       => () },
-          () => false)
-      . unit
-
-    total.get
+  // The sum, in nanoseconds, of every admitted timed test's expected measuring time, over the
+  // schedule the run's single listing pre-pass streamed across all its suites. Untimed checks
+  // carry no estimate to add; a classpath that cannot stream (pre-event, or an incompatible
+  // Soundness) has no schedule, so its measurements simply run at their declared lengths.
+  def expected(schedule: List[TestEvent.TestScheduled]): Long =
+    schedule.fold(0L) { (total, scheduled) => total + scheduled.expected.or(0L) }
 
   // The factor, rendered to nine decimal places by hand: `Double.toString` falls into
   // exponent notation for small values, which probably's number parser does not read, and

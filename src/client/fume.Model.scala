@@ -38,7 +38,8 @@ import denominative.dysasymptotics.linearSize
 
 import probably.TestEvent
 
-// The accumulated state of one suite's event stream: a flat, insertion-ordered fold of
+// The accumulated state of a run's event streams — every suite of the run folds into the one
+// model, so the board and the report cover the whole run: a flat, insertion-ordered fold of
 // `TestEvent`s, from which `Documenting` derives the report document and the live board
 // derives its filling-in table. The tree structure of the original report is not rebuilt —
 // each `Ref` carries its full suite path, so depth and grouping are derivable — and every
@@ -68,9 +69,9 @@ object Model:
     ( lines:          List[Line],
       details:        List[(TestEvent.Ref, List[TestEvent])],
       active:         List[TestEvent.Ref],
-      fatal:          Optional[(TestEvent.Trace, List[TestEvent.Ref])],
+      fatals:         List[(TestEvent.Trace, List[TestEvent.Ref])],
       completed:      Optional[Boolean],
-      nothingMatched: Boolean )
+      nothingMatched: Int )
 
 final class Model:
   import Model.{Entry, Line, State}
@@ -82,7 +83,7 @@ final class Model:
   // Line tokens are `s:`-prefixed suite PATHS (a scheduled suite has no id yet; the path is
   // the stable identity a later `SuiteStarted` merges into) and `e:`-prefixed entry ids.
   @scala.caps.unsafe.untrackedCaptures
-  private var lines0: List[Text] = Nil
+  private var lines0: List[(Text, Text)] = Nil
   @scala.caps.unsafe.untrackedCaptures
   private var suites0: Ledger[Text, TestEvent.Ref] = Ledger()
   @scala.caps.unsafe.untrackedCaptures
@@ -91,29 +92,55 @@ final class Model:
   private var details0: Ledger[Text, (TestEvent.Ref, List[TestEvent])] = Ledger()
   @scala.caps.unsafe.untrackedCaptures
   private var active0: List[TestEvent.Ref] = Nil
+  // Per-suite terminal events accumulate rather than overwrite: a run has one `RunTerminated`
+  // per suite that threw (reversed in `state()`), one `RunCompleted` per suite that finished
+  // (their conjunction is the run's verdict), and one `NothingMatched` per suite the selection
+  // admitted nothing from (a count, so the report can tell "nothing anywhere" from "nothing
+  // in one suite"). The run as a whole is over only when the host says so (`finish`).
   @scala.caps.unsafe.untrackedCaptures
-  private var fatal0: Optional[(TestEvent.Trace, List[TestEvent.Ref])] = Unset
+  private var fatals0: List[(TestEvent.Trace, List[TestEvent.Ref])] = Nil
   @scala.caps.unsafe.untrackedCaptures
   private var completed0: Optional[Boolean] = Unset
   @scala.caps.unsafe.untrackedCaptures
-  private var nothing0: Boolean = false
+  private var nothing0: Int = 0
+  @scala.caps.unsafe.untrackedCaptures
+  private var done0: Boolean = false
 
-  private def suitePath(path: List[Text]): Text = path.join(t"/")
+  // The suite (its class name) whose events are arriving, set by `enter` before each suite of
+  // the run streams. Keys are qualified by it: a nested suite invoked from two top-level
+  // suites carries the same name-based path under each, and reported twice under the old
+  // model-per-suite arrangement, so it stays twice-reported here.
+  @scala.caps.unsafe.untrackedCaptures
+  private var scope0: Text = t""
+
+  def enter(scope: Text): Unit = mutex { scope0 = scope }
+
+  // Marks the whole run over: the board, which stays up until then, may close.
+  def finish(): Unit = mutex { done0 = true }
+
+  // A suite's key: its name-based path, qualified by the scope it arrived under.
+  private def qualify(scope: Text, path: List[Text]): Text = t"$scope:${path.join(t"/")}"
+  private def suitePath(path: List[Text]): Text = qualify(scope0, path)
+
+  // An entry's key within the run. A test's 6-hex id hashes only its immediate suite and its
+  // name, so two suites of a run can hold tests with the same id; qualifying it by the full
+  // path keeps them distinct in the one model (the id alone is still what users see).
+  private def key(ref: TestEvent.Ref): Text = t"${suitePath(ref.path)}#${ref.id}"
 
   private def suiteLine(ref: TestEvent.Ref): Unit =
     val key = suitePath(ref.path)
     if suites0(key).absent then
       suites0 = suites0.define(key, ref)
-      lines0 = t"s:$key" :: lines0
+      lines0 = (t"s:$key", scope0) :: lines0
     else if ref.file != t"" then
       // A real `SuiteStarted` ref replaces a scheduled placeholder, in place.
       suites0 = suites0.define(key, ref)
 
   private def entry(ref: TestEvent.Ref, kind: Optional[Text]): Entry =
-    entries0(ref.id).or:
+    entries0(key(ref)).or:
       val entry = Entry(ref, kind, Nil, Nil, Nil, Unset, Unset)
-      entries0 = entries0.define(ref.id, entry)
-      lines0 = t"e:${ref.id}" :: lines0
+      entries0 = entries0.define(key(ref), entry)
+      lines0 = (t"e:${key(ref)}", scope0) :: lines0
       entry
 
   private def update(ref: TestEvent.Ref, kind: Optional[Text])(lambda: Entry => Entry): Unit =
@@ -126,7 +153,7 @@ final class Model:
         ( ref = if ref.file != t"" || entry0.ref.file == t"" then ref else entry0.ref,
           kind = if entry0.kind.absent then kind else entry0.kind )
 
-    entries0 = entries0.define(ref.id, lambda(entry1))
+    entries0 = entries0.define(key(ref), lambda(entry1))
 
   // Seeds one line of the run's SCHEDULE from a `TestScheduled` event (a listing pre-pass):
   // the test's real ref and kind are known before anything runs, so its table rows can
@@ -146,8 +173,8 @@ final class Model:
     update(ref, kind) { entry => entry }
 
   private def detail(ref: TestEvent.Ref, event: TestEvent): Unit =
-    val (_, existing) = details0(ref.id).or((ref, Nil))
-    details0 = details0.define(ref.id, (ref, event :: existing))
+    val (_, existing) = details0(key(ref)).or((ref, Nil))
+    details0 = details0.define(key(ref), (ref, event :: existing))
 
   def handle(event: TestEvent): Unit = mutex:
     event match
@@ -159,14 +186,14 @@ final class Model:
         active0 = ref :: active0
 
       case TestEvent.SuiteEnded(ref, _) =>
-        active0 = active0.filter(_.id != ref.id)
+        active0 = active0.filter(key(_) != key(ref))
 
       case TestEvent.TestStarted(ref, _) =>
         entry(ref, Unset)
         active0 = ref :: active0
 
       case TestEvent.TestEnded(ref, _) =>
-        active0 = active0.filter(_.id != ref.id)
+        active0 = active0.filter(key(_) != key(ref))
 
       case TestEvent.TestCompleted(ref, kind, coordinates, outcome, _, _) =>
         update(ref, kind): entry =>
@@ -190,15 +217,15 @@ final class Model:
       case event@TestEvent.DetailThrows(ref, _, _)      => detail(ref, event)
 
       case TestEvent.NothingMatched(_) =>
-        nothing0 = true
+        nothing0 += 1
 
       case TestEvent.RunTerminated(error, active, _) =>
-        fatal0 = (error, active)
+        fatals0 = (error, active) :: fatals0
 
       case TestEvent.RunCompleted(passed, _) =>
-        completed0 = passed
+        completed0 = completed0.lay(passed)(_ && passed)
 
-  def finished: Boolean = mutex(completed0.present || fatal0.present)
+  def finished: Boolean = mutex(done0)
 
   // The lines in depth-first declaration order, whatever order they arrived in. A suite takes
   // its place among its siblings from the FIRST test beneath it (its own arrival index only
@@ -206,10 +233,14 @@ final class Model:
   // precedes every test — and is followed by its own children, recursively. In a plain run a
   // suite is announced just before its first test anyway, so the order is exactly arrival
   // order.
-  private def order(lines: List[Line]): List[Line] =
+  //
+  // Every key is qualified by the scope (the suite class) a line arrived under, not the
+  // current one: the run's suites all share the model, and two of them can announce suites
+  // with the same name-based path.
+  private def order(lines: List[(Line, Text)]): List[Line] =
     import sortingAlgorithms.timsort
 
-    val indexed: List[(Line, Ordinal)] = lines.indexed
+    val indexed: List[((Line, Text), Ordinal)] = lines.indexed
 
     def pathOf(line: Line): List[Text] = line match
       case Line.SuiteLine(ref)   => ref.path
@@ -221,45 +252,47 @@ final class Model:
     var least: Ledger[Text, Int] = Ledger()
 
     indexed.each: pair =>
-      pair(0) match
+      val scope: Text = pair(0)(1)
+
+      pair(0)(0) match
         case Line.SuiteLine(ref) =>
-          val key = suitePath(ref.path)
+          val key = qualify(scope, ref.path)
           if own(key).absent then own = own.define(key, pair(1).n0)
 
         case Line.EntryLine(entry) =>
           List.range(1, entry.ref.path.size).each: n =>
-            val ancestor = suitePath(entry.ref.path.keep(n))
+            val ancestor = qualify(scope, entry.ref.path.keep(n))
             if least(ancestor).absent then least = least.define(ancestor, pair(1).n0)
 
-    def rank(line: Line, index: Ordinal): Int = line match
-      case Line.SuiteLine(ref) => least(suitePath(ref.path)).or(index.n0)
+    def rank(line: Line, scope: Text, index: Ordinal): Int = line match
+      case Line.SuiteLine(ref) => least(qualify(scope, ref.path)).or(index.n0)
       case _                   => index.n0
 
     // A line's parent is the LONGEST proper prefix of its path which is a suite line (a test
     // scheduled before its suite is announced hangs from the nearest ancestor present), or
     // the empty key at the root.
-    def parentOf(path: List[Text]): Text =
-      List.range(1, path.size).reverse.seek { n => own(suitePath(path.keep(n))).present }
-      . lay(t"") { n => suitePath(path.keep(n)) }
+    def parentOf(scope: Text, path: List[Text]): Text =
+      List.range(1, path.size).reverse.seek { n => own(qualify(scope, path.keep(n))).present }
+      . lay(t"") { n => qualify(scope, path.keep(n)) }
 
-    val children: Map[Text, List[(Line, Ordinal)]] =
-      indexed.group { (line, _) => parentOf(pathOf(line)) }
+    val children: Map[Text, List[((Line, Text), Ordinal)]] =
+      indexed.group { (pair, _) => parentOf(pair(1), pathOf(pair(0))) }
 
     def walk(parent: Text): List[Line] =
-      children(parent).or(Nil).order { (line, index) => rank(line, index) }
-      . bind[List[Line], Line, List[Line]]: (line, _) =>
-          line match
-            case Line.SuiteLine(ref) => line :: walk(suitePath(ref.path))
-            case _                   => List(line)
+      children(parent).or(Nil).order { (pair, index) => rank(pair(0), pair(1), index) }
+      . bind[List[Line], Line, List[Line]]: (pair, _) =>
+          pair(0) match
+            case Line.SuiteLine(ref) => pair(0) :: walk(qualify(pair(1), ref.path))
+            case _                   => List(pair(0))
 
     walk(t"")
 
   def state(): State = mutex:
     val lines: List[Line] = order:
-      lines0.reverse.bind[List[Line], Line, List[Line]]: token =>
+      lines0.reverse.bind[List[(Line, Text)], (Line, Text), List[(Line, Text)]]: (token, scope) =>
         if token.starts(t"s:")
-        then suites0(token.skip(2)).lay(Nil: List[Line]) { ref => List(Line.SuiteLine(ref)) }
-        else entries0(token.skip(2)).lay(Nil: List[Line]) { entry => List(Line.EntryLine(entry)) }
+        then suites0(token.skip(2)).lay(Nil: List[(Line, Text)]) { ref => List((Line.SuiteLine(ref), scope)) }
+        else entries0(token.skip(2)).lay(Nil: List[(Line, Text)]) { entry => List((Line.EntryLine(entry), scope)) }
 
     val details: List[(TestEvent.Ref, List[TestEvent])] =
       details0.to[List].map { (pair: (Text, (TestEvent.Ref, List[TestEvent]))) =>
@@ -276,6 +309,6 @@ final class Model:
           case line => line,
         details,
         active0.reverse,
-        fatal0,
+        fatals0.reverse,
         completed0,
         nothing0 )
