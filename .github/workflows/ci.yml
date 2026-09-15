@@ -1,10 +1,11 @@
 name: CI
 
-# Build and test on every merge into main, via the shared Soundness-application workflow —
-# see propensive/.github for what it does and what it expects of this repository (the ./mill
-# wrapper, and the version pins in build.mill).
+# Build and test every pull request and every merge into main, via the shared Soundness-application
+# workflow — see propensive/.github for what it does and what it expects of this repository (the
+# ./mill wrapper, and the version pins in build.mill).
 
 on:
+  pull_request:
   push:
     branches: [main]
   workflow_dispatch:
