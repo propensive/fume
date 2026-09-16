@@ -365,8 +365,9 @@ def runClient(): Unit =
               // suite guarded against, and older suites still get one.
               val wantsBudget: Boolean = target.present && scaleTerm.absent
 
+              val loader: Classloader = classpath.classloader()
+
               val shared: Optional[Classloader] =
-                val loader: Classloader = classpath.classloader()
                 if EventStream.reentrant(loader) then loader else Unset
 
               val schedule: scala.collection.mutable.ListBuffer[TestEvent.TestScheduled] =
@@ -380,8 +381,12 @@ def runClient(): Unit =
                     model.handle(event)
 
                     event match
-                      case scheduled: TestEvent.TestScheduled => schedule.append(scheduled)
-                      case _                                  => ()
+                      case scheduled: TestEvent.TestScheduled =>
+                        schedule.append(scheduled)
+                        model.listed()
+
+                      case _ =>
+                        ()
 
                   // The abort thunk is passed explicitly: the DEFAULT argument's root
                   // capability cannot flow into `safely`'s enclosing function under capture
@@ -428,7 +433,13 @@ def runClient(): Unit =
               val scaleTerms: List[Text] =
                 scaleTerm.or(budgetTerm).lay(Nil: List[Text])(List(_))
 
-              val args: List[Text] = scaleTerms + selectionArgs
+              // One worker behind the traversal, when the suites' Probably queues (see
+              // `EventStream.queued`): each suite's code between tests runs once, its rows
+              // appear as it is traversed, and declaration order is kept.
+              val workerTerms: List[Text] =
+                if !fork && EventStream.queued(loader) then List(t"--workers=1") else Nil
+
+              val args: List[Text] = scaleTerms + workerTerms + selectionArgs
 
               // The load gate, if `--max-load` asked for one. It is entered AFTER the signal
               // trap above, so Ctrl+C during the wait sets `aborted` and the run below then

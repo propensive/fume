@@ -424,6 +424,15 @@ object Tests extends Suite(m"Fume tests"):
       paths(model.state())
     . assert(_ == List(t"root", t"root/x", t"root/A", t"root/A/a1", t"root/B", t"root/B/b1"))
 
+    test(m"a queued runner's per-test announcements seed rows without claiming a schedule"):
+      val model = Model()
+      model.handle(TestEvent.SuiteStarted(root, 0L))
+      model.handle(TestEvent.TestScheduled(testX, t"check", Unset, Nil, Nil))
+      val announced = model.state()
+      model.listed()
+      (announced.scheduled, paths(announced), model.state().scheduled)
+    . assert(_ == (false, List(t"root", t"root/x"), true))
+
     test(m"a plain run's lines keep their arrival order"):
       val model = Model()
       model.handle(TestEvent.SuiteStarted(root, 0L))

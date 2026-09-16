@@ -192,10 +192,15 @@ final class Model:
     val (_, existing) = details0(key(ref)).or((ref, Nil))
     details0 = details0.define(key(ref), (ref, event :: existing))
 
+  // A listing pre-pass has seeded the whole schedule: the total is known ahead of the results.
+  def listed(): Unit = mutex { scheduled0 = true }
+
   def handle(event: TestEvent): Unit = mutex:
     event match
+      // A `TestScheduled` seeds a row, whether from a listing pre-pass (the whole schedule,
+      // ahead of the run: see `listed`) or from a queued runner announcing one assertion it
+      // has just deferred, which says nothing about the total.
       case TestEvent.TestScheduled(ref, kind, _, _, axes) =>
-        scheduled0 = true
         scheduled(ref, kind, axes)
 
       case TestEvent.SuiteStarted(ref, _) =>

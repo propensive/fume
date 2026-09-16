@@ -108,6 +108,13 @@ object EventStream:
   def reentrant(loader: Classloader): Boolean =
     safely(loader.on(t"probably.Streamer$$")).let { streamer => safely(streamer.getMethod("reentrant")) }.present
 
+  // Whether the suites `loader` sees understand `--workers=<n>` (Probably's `Streamer.queued`):
+  // a queued runner traverses each suite once and executes its pure assertions behind the
+  // traversal. To an older Probably the term is a name glob admitting nothing, so it is only
+  // passed when advertised.
+  def queued(loader: Classloader): Boolean =
+    safely(loader.on(t"probably.Streamer$$")).let { streamer => safely(streamer.getMethod("queued")) }.present
+
   def stream(classpath: LocalClasspath, suite: Text, args: List[Text], shared: Optional[Classloader] = Unset)
      (handle: probably.TestEvent => Unit, abort: () => Boolean = () => false)
      (using stdio: Stdio, monitor: Monitor)
