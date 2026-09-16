@@ -341,8 +341,12 @@ def runClient(): Unit =
                 case List(only) => only
                 case _          => t"${suites.size} suites"
 
+              // The run's progress, forecast from the last run of this classpath where it can
+              // be: the board's status line, ticking as the suites go by.
+              val progress: Progress = Progress(suites, Forecasts.load(classpath()))
+
               val board: Optional[fume.Board] =
-                if (shown || Server.serving) && !fork then fume.Board(model, title) else Unset
+                if (shown || Server.serving) && !fork then fume.Board(model, title, progress) else Unset
 
               // The listing pre-pass over every suite: each runs with `--list` on the event
               // protocol, emitting one `TestScheduled` per admitted test — with its real ref,
@@ -473,8 +477,10 @@ def runClient(): Unit =
               // marked it, until the run is over. The event consumer only marks.
               board.let: board =>
                 async:
+                  var tick: Int = 0
                   while !model.finished do
-                    board.repaint()
+                    board.repaint(force = tick%10 == 0)
+                    tick += 1
                     snooze(0.1*Second)
 
                 ()
@@ -507,9 +513,11 @@ def runClient(): Unit =
                   case head :: tail =>
                     Render.announce(t"running $head")
                     Journal.began(journalId, head)
+                    progress.begin(head)
                     val suiteStarted: Long = java.lang.System.currentTimeMillis
                     val passed: Boolean = invokeSuite(classpath, head, args, fork) == Exit.Ok
                     Journal.record(journalId, head, passed, Unset, suiteStarted)
+                    progress.end(head)
                     Render.announce(if passed then t"$head: passed" else t"$head: FAILED")
                     val failures2 = if passed then failures else failures + 1
 
@@ -537,6 +545,7 @@ def runClient(): Unit =
                     // would be lost when the screen is restored.
                     if board.absent then Render.announce(t"running $head")
                     Journal.began(journalId, head)
+                    progress.begin(head)
                     val suiteStarted: Long = java.lang.System.currentTimeMillis
                     val before: Model.State = model.state()
                     val beforeTotals: Doc.Totals = Documenting.totals(before)
@@ -551,6 +560,7 @@ def runClient(): Unit =
 
                     def next(passed: Boolean, totals: Optional[Doc.Totals]): (Int, Int, List[Text]) =
                       Journal.record(journalId, head, passed, totals, suiteStarted)
+                      progress.end(head)
                       val failures2 = if passed then failures else failures + 1
 
                       if !passed && failFast then (failures2, ran + 1, Nil: List[Text])
@@ -648,6 +658,9 @@ def runClient(): Unit =
                 else Journal.Outcome.Failed
 
               Journal.finish(journalId, outcome, totals)
+
+              // What this run taught about its suites, for the next run's forecast.
+              Journal.completed.seek(_.id == journalId).let { run => Forecasts.save(classpath(), run.suites) }
 
               // The banner renders over the aggregate of every event-run suite; when every
               // suite ran legacy (each rendered its own report already), only the summary

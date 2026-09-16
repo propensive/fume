@@ -253,8 +253,11 @@ object Blocks:
     val durations: List[Long] = entry.completions.map { completion => completion(1).duration }
     if durations.nil then Nil else List(time(durations.fold(0L)(_ + _)/durations.size))
 
-  // The whole run's progress: scheduled tests finished, of the total.
-  def progress(state: Model.State): Block =
+  // The whole run's progress: the tests finished, of the total — exact from a schedule, forecast
+  // from the last run of the classpath when there is one — with the suite in flight and the
+  // time left. A plain line, not an indeterminate gauge, when no total is known: an animating
+  // status would have the board repainted many times a second whether or not anything happened.
+  def progress(state: Model.State, progress: Optional[Progress] = Unset): Block =
     val entries: List[Model.Entry] = state.lines.bind[List[Model.Entry], Model.Entry, List[Model.Entry]]:
       case Model.Line.EntryLine(entry) => List(entry)
       case _                           => Nil
@@ -269,17 +272,23 @@ object Blocks:
 
     val done: Int = entries.count(finished(_))
 
-    // Without a schedule the total is unknown ahead: the tests seen so far are counted
-    // rather than shown as a fraction that would climb as the run discovers them.
-    // Without a schedule the total is unknown ahead: the tests seen so far are counted
-    // rather than shown as a fraction that would climb as the run discovers them — and as a
-    // plain line, since an indeterminate gauge animates, and an animating status would have
-    // the board repainted many times a second whether or not anything happened.
-    if state.scheduled then
-      val total: Int = entries.size
-      val fraction: Double = if total == 0 then 0.0 else done.toDouble/total
-      Block.Gauge(pyrocosm.Status.Fraction(fraction), Inline.text(t"$done/$total"))
-    else Block.Paragraph(List(Inline.Figure(done.toDouble, 0), Inline.Textual(t" done")))
+    val total: Optional[Int] =
+      if state.scheduled then entries.size else progress.let(_.forecastTotal)
+
+    // Named rather than a lambda around the interpolations (the 3.9.0-p16 `wildApprox` crash).
+    def scheduledCaption(progress: Progress): Text =
+      val index: Int = (progress.finished + (if progress.current.present then 1 else 0)).min(progress.total)
+      t"suite $index/${progress.total} · $done/${entries.size}"
+
+    def captionOf(progress: Progress): Text =
+      if state.scheduled then scheduledCaption(progress) else progress.caption(done)
+
+    val plain: Text = if state.scheduled then t"$done/${entries.size}" else t"${Figures.grouped(done)} done"
+    val caption: Text = progress.lay(plain)(captionOf(_))
+
+    total.lay(Block.Paragraph(Inline.text(caption))): total =>
+      val fraction: Double = if total == 0 then 0.0 else (done.toDouble/total).min(1.0)
+      Block.Gauge(pyrocosm.Status.Fraction(fraction), Inline.text(caption))
 
   // The board: the live table of checks, then every measurement group, with the dashboard's
   // charts among them when given.

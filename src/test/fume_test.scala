@@ -624,6 +624,103 @@ object Tests extends Suite(m"Fume tests"):
         (kinds(Blocks.board(state, document, charts.refresh(state))), kinds(Blocks.board(state, document)))
       . assert(_ == (List(t"heading", t"figure", t"table", t"heading", t"figure", t"table"), List(t"heading", t"table", t"heading", t"other", t"chart", t"table")))
 
+    suite(m"Progress"):
+      def observed(suite: Text, tests: Int, millis: Long): Journal.SuiteRun =
+        Journal.SuiteRun(suite, true, Doc.Totals(tests, 0, 0, 0, Nil), 1000L, 1000L + millis)
+
+      def forecastDirectory(): Text =
+        jnf.Files.createTempDirectory("fume-forecasts").nn.toString.tt
+
+      val classpath = t"/build/tests.jar:/build/lib.jar"
+
+      test(m"a classpath with no forecast loads empty"):
+        Forecasts.load(classpath, forecastDirectory()).size
+      . assert(_ == 0)
+
+      test(m"a saved run is read back, suite by suite"):
+        val directory = forecastDirectory()
+        Forecasts.save(classpath, List(observed(t"a.Tests", 120, 4000L), observed(t"b.Tests", 30, 1000L)), directory)
+        val forecast = Forecasts.load(classpath, directory)
+        (forecast(t"a.Tests"), forecast(t"b.Tests"), forecast(t"c.Tests"))
+      . assert(_ == (Forecasts.Observation(120, 4000L), Forecasts.Observation(30, 1000L), Unset))
+
+      test(m"a later run of one suite refines that line and keeps the others"):
+        val directory = forecastDirectory()
+        Forecasts.save(classpath, List(observed(t"a.Tests", 120, 4000L), observed(t"b.Tests", 30, 1000L)), directory)
+        Forecasts.save(classpath, List(observed(t"b.Tests", 31, 1500L)), directory)
+        val forecast = Forecasts.load(classpath, directory)
+        (forecast(t"a.Tests"), forecast(t"b.Tests"))
+      . assert(_ == (Forecasts.Observation(120, 4000L), Forecasts.Observation(31, 1500L)))
+
+      test(m"a suite without totals teaches nothing, and different classpaths do not share"):
+        val directory = forecastDirectory()
+        Forecasts.save(classpath, List(Journal.SuiteRun(t"a.Tests", true, Unset, 0L, 100L)), directory)
+        Forecasts.save(t"/other.jar", List(observed(t"a.Tests", 5, 50L)), directory)
+        Forecasts.load(classpath, directory).size
+      . assert(_ == 0)
+
+      def forecastOf(runs: Journal.SuiteRun*): Forecasts.Forecast =
+        val directory = forecastDirectory()
+        Forecasts.save(classpath, runs.to(List), directory)
+        Forecasts.load(classpath, directory)
+
+      test(m"the forecast total sums the known suites exactly"):
+        val progress = Progress(List(t"a", t"b"), forecastOf(observed(t"a", 100, 1000L), observed(t"b", 50, 500L)))
+        (progress.forecastTotal, progress.approximate)
+      . assert(_ == (150, false))
+
+      test(m"an unknown suite contributes the mean of the known, and marks the total approximate"):
+        val progress = Progress(List(t"a", t"b", t"c"), forecastOf(observed(t"a", 100, 1000L), observed(t"b", 50, 500L)))
+        (progress.forecastTotal, progress.approximate)
+      . assert(_ == (225, true))
+
+      test(m"with no forecast at all there is no total and no time left"):
+        val progress = Progress(List(t"a", t"b"), Forecasts.Forecast.empty)
+        (progress.forecastTotal, progress.remaining(0L))
+      . assert(_ == (Unset, Unset))
+
+      test(m"the time left is the unfinished suites' forecast, the current one net of its elapsed time"):
+        val progress = Progress(List(t"a", t"b", t"c"), forecastOf(observed(t"a", 10, 1000L), observed(t"b", 10, 2000L), observed(t"c", 10, 3000L)))
+        progress.begin(t"a", 0L)
+        progress.end(t"a", 1000L)
+        progress.begin(t"b", 1000L)
+        progress.remaining(1500L)
+      . assert(_ == 4500L)
+
+      test(m"a slow start scales the estimate, clamped to at most double"):
+        val progress = Progress(List(t"a", t"b"), forecastOf(observed(t"a", 10, 1000L), observed(t"b", 10, 1000L)))
+        progress.begin(t"a", 0L)
+        progress.end(t"a", 5000L)
+        progress.begin(t"b", 5000L)
+        progress.remaining(5000L)
+      . assert(_ == 2000L)
+
+      test(m"a fast start scales the estimate, clamped to at least half"):
+        val progress = Progress(List(t"a", t"b"), forecastOf(observed(t"a", 10, 1000L), observed(t"b", 10, 1000L)))
+        progress.begin(t"a", 0L)
+        progress.end(t"a", 100L)
+        progress.begin(t"b", 100L)
+        progress.remaining(100L)
+      . assert(_ == 500L)
+
+      test(m"the caption names the suite in flight, the tests of the total and the time left"):
+        val progress = Progress(List(t"a", t"b", t"c"), forecastOf(observed(t"a", 5000, 10000L), observed(t"b", 9000, 90000L)))
+        progress.begin(t"a", 0L)
+        progress.end(t"a", 10000L)
+        progress.begin(t"b", 10000L)
+        progress.caption(6234, 20000L)
+      . assert(_ == t"suite 2/3 · 6,234 of ≈21,000 · about 2m10s left")
+
+      test(m"without a forecast the caption counts the tests done"):
+        val progress = Progress(List(t"a", t"b"), Forecasts.Forecast.empty)
+        progress.begin(t"a", 0L)
+        progress.caption(12, 100L)
+      . assert(_ == t"suite 1/2 · 12 done")
+
+      test(m"budgets of an hour or more show hours and minutes"):
+        Budget.show(3_720_000_000_000L)
+      . assert(_ == t"1h02m")
+
     // A tagged, axial test of fume's own, so that `fume list --axes`, `tag:selection` and
     // `scale=` completion can be exercised against this very suite.
     test(m"the factor scales with the budget", n"selection")
