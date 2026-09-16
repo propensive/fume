@@ -48,17 +48,17 @@ object Doc:
     private val nbsp = ' '
 
     def symbol: Teletype = this match
-      case Pass        => e"${Bg(Palette.pass)}($Bold(${Fg(Palette.black)}( ✓ )))"
-      case Fail        => e"${Bg(Palette.fail)}($Bold(${Fg(Palette.black)}( ✗ )))"
-      case Throws      => e"${Bg(Palette.warning)}($Bold(${Fg(Palette.black)}( ! )))"
-      case CheckThrows => e"${Bg(Palette.critical)}($Bold(${Fg(Palette.black)}( ‼ )))"
-      case Mixed       => e"${Bg(Palette.mixed)}($Bold(${Fg(Palette.black)}( ? )))"
+      case Pass        => e"${Bg(Palette.pass)}($Bold(${Fg(Palette.black)}($nbsp✓$nbsp)))"
+      case Fail        => e"${Bg(Palette.fail)}($Bold(${Fg(Palette.black)}($nbsp✗$nbsp)))"
+      case Throws      => e"${Bg(Palette.warning)}($Bold(${Fg(Palette.black)}($nbsp!$nbsp)))"
+      case CheckThrows => e"${Bg(Palette.critical)}($Bold(${Fg(Palette.black)}($nbsp‼$nbsp)))"
+      case Mixed       => e"${Bg(Palette.mixed)}($Bold(${Fg(Palette.black)}($nbsp?$nbsp)))"
       case Suite       => e"   "
       case Bench       => e"${Bg(Palette.benchmark)}($Bold(${Fg(Palette.black)}($nbsp*$nbsp)))"
       case Stress      => e"${Bg(Palette.benchmark)}($Bold(${Fg(Palette.black)}($nbsp≈$nbsp)))"
       case Profile     => e"${Bg(Palette.benchmark)}($Bold(${Fg(Palette.black)}($nbsp%$nbsp)))"
-      case AspirePass  => e"${Bg(Palette.aspirePass)}($Bold(${Fg(Palette.black)}( ↑ )))"
-      case AspireFail  => e"${Bg(Palette.aspireFail)}($Bold(${Fg(Palette.black)}( ↓ )))"
+      case AspirePass  => e"${Bg(Palette.aspirePass)}($Bold(${Fg(Palette.black)}($nbsp↑$nbsp)))"
+      case AspireFail  => e"${Bg(Palette.aspireFail)}($Bold(${Fg(Palette.black)}($nbsp↓$nbsp)))"
 
     def describe: Teletype = this match
       case Pass        => e"Pass"
