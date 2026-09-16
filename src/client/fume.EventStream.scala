@@ -102,14 +102,21 @@ object EventStream:
   // The exit status reported for an aborted run, conventionally 128 + SIGINT.
   val abortExit: Int = 130
 
-  def stream(classpath: LocalClasspath, suite: Text, args: List[Text])
+  // Whether the suites `loader` sees may be invoked repeatedly through it: Probably advertises
+  // this with `Streamer.reentrant` (an older Probably, whose suites memoize their first runner,
+  // lacks the method and needs a fresh loader per invocation).
+  def reentrant(loader: Classloader): Boolean =
+    safely(loader.on(t"probably.Streamer$$")).let { streamer => safely(streamer.getMethod("reentrant")) }.present
+
+  def stream(classpath: LocalClasspath, suite: Text, args: List[Text], shared: Optional[Classloader] = Unset)
      (handle: probably.TestEvent => Unit, abort: () => Boolean = () => false)
      (using stdio: Stdio, monitor: Monitor)
   :   Optional[Outcome] =
 
     import scala.reflect.Selectable.reflectiveSelectable
 
-    val loader: Classloader = classpath.classloader()
+    // One loader for a whole run, when the suites allow it; otherwise a fresh, isolating one.
+    val loader: Classloader = shared.or(classpath.classloader())
 
     // `Classloader#on` THROWS `ClassNotFoundException` (rather than yielding `Unset`) when the
     // class is absent; `safely` maps that to `Unset` — the signal that this suite's Probably
@@ -157,8 +164,10 @@ object EventStream:
                   failure.set(error)
                   throw error
 
+              // A short wait, so a finished suite is noticed at once: the slack compounds
+              // over a classpath of hundreds of suites.
               def drained(): Boolean =
-                scala.caps.unsafe.unsafeAssumeSeparate(safely(consumer.await(0.1*Second)).present)
+                scala.caps.unsafe.unsafeAssumeSeparate(safely(consumer.await(0.01*Second)).present)
 
               def spin(): Outcome =
                 val failed = failure.get()

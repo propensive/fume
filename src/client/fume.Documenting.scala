@@ -50,25 +50,29 @@ object Documenting:
   import Doc.{Block, Column, Datum, Document, Group, Spark, Status, SummaryRow, Totals}
   import Model.{Entry, Line, State}
 
+  // The run's counts alone: what a suite's share of the run is measured by, without the
+  // groups and tables a whole document builds.
+  def totals(state: State): Totals = totalsOf(summaries(state)(0))
+
+  private def totalsOf(counted: List[SummaryRow]): Totals =
+    def add(totals0: Totals, status: Status): Totals =
+      val totals = totals0.record(status)
+
+      status match
+        case Status.Suite      => totals0
+        case Status.Pass       => totals.copy(passed = totals.passed + 1)
+        case Status.Bench      => totals.copy(passed = totals.passed + 1)
+        case Status.Stress     => totals.copy(passed = totals.passed + 1)
+        case Status.Profile    => totals.copy(passed = totals.passed + 1)
+        case Status.AspirePass => totals.copy(aspirePassed = totals.aspirePassed + 1)
+        case Status.AspireFail => totals.copy(aspireFailed = totals.aspireFailed + 1)
+        case _                 => totals.copy(failed = totals.failed + 1)
+
+    counted.fold(Totals.zero) { (totals, row) => add(totals, row.status) }
+
   def document(state: State): Document =
-    val counted: List[SummaryRow] = summaries(state, measurements = true)
-    val results: List[SummaryRow] = summaries(state, measurements = false)
-
-    val totals: Totals =
-      def add(totals0: Totals, status: Status): Totals =
-        val totals = totals0.record(status)
-
-        status match
-          case Status.Suite      => totals0
-          case Status.Pass       => totals.copy(passed = totals.passed + 1)
-          case Status.Bench      => totals.copy(passed = totals.passed + 1)
-          case Status.Stress     => totals.copy(passed = totals.passed + 1)
-          case Status.Profile    => totals.copy(passed = totals.passed + 1)
-          case Status.AspirePass => totals.copy(aspirePassed = totals.aspirePassed + 1)
-          case Status.AspireFail => totals.copy(aspireFailed = totals.aspireFailed + 1)
-          case _                 => totals.copy(failed = totals.failed + 1)
-
-      counted.fold(Totals.zero) { (totals, row) => add(totals, row.status) }
+    val (counted, results) = summaries(state)
+    val totals: Totals = totalsOf(counted)
 
     // "No tests matched" is a verdict on the WHOLE selection: a suite with no admitted test
     // says nothing when another suite's tests ran.
@@ -93,16 +97,16 @@ object Documenting:
   // One row per suite and per entry, in declaration order; a `check` entry's runs are
   // aggregated across all its cells into a single status and duration statistics.
   //
-  // A measurement entry has no count and no timing statistics, so with `measurements` unset
-  // such entries are omitted, as are the suites their omission leaves without any test to
-  // show. The totals still count them, so the caller asks for them included when counting
-  // and excluded when rendering.
-  private def summaries(state: State, measurements: Boolean): List[SummaryRow] =
+  // A measurement entry has no count and no timing statistics, so such entries are omitted
+  // from the RESULTS rows, as are the suites their omission leaves without any test to show;
+  // the COUNTED rows keep them, since the totals count them. Both in one pass over the lines.
+  private def summaries(state: State): (List[SummaryRow], List[SummaryRow]) =
     def measurement(entry: Entry): Boolean = entry.kind.or(t"check") != t"check"
 
     // The suites which retain at least one rendered row: those with a non-measurement test
     // (at any depth) beneath them.
-    val populated: List[List[Text]] =
+    // A set: with thousands of tests, a scan per suite line would dominate every repaint.
+    val populated: Set[List[Text]] =
       state.lines.bind[List[List[Text]], List[Text], List[List[Text]]]:
         case Line.EntryLine(entry) =>
           if measurement(entry) then Nil else
@@ -114,32 +118,34 @@ object Documenting:
 
         case _ =>
           Nil
+      . to[Set]
 
-    state.lines.bind[List[SummaryRow], SummaryRow, List[SummaryRow]]:
-      case Line.SuiteLine(ref) =>
-        if !measurements && !populated.has(ref.path) then Nil
-        else List(SummaryRow(Status.Suite, ref, 0, 0L, 0L, 0L))
+    // Each line's row, and whether it belongs among the results as well as the counted.
+    val rows: List[(SummaryRow, Boolean)] =
+      state.lines.bind[List[(SummaryRow, Boolean)], (SummaryRow, Boolean), List[(SummaryRow, Boolean)]]:
+        case Line.SuiteLine(ref) =>
+          List((SummaryRow(Status.Suite, ref, 0, 0L, 0L, 0L), populated.has(ref.path)))
 
-      case Line.EntryLine(entry) =>
-        if measurement(entry) then
-          // A SCHEDULED measurement that never recorded anything (an aborted or filtered
-          // run) is not a result and counts towards nothing.
-          val ran =
-            !entry.benches.nil || !entry.strains.nil || entry.hotspots.present
+        case Line.EntryLine(entry) =>
+          if measurement(entry) then
+            // A SCHEDULED measurement that never recorded anything (an aborted or filtered
+            // run) is not a result and counts towards nothing.
+            val ran =
+              !entry.benches.nil || !entry.strains.nil || entry.hotspots.present
 
-          if measurements && ran
-          then List(SummaryRow(entryStatus(entry), entry.ref, 0, 0L, 0L, 0L))
-          else Nil
-        else
-          val durations: List[Long] =
-            entry.completions.map { completion => completion(1).duration }
+            if ran then List((SummaryRow(entryStatus(entry), entry.ref, 0, 0L, 0L, 0L), false)) else Nil
+          else
+            val durations: List[Long] =
+              entry.completions.map { completion => completion(1).duration }
 
-          if durations.nil then Nil else
-            val avg: Long = durations.fold(0L)(_ + _)/durations.size
-            val min: Long = durations.fold(Long.MaxValue)(_.min(_))
-            val max: Long = durations.fold(0L)(_.max(_))
+            if durations.nil then Nil else
+              val avg: Long = durations.fold(0L)(_ + _)/durations.size
+              val min: Long = durations.fold(Long.MaxValue)(_.min(_))
+              val max: Long = durations.fold(0L)(_.max(_))
 
-            List(SummaryRow(entryStatus(entry), entry.ref, durations.size, min, max, avg))
+              List((SummaryRow(entryStatus(entry), entry.ref, durations.size, min, max, avg), true))
+
+    (rows.map(_(0)), rows.bind[List[SummaryRow], SummaryRow, List[SummaryRow]] { pair => if pair(1) then List(pair(0)) else Nil })
 
   // The display text and numeric value of one coordinate.
   def coordText(coordinate: TestEvent.Coordinate): Text =
@@ -175,14 +181,20 @@ object Documenting:
         case t"check" => ofKind.filter(_.completions.exists(!_(0).nil))
         case _        => ofKind
 
-      // Group by immediate suite, preserving declaration order of suites and entries.
-      val paths: List[List[Text]] =
-        relevant.map { entry => parent(entry.ref.path) }.distinct
+      // Group by immediate suite, preserving declaration order of suites and entries: one
+      // pass to bucket the members, and the first ref of each path, rather than a scan of
+      // every entry per suite.
+      val members: Map[List[Text], List[Entry]] = relevant.group { entry => parent(entry.ref.path) }
 
-      paths.map: (path: List[Text]) =>
-        val members: List[Entry] = relevant.filter { entry => parent(entry.ref.path) == path }
-        val suite: Optional[TestEvent.Ref] = suiteRefs.seek(_.path == path)
-        (suite, kind, members)
+      val paths: List[List[Text]] =
+        val seen = scala.collection.mutable.HashSet[List[Text]]()
+        relevant.map { entry => parent(entry.ref.path) }.filter(seen.add(_))
+
+      // The first suite of each path, as a scan would find it.
+      val suites: Map[List[Text], TestEvent.Ref] =
+        suiteRefs.reverse.map { ref => ref.path -> ref }.to[Map]
+
+      paths.map { (path: List[Text]) => (suites(path), kind, members(path).or(Nil)) }
 
   // The groups the dashboard charts: each suite's benchmarks and stress tests, in the order
   // the report lays them out.
