@@ -96,13 +96,23 @@ object Blocks:
     case t"profile" => t"Profile"
     case _          => t"Tests"
 
-  def block(block: Doc.Block): List[Block] = block match
+  // A block of a group, with the chart standing above it when the web dashboard has drawn
+  // one (`figures` is empty for the terminal): a table's chart precedes it, and the stress
+  // sparkline gives way to its chart.
+  def block(block: Doc.Block, group: Optional[Text] = Unset, figures: Ledger[Text, pyrocosm.Figure] = Ledger()): List[Block] =
+    def figure(table: Text): List[Block] =
+      group.let { group => figures(t"$group#$table").let { figure => List(Block.Figure(figure)) } }.or(Nil)
+
+    block match
     case Doc.Block.Table(title, columns, rows, highlight) =>
       val rows0: List[Block.Row] = rows.indexed.map: (cells, index) =>
         Block.Row(cells.map { (cell: Datum) => Block.Cell(datum(cell)) }, if highlight.has(index.n0) then Tone.Success else Unset)
 
-      title.lay(List(Block.Table(columns.map(column), rows0))): ref =>
-        List(Block.Paragraph(caption(ref)), Block.Table(columns.map(column), rows0))
+      title.lay(figure(t"plain") + List(Block.Table(columns.map(column), rows0))): ref =>
+        Block.Paragraph(caption(ref)) :: figure(ref.id) + List(Block.Table(columns.map(column), rows0))
+
+    case Doc.Block.Sparkline(steps, sequence) if !figure(t"stress").nil =>
+      figure(t"stress")
 
     case Doc.Block.Sparkline(steps, sequence) =>
       val series: List[Block.Series] = sequence.map: (spark: Spark) =>
@@ -128,8 +138,9 @@ object Blocks:
       List(Block.Listing(false, refs.map { (ref: TestEvent.Ref) =>
         Block.Item(List(Block.Paragraph(List(glyph(Tone.Muted, Glyph.Pending), Inline.Textual(t" "), Inline.Reference(ref.id), Inline.Textual(t" "), toned(Tone.Muted, ref.name))))) }))
 
-  def group(group: Group): Block =
+  def group(group: Group, figures: Ledger[Text, pyrocosm.Figure] = Ledger()): Block =
     val suiteName: Text = group.suite.let(_.name).or(t"")
+    val key: Text = Charts.key(group.suite, group.kind, t"")
 
     if group.pending then
       Block.Paragraph(List(glyph(Tone.Muted, Glyph.Pending), toned(Tone.Muted, t" ${kindTitle(group.kind)}: "), Inline.Textual(suiteName)))
@@ -137,7 +148,7 @@ object Blocks:
       val heading = Block.Heading(3, group.suite.let { ref => List(Inline.Reference(ref.id), Inline.Textual(t" ")) }.or(Nil)
           + List(Inline.Textual(kindTitle(group.kind)), Inline.Textual(t" "), Inline.Emphasis(Inline.text(suiteName))))
 
-      Block.Group(heading :: group.blocks.bind(block))
+      Block.Group(heading :: group.blocks.bind { (block0: Doc.Block) => block(block0, key.skip(1, Rtl), figures) })
 
   // The global results table, one row per test.
   def results(rows: List[SummaryRow]): Optional[Block] =
@@ -235,11 +246,13 @@ object Blocks:
     val fraction: Double = if total == 0 then 0.0 else done.toDouble/total
     Block.Gauge(pyrocosm.Status.Fraction(fraction), Inline.text(t"$done/$total"))
 
-  // The board: the live table of checks, then every measurement group.
-  def board(state: Model.State): List[Block] =
-    val document: Document = Documenting.document(state)
-    live(state).lay(Nil: List[Block])(List(_)) + document.groups.map(group)
+  // The board: the live table of checks, then every measurement group, with the dashboard's
+  // charts among them when given.
+  def board(state: Model.State, document: Document, figures: Ledger[Text, pyrocosm.Figure] = Ledger()): List[Block] =
+    live(state).lay(Nil: List[Block])(List(_)) + document.groups.map(group(_, figures))
+
+  def board(state: Model.State): List[Block] = board(state, Documenting.document(state))
 
   // The finished report's blocks: the results table and the groups.
-  def document(document: Document): List[Block] =
-    results(document.results).lay(Nil: List[Block])(List(_)) + document.groups.map(group)
+  def document(document: Document, figures: Ledger[Text, pyrocosm.Figure] = Ledger()): List[Block] =
+    results(document.results).lay(Nil: List[Block])(List(_)) + document.groups.map(group(_, figures))

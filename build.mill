@@ -45,7 +45,7 @@ object settings:
   // `extra_releases` input (see .github/workflows/ci.yml), or locally by Soundness's sync script
   // pointed at Pyrocosm, or by `make publishLocal` in the Pyrocosm repository for an unreleased
   // version. The repackager names propensive/pyrocosm among its hints so the jars externalize.
-  val pyrocosmVersion = "0.1.0"
+  val pyrocosmVersion = "0.2.0"
 
   val scalaOptions = Seq(
     // The fork's opt-in behaviours, enabled by name, exactly as the Soundness build enables
@@ -134,6 +134,7 @@ object settings:
     mvn"dev.propensive:probably-events:$soundnessVersion",     // the BinTEL event stream
     mvn"dev.propensive:sedentary-core:$soundnessVersion",      // benchmarks and stress tests
     mvn"dev.propensive:stratiform-core:$soundnessVersion",     // .pyrocosm/fume/config.tel
+    mvn"dev.propensive:tasseomancy-core:$soundnessVersion",    // the dashboard's charts
     mvn"dev.propensive:tessellate-core:$soundnessVersion",     // Flow.wrap for report text
     mvn"dev.propensive:ultimatum-core:$soundnessVersion",      // the scrolling viewport
     mvn"dev.propensive:pyrocosm-model:$pyrocosmVersion",       // the board's semantic model

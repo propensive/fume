@@ -153,21 +153,20 @@ object Documenting:
   // Measurement entries group by their immediate suite, one `Group` per suite and kind, in
   // kind-major order (`check` grids, then benchmarks, stress and profiles), suites in
   // declaration order within each kind.
-  private def groups(state: State): List[Group] =
+  // Measurement entries grouped by their immediate suite, kind-major (`check` grids, then
+  // benchmarks, stress and profiles), suites in declaration order within each kind.
+  private def grouped(state: State): List[(Optional[TestEvent.Ref], Text, List[Entry])] =
     val suiteRefs: List[TestEvent.Ref] =
       state.lines.bind[List[TestEvent.Ref], TestEvent.Ref, List[TestEvent.Ref]]:
         case Line.SuiteLine(ref) => List(ref)
         case _                   => Nil
-
-    def suiteOf(entry: Entry): Optional[TestEvent.Ref] =
-      suiteRefs.seek(_.path == parent(entry.ref.path))
 
     val entries: List[Entry] =
       state.lines.bind[List[Entry], Entry, List[Entry]]:
         case Line.EntryLine(entry) => List(entry)
         case _                     => Nil
 
-    List(t"check", t"bench", t"stress", t"profile").bind[List[Group], Group, List[Group]]: (kind: Text) =>
+    List(t"check", t"bench", t"stress", t"profile").bind[List[(Optional[TestEvent.Ref], Text, List[Entry])], (Optional[TestEvent.Ref], Text, List[Entry]), List[(Optional[TestEvent.Ref], Text, List[Entry])]]: (kind: Text) =>
       val ofKind: List[Entry] = entries.filter(_.kind.or(t"check") == kind)
 
       val relevant: List[Entry] = kind match
@@ -180,26 +179,34 @@ object Documenting:
       val paths: List[List[Text]] =
         relevant.map { entry => parent(entry.ref.path) }.distinct
 
-      paths.bind[List[Group], Group, List[Group]]: (path: List[Text]) =>
+      paths.map: (path: List[Text]) =>
         val members: List[Entry] = relevant.filter { entry => parent(entry.ref.path) == path }
         val suite: Optional[TestEvent.Ref] = suiteRefs.seek(_.path == path)
+        (suite, kind, members)
 
-        // A group where nothing has recorded and nothing is running collapses to one line:
-        // its members stay elided until the group starts evaluating.
-        val started: Boolean =
-          members.exists: entry =>
-            !entry.completions.nil || !entry.benches.nil || !entry.strains.nil
-              || entry.hotspots.present || state.active.exists(_.id == entry.ref.id)
+  // The groups the dashboard charts: each suite's benchmarks and stress tests, in the order
+  // the report lays them out.
+  private[fume] def measurements(state: State): List[(Optional[TestEvent.Ref], Text, List[Entry])] =
+    grouped(state).filter { group => group(1) == t"bench" || group(1) == t"stress" }
 
-        if !started then List(Group(suite, kind, Nil, pending = true))
-        else
-          val blocks: List[Block] = kind match
-            case t"check"  => members.map(axialCheck(_))
-            case t"bench"  => benchBlocks(members)
-            case t"stress" => stressBlocks(members)
-            case _         => members.map(histogram(_))
+  private def groups(state: State): List[Group] =
+    grouped(state).bind[List[Group], Group, List[Group]]: (suite, kind, members) =>
+      // A group where nothing has recorded and nothing is running collapses to one line:
+      // its members stay elided until the group starts evaluating.
+      val started: Boolean =
+        members.exists: entry =>
+          !entry.completions.nil || !entry.benches.nil || !entry.strains.nil
+            || entry.hotspots.present || state.active.exists(_.id == entry.ref.id)
 
-          if blocks.nil then Nil else List(Group(suite, kind, blocks))
+      if !started then List(Group(suite, kind, Nil, pending = true))
+      else
+        val blocks: List[Block] = kind match
+          case t"check"  => members.map(axialCheck(_))
+          case t"bench"  => benchBlocks(members)
+          case t"stress" => stressBlocks(members)
+          case _         => members.map(histogram(_))
+
+        if blocks.nil then Nil else List(Group(suite, kind, blocks))
 
   // ---------------------------------------------------------------- unit-test grids
 
@@ -253,9 +260,26 @@ object Documenting:
             List(Column(axes.join(t", "), stretch = true), Column(t"Status")),
             rows )
 
-  // The values of one axis across an entry's cells, in first-appearance order for discrete
-  // axes and numeric order otherwise.
-  private def axisValues(entry: Entry, axis: Text): List[TestEvent.Coordinate] =
+  // An entry's axes: those its records carry, or, before it has recorded, those its schedule
+  // announced (an emergent axis, whose values are found by running, is not one to lay out).
+  private[fume] def axesOf(entry: Entry): List[Text] =
+    val recorded: List[Text] =
+      entry.benches.bind[List[Text], Text, List[Text]] { bench => bench.coordinates.map(_.axis) }.distinct
+
+    if recorded.nil then entry.axes.filter(!_.emergent).map(_.axis) else recorded
+
+  // The values of one axis across an entry's cells — those the schedule announced first, then
+  // any others its records carry — in first-appearance order for discrete axes and numeric
+  // order otherwise.
+  private[fume] def axisValues(entry: Entry, axis: Text): List[TestEvent.Coordinate] =
+    val scheduled: List[TestEvent.Coordinate] =
+      entry.axes.seek(_.axis == axis).lay(Nil: List[TestEvent.Coordinate]): schedule =>
+        schedule.values.map: value =>
+          schedule.domain match
+            case t"discrete" => TestEvent.Coordinate(axis, schedule.domain, schedule.emergent, value, Unset, Unset)
+            case t"integral" => TestEvent.Coordinate(axis, schedule.domain, schedule.emergent, Unset, safely(value.as[Long]).or(0L), Unset)
+            case _           => TestEvent.Coordinate(axis, schedule.domain, schedule.emergent, Unset, Unset, safely(value.as[Double]).or(0.0))
+
     val all: List[TestEvent.Coordinate] =
       entry.completions.bind[List[TestEvent.Coordinate], TestEvent.Coordinate,
           List[TestEvent.Coordinate]]: completion =>
@@ -266,7 +290,7 @@ object Documenting:
           List[TestEvent.Coordinate]]: bench =>
         bench.coordinates.filter(_.axis == axis)
 
-    val combined: List[TestEvent.Coordinate] = all + benchCoords
+    val combined: List[TestEvent.Coordinate] = scheduled + all + benchCoords
 
     val distinct: List[TestEvent.Coordinate] =
       def recur(rest: List[TestEvent.Coordinate], seen: List[Text],
@@ -404,8 +428,8 @@ object Documenting:
     // Once its group has started, a benchmark without results yet occupies its named row
     // with BLANK cells, filling in when the data arrives. (An entry that turns out to be
     // axial leaves the plain table for its own titled table with its first record.)
-    val plain: List[Entry] = entries.filter(_.benches.all(_.coordinates.nil))
-    val axial: List[Entry] = entries.filter(_.benches.exists(!_.coordinates.nil))
+    val plain: List[Entry] = entries.filter(axesOf(_).nil)
+    val axial: List[Entry] = entries.filter(!axesOf(_).nil)
 
     val sized: Boolean =
       entries.exists(_.benches.exists { bench =>
@@ -446,9 +470,7 @@ object Documenting:
   // An entry with one axis renders as a table of its runs; with two, as a crosstab of
   // headline data; with more, as a flat listing of coordinates and headlines.
   private def axialBench(entry: Entry, sized: Boolean): List[Block] =
-    val axes: List[Text] =
-      entry.benches.bind[List[Text], Text, List[Text]] { bench => bench.coordinates.map(_.axis) }
-      . distinct
+    val axes: List[Text] = axesOf(entry)
 
     def benchAt(axis: Text, value: Text): Optional[TestEvent.BenchmarkRecorded] =
       entry.benches.seek(_.coordinates.exists { c => c.axis == axis && coordText(c) == value })
@@ -471,14 +493,15 @@ object Documenting:
 
           List(Column(t"×$value", numeric = true))
 
+        // A scheduled value yet to record occupies its row with blank cells, as a plain
+        // benchmark does, filling in when its data arrives.
         val rows: List[List[Datum]] =
-          axisValues(entry, axis).bind[List[List[Datum]], List[Datum], List[List[Datum]]]:
-            coordinate =>
-            benchAt(axis, coordText(coordinate)).lay(Nil): bench =>
+          axisValues(entry, axis).map: coordinate =>
+            benchAt(axis, coordText(coordinate)).lay(Datum.Str(coordText(coordinate)) :: blankCells(benchMetricColumns(sized).size + comparisonColumns.size)): bench =>
               val comparison: List[Datum] = anchored.lay(Nil): (anchor, anchorBench) =>
                 List(relative(anchor, anchorBench, bench))
 
-              List(Datum.Str(coordText(coordinate)) :: benchMetricCells(bench, sized) + comparison)
+              Datum.Str(coordText(coordinate)) :: benchMetricCells(bench, sized) + comparison
 
         List(Block.Table
           ( entry.ref,
@@ -518,7 +541,7 @@ object Documenting:
 
   // ---------------------------------------------------------------- stress tests
 
-  private def strainThroughput(strain: TestEvent.StrainRecorded): Long =
+  private[fume] def strainThroughput(strain: TestEvent.StrainRecorded): Long =
     if strain.nanoseconds == 0L then 0L
     else (strain.operations.toDouble*1000000000.0/strain.nanoseconds).toLong
 
@@ -549,6 +572,9 @@ object Documenting:
 
     recur(strains, Nil, Nil)
 
+  // An entry's scaling curve, for the board's sparkline and the dashboard's charts alike.
+  private[fume] def curve(entry: Entry): List[TestEvent.StrainRecorded] = curve(entry.strains)
+
   // A stress group renders as the sparkline of every curve, then one row per implementation
   // at its best point, ranked. (The per-step detail table upstream was reserved for a
   // verbose mode that was never reachable; it is not reproduced.)
@@ -556,8 +582,9 @@ object Documenting:
     val pending: List[Entry] = entries0.filter(_.strains.nil)
     val entries: List[Entry] = entries0.filter(!_.strains.nil)
 
+    // Each stress entry's strains form its scaling curve.
     val curves: List[(Entry, List[TestEvent.StrainRecorded])] =
-      entries.map { entry => entry -> curve(entry.strains) }
+      entries.map { entry => entry -> curve(entry) }
 
     val steps: List[Long] =
       val all: List[Long] =

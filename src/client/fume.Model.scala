@@ -63,7 +63,10 @@ object Model:
       benches:     List[TestEvent.BenchmarkRecorded],
       strains:     List[TestEvent.StrainRecorded],
       hotspots:    Optional[TestEvent.HotspotsRecorded],
-      anchor:      Optional[TestEvent.AnchorRecorded] )
+      anchor:      Optional[TestEvent.AnchorRecorded],
+      // The axes a listing pre-pass announced for the test, with their values where they are
+      // known ahead: what a chart can lay out before a single record arrives.
+      axes:        List[TestEvent.AxisSchedule] = Nil )
 
   case class State
     ( lines:          List[Line],
@@ -159,7 +162,7 @@ final class Model:
   // the test's real ref and kind are known before anything runs, so its table rows can
   // render blank and fill in as the results arrive. Ancestor suites materialize from the
   // ref's path prefixes, merged by path with their `SuiteStarted` refs later.
-  private def scheduled(ref: TestEvent.Ref, kind: Text): Unit =
+  private def scheduled(ref: TestEvent.Ref, kind: Text, axes: List[TestEvent.AxisSchedule]): Unit =
     def prefixes(n: Int): Unit =
       if n < ref.path.size then
         val prefix: List[Text] = ref.path.keep(n)
@@ -170,7 +173,7 @@ final class Model:
     prefixes(1)
     // `update`, not `entry`: an `AnchorRecorded` (emitted at declaration, ahead of the
     // schedule) may have created the entry already, kindless; the schedule fills it in.
-    update(ref, kind) { entry => entry }
+    update(ref, kind) { entry => entry.copy(axes = axes) }
 
   private def detail(ref: TestEvent.Ref, event: TestEvent): Unit =
     val (_, existing) = details0(key(ref)).or((ref, Nil))
@@ -178,8 +181,8 @@ final class Model:
 
   def handle(event: TestEvent): Unit = mutex:
     event match
-      case TestEvent.TestScheduled(ref, kind, _, _, _) =>
-        scheduled(ref, kind)
+      case TestEvent.TestScheduled(ref, kind, _, _, axes) =>
+        scheduled(ref, kind, axes)
 
       case TestEvent.SuiteStarted(ref, _) =>
         suiteLine(ref)
