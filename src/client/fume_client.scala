@@ -593,7 +593,7 @@ def runClient(): Unit =
 
                   board.let: board =>
                     board.refresh(force = true)
-                    Server.detach(journalId, title, Blocks.document(document))
+                    Server.detach(journalId, title, Blocks.document(document, board.figures))
 
                   consumerFailures.each: (suite, error) =>
                     // Written to a file first: the terminal may be mid-repaint, and a trace

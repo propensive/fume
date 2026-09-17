@@ -130,6 +130,7 @@ object settings:
     mvn"dev.propensive:probably-events:$soundness",     // the BinTEL event stream
     mvn"dev.propensive:sedentary-core:$soundness",      // benchmarks and stress tests
     mvn"dev.propensive:stratiform-core:$soundness",     // .pyrocosm/fume/config.tel
+    mvn"dev.propensive:tasseomancy-core:$soundness",    // the dashboard's charts
     mvn"dev.propensive:tessellate-core:$soundness",     // Flow.wrap for report text
     mvn"dev.propensive:ultimatum-core:$soundness",      // the scrolling viewport
     mvn"dev.propensive:pyrocosm-model:$pyrocosm",       // the board's semantic model
