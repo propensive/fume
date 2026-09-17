@@ -74,7 +74,9 @@ object Model:
       active:         List[TestEvent.Ref],
       fatals:         List[(TestEvent.Trace, List[TestEvent.Ref])],
       completed:      Optional[Boolean],
-      nothingMatched: Int )
+      nothingMatched: Int,
+      // Whether a schedule seeded the run, so a total is known ahead of the results.
+      scheduled:      Boolean = false )
 
 final class Model:
   import Model.{Entry, Line, State}
@@ -87,6 +89,13 @@ final class Model:
   // the stable identity a later `SuiteStarted` merges into) and `e:`-prefixed entry ids.
   @scala.caps.unsafe.untrackedCaptures
   private var lines0: List[(Text, Text)] = Nil
+
+  // The tokens in display order, computed when a snapshot is taken and kept until a line is
+  // added: the order depends only on the lines' paths, not on what the entries hold, so a
+  // result arriving for a known test leaves it standing. With thousands of tests, ordering
+  // on every snapshot would dominate every repaint.
+  @scala.caps.unsafe.untrackedCaptures
+  private var ordered0: Optional[List[Text]] = Unset
   @scala.caps.unsafe.untrackedCaptures
   private var suites0: Ledger[Text, TestEvent.Ref] = Ledger()
   @scala.caps.unsafe.untrackedCaptures
@@ -108,6 +117,8 @@ final class Model:
   private var nothing0: Int = 0
   @scala.caps.unsafe.untrackedCaptures
   private var done0: Boolean = false
+  @scala.caps.unsafe.untrackedCaptures
+  private var scheduled0: Boolean = false
 
   // The suite (its class name) whose events are arriving, set by `enter` before each suite of
   // the run streams. Keys are qualified by it: a nested suite invoked from two top-level
@@ -135,6 +146,7 @@ final class Model:
     if suites0(key).absent then
       suites0 = suites0.define(key, ref)
       lines0 = (t"s:$key", scope0) :: lines0
+      ordered0 = Unset
     else if ref.file != t"" then
       // A real `SuiteStarted` ref replaces a scheduled placeholder, in place.
       suites0 = suites0.define(key, ref)
@@ -144,6 +156,7 @@ final class Model:
       val entry = Entry(ref, kind, Nil, Nil, Nil, Unset, Unset)
       entries0 = entries0.define(key(ref), entry)
       lines0 = (t"e:${key(ref)}", scope0) :: lines0
+      ordered0 = Unset
       entry
 
   private def update(ref: TestEvent.Ref, kind: Optional[Text])(lambda: Entry => Entry): Unit =
@@ -179,8 +192,14 @@ final class Model:
     val (_, existing) = details0(key(ref)).or((ref, Nil))
     details0 = details0.define(key(ref), (ref, event :: existing))
 
+  // A listing pre-pass has seeded the whole schedule: the total is known ahead of the results.
+  def listed(): Unit = mutex { scheduled0 = true }
+
   def handle(event: TestEvent): Unit = mutex:
     event match
+      // A `TestScheduled` seeds a row, whether from a listing pre-pass (the whole schedule,
+      // ahead of the run: see `listed`) or from a queued runner announcing one assertion it
+      // has just deferred, which says nothing about the total.
       case TestEvent.TestScheduled(ref, kind, _, _, axes) =>
         scheduled(ref, kind, axes)
 
@@ -200,13 +219,13 @@ final class Model:
 
       case TestEvent.TestCompleted(ref, kind, coordinates, outcome, _, _) =>
         update(ref, kind): entry =>
-          entry.copy(completions = (coordinates, outcome) :: entry.completions)
+          entry.copy(completions = entry.completions + List((coordinates, outcome)))
 
       case event@TestEvent.BenchmarkRecorded(ref, _, _, _, _, _, _, _, _, _, _, _, _, _) =>
-        update(ref, t"bench") { entry => entry.copy(benches = event :: entry.benches) }
+        update(ref, t"bench") { entry => entry.copy(benches = entry.benches + List(event)) }
 
       case event@TestEvent.StrainRecorded(ref, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) =>
-        update(ref, t"stress") { entry => entry.copy(strains = event :: entry.strains) }
+        update(ref, t"stress") { entry => entry.copy(strains = entry.strains + List(event)) }
 
       case event@TestEvent.HotspotsRecorded(ref, _, _, _, _) =>
         update(ref, t"profile") { entry => entry.copy(hotspots = event) }
@@ -240,10 +259,10 @@ final class Model:
   // Every key is qualified by the scope (the suite class) a line arrived under, not the
   // current one: the run's suites all share the model, and two of them can announce suites
   // with the same name-based path.
-  private def order(lines: List[(Line, Text)]): List[Line] =
+  private def order(lines: List[(Line, Text, Text)]): List[Text] =
     import sortingAlgorithms.timsort
 
-    val indexed: List[((Line, Text), Ordinal)] = lines.indexed
+    val indexed: List[((Line, Text, Text), Ordinal)] = lines.indexed
 
     def pathOf(line: Line): List[Text] = line match
       case Line.SuiteLine(ref)   => ref.path
@@ -278,40 +297,40 @@ final class Model:
       List.range(1, path.size).reverse.seek { n => own(qualify(scope, path.keep(n))).present }
       . lay(t"") { n => qualify(scope, path.keep(n)) }
 
-    val children: Map[Text, List[((Line, Text), Ordinal)]] =
+    val children: Map[Text, List[((Line, Text, Text), Ordinal)]] =
       indexed.group { (pair, _) => parentOf(pair(1), pathOf(pair(0))) }
 
-    def walk(parent: Text): List[Line] =
+    def walk(parent: Text): List[Text] =
       children(parent).or(Nil).order { (pair, index) => rank(pair(0), pair(1), index) }
-      . bind[List[Line], Line, List[Line]]: (pair, _) =>
+      . bind[List[Text], Text, List[Text]]: (pair, _) =>
           pair(0) match
-            case Line.SuiteLine(ref) => pair(0) :: walk(qualify(pair(1), ref.path))
-            case _                   => List(pair(0))
+            case Line.SuiteLine(ref) => pair(2) :: walk(qualify(pair(1), ref.path))
+            case _                   => List(pair(2))
 
     walk(t"")
 
+  // The line a token names now: a suite's current ref, or an entry's current state.
+  private def resolve(token: Text): Optional[Line] =
+    if token.starts(t"s:") then suites0(token.skip(2)).let(Line.SuiteLine(_))
+    else entries0(token.skip(2)).let(Line.EntryLine(_))
+
   def state(): State = mutex:
-    val lines: List[Line] = order:
-      lines0.reverse.bind[List[(Line, Text)], (Line, Text), List[(Line, Text)]]: (token, scope) =>
-        if token.starts(t"s:")
-        then suites0(token.skip(2)).lay(Nil: List[(Line, Text)]) { ref => List((Line.SuiteLine(ref), scope)) }
-        else entries0(token.skip(2)).lay(Nil: List[(Line, Text)]) { entry => List((Line.EntryLine(entry), scope)) }
+    val tokens: List[Text] = ordered0.or:
+      val computed: List[Text] =
+        order:
+          lines0.reverse.bind[List[(Line, Text, Text)], (Line, Text, Text), List[(Line, Text, Text)]]: (token, scope) =>
+            resolve(token).lay(Nil: List[(Line, Text, Text)]) { line => List((line, scope, token)) }
+
+      ordered0 = computed
+      computed
+
+    // Entries are snapshots already (an event replaces an entry wholesale), so the lines are
+    // the current entries themselves: no copy per test per snapshot.
+    val lines: List[Line] =
+      tokens.bind[List[Line], Line, List[Line]] { token => resolve(token).lay(Nil: List[Line])(List(_)) }
 
     val details: List[(TestEvent.Ref, List[TestEvent])] =
       details0.to[List].map { (pair: (Text, (TestEvent.Ref, List[TestEvent]))) =>
         (pair(1)(0), pair(1)(1).reverse) }
 
-    State
-      ( lines.map:
-          case Line.EntryLine(entry) =>
-            Line.EntryLine:
-              entry.copy
-                ( completions = entry.completions.reverse,
-                  benches = entry.benches.reverse,
-                  strains = entry.strains.reverse )
-          case line => line,
-        details,
-        active0.reverse,
-        fatals0.reverse,
-        completed0,
-        nothing0 )
+    State(lines, details, active0.reverse, fatals0.reverse, completed0, nothing0, scheduled0)

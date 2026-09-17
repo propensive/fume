@@ -68,13 +68,7 @@ object Render:
   // with NO maximum, so `Flex.solve` hands it everything the rigid columns leave and the
   // table spans the full line. Exactly one column of each fume table uses it.
   private[fume] object Stretch extends Columnar:
-    def flex[text: Textual { type Result = Char }](lines: Array[text]^{}, maxWidth: Int)
-       (using Text is Measurable)
-    :   Flex =
-
-      var metrics = Metrics(0, 0)
-      lines.each { line => metrics = metrics.max(Flow.metrics(line)) }
-      Flex(metrics, 1.0, Unset)
+    def flex(metrics: Metrics, maxWidth: Int): Flex = Flex(metrics, 1.0, Unset)
 
     def fit[text: Textual { type Result = Char }]
        (lines: Array[text]^{}, width: Int, textAlign: TextAlignment)
@@ -86,12 +80,7 @@ object Render:
   // A rigid column: exactly its natural content width, never shrunk when the table is
   // squeezed — numeric figures (a duration and its unit) must not wrap.
   private[fume] object Rigid extends Columnar:
-    def flex[text: Textual { type Result = Char }](lines: Array[text]^{}, maxWidth: Int)
-       (using Text is Measurable)
-    :   Flex =
-
-      var metrics = Metrics(0, 0)
-      lines.each { line => metrics = metrics.max(Flow.metrics(line)) }
+    def flex(metrics: Metrics, maxWidth: Int): Flex =
       Flex(Metrics(metrics.natural, metrics.natural), 0.0, metrics.natural)
 
     def fit[text: Textual { type Result = Char }]

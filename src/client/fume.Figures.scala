@@ -65,6 +65,15 @@ object Figures:
   def basisPoints(part: Double, whole: Double): Long =
     if whole == 0.0 then 0L else (part*10000.0/whole).toLong
 
+  // A count with thousands separated: `14,697`.
+  def grouped(n: Int): Text =
+    val digits = n.toString
+    val out = StringBuilder()
+    digits.indices.foreach: index =>
+      if index > 0 && (digits.length - index)%3 == 0 then out.append(',')
+      out.append(digits.charAt(index))
+    out.toString.tt
+
   def percent(basisPoints: Long): Text =
     t"${basisPoints/100}.${(basisPoints%100).show.pad(2, Rtl, '0')}"
 

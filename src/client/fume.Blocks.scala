@@ -181,8 +181,30 @@ object Blocks:
                 Block.Cell(timing(row.avg, true)),
                 Block.Cell(timing(row.max, row.count >= 2)) )) )
 
+  // The rows of the live table, kept between refreshes: a row is rebuilt only when its entry
+  // (a new object whenever it changes) or its running state has, so an unchanged test keeps
+  // the SAME row object, which is how a frontend can tell it need not be drawn again. Keyed by
+  // identity; the map is rebuilt from the lines each refresh, so a stale entry's row is
+  // dropped rather than kept for ever.
+  final class RowMemo:
+    @scala.caps.unsafe.untrackedCaptures
+    private var previous: java.util.IdentityHashMap[AnyRef, (Boolean, Block.Row)] = java.util.IdentityHashMap()
+
+    @scala.caps.unsafe.untrackedCaptures
+    private var current: java.util.IdentityHashMap[AnyRef, (Boolean, Block.Row)] = java.util.IdentityHashMap()
+
+    def begin(): Unit =
+      previous = current
+      current = java.util.IdentityHashMap()
+
+    def row(key: AnyRef, running: Boolean)(make: => Block.Row): Block.Row =
+      val kept: Optional[(Boolean, Block.Row)] = Optional(previous.get(key))
+      val row: Block.Row = kept.let { pair => if pair(0) == running then pair(1) else Unset }.or(make)
+      current.put(key, (running, row))
+      row
+
   // The live table of scheduled checks: what is running, what has finished, what waits.
-  def live(state: Model.State): Optional[Block] =
+  def live(state: Model.State, memo: RowMemo = RowMemo()): Optional[Block] =
     val active: List[Text] = state.active.map(_.id)
 
     val checks: Boolean =
@@ -191,27 +213,32 @@ object Blocks:
         case _                           => false
 
     if !checks then Unset else
+      memo.begin()
+
       val rows: List[Block.Row] = state.lines.map:
         case Model.Line.SuiteLine(ref) =>
-          val text = t"${t"  "*Documenting.depth(ref)}${ref.name}"
-          Block.Row(List(Block.Cell(Nil), Block.Cell(List(Inline.Reference(ref.id))), Block.Cell(List(Inline.Emphasis(Inline.text(text)))), Block.Cell(Nil), Block.Cell(Nil)))
+          memo.row(ref, false):
+            val text = t"${t"  "*Documenting.depth(ref)}${ref.name}"
+            Block.Row(List(Block.Cell(Nil), Block.Cell(List(Inline.Reference(ref.id))), Block.Cell(List(Inline.Emphasis(Inline.text(text)))), Block.Cell(Nil), Block.Cell(Nil)))
 
         case Model.Line.EntryLine(entry) =>
           val running = active.has(entry.ref.id)
-          val idle = entry.completions.nil && entry.benches.nil && entry.strains.nil && entry.hotspots.absent
 
-          val mark0: List[Inline] =
-            if running then List(glyph(Tone.Accent, Glyph.Running))
-            else if idle then List(glyph(Tone.Muted, Glyph.Pending))
-            else mark(Documenting.entryStatus(entry))
+          memo.row(entry, running):
+            val idle = entry.completions.nil && entry.benches.nil && entry.strains.nil && entry.hotspots.absent
 
-          val count: List[Inline] = if entry.completions.nil then Nil else List(Inline.Figure(entry.completions.size.toDouble, 0))
+            val mark0: List[Inline] =
+              if running then List(glyph(Tone.Accent, Glyph.Running))
+              else if idle then List(glyph(Tone.Muted, Glyph.Pending))
+              else mark(Documenting.entryStatus(entry))
 
-          val timing: List[Inline] = entry.benches.prim.lay(averageTime(entry)) { bench => List(time(bench.mean.toLong)) }
-          val text = t"${t"  "*Documenting.depth(entry.ref)}${entry.ref.name}"
+            val count: List[Inline] = if entry.completions.nil then Nil else List(Inline.Figure(entry.completions.size.toDouble, 0))
 
-          Block.Row(List(Block.Cell(mark0), Block.Cell(List(Inline.Reference(entry.ref.id))), Block.Cell(Inline.text(text)), Block.Cell(count), Block.Cell(timing)),
-              if running then Tone.Accent else Unset)
+            val timing: List[Inline] = entry.benches.prim.lay(averageTime(entry)) { bench => List(time(bench.mean.toLong)) }
+            val text = t"${t"  "*Documenting.depth(entry.ref)}${entry.ref.name}"
+
+            Block.Row(List(Block.Cell(mark0), Block.Cell(List(Inline.Reference(entry.ref.id))), Block.Cell(Inline.text(text)), Block.Cell(count), Block.Cell(timing)),
+                if running then Tone.Accent else Unset)
 
       Block.Table
         ( List
@@ -226,8 +253,11 @@ object Blocks:
     val durations: List[Long] = entry.completions.map { completion => completion(1).duration }
     if durations.nil then Nil else List(time(durations.fold(0L)(_ + _)/durations.size))
 
-  // The whole run's progress: scheduled tests finished, of the total.
-  def progress(state: Model.State): Block =
+  // The whole run's progress: the tests finished, of the total — exact from a schedule, forecast
+  // from the last run of the classpath when there is one — with the suite in flight and the
+  // time left. A plain line, not an indeterminate gauge, when no total is known: an animating
+  // status would have the board repainted many times a second whether or not anything happened.
+  def progress(state: Model.State, progress: Optional[Progress] = Unset): Block =
     val entries: List[Model.Entry] = state.lines.bind[List[Model.Entry], Model.Entry, List[Model.Entry]]:
       case Model.Line.EntryLine(entry) => List(entry)
       case _                           => Nil
@@ -242,14 +272,28 @@ object Blocks:
 
     val done: Int = entries.count(finished(_))
 
-    val total: Int = entries.size
-    val fraction: Double = if total == 0 then 0.0 else done.toDouble/total
-    Block.Gauge(pyrocosm.Status.Fraction(fraction), Inline.text(t"$done/$total"))
+    val total: Optional[Int] =
+      if state.scheduled then entries.size else progress.let(_.forecastTotal)
+
+    // Named rather than a lambda around the interpolations (the 3.9.0-p16 `wildApprox` crash).
+    def scheduledCaption(progress: Progress): Text =
+      val index: Int = (progress.finished + (if progress.current.present then 1 else 0)).min(progress.total)
+      t"suite $index/${progress.total} · $done/${entries.size}"
+
+    def captionOf(progress: Progress): Text =
+      if state.scheduled then scheduledCaption(progress) else progress.caption(done)
+
+    val plain: Text = if state.scheduled then t"$done/${entries.size}" else t"${Figures.grouped(done)} done"
+    val caption: Text = progress.lay(plain)(captionOf(_))
+
+    total.lay(Block.Paragraph(Inline.text(caption))): total =>
+      val fraction: Double = if total == 0 then 0.0 else (done.toDouble/total).min(1.0)
+      Block.Gauge(pyrocosm.Status.Fraction(fraction), Inline.text(caption))
 
   // The board: the live table of checks, then every measurement group, with the dashboard's
   // charts among them when given.
-  def board(state: Model.State, document: Document, figures: Ledger[Text, pyrocosm.Figure] = Ledger()): List[Block] =
-    live(state).lay(Nil: List[Block])(List(_)) + document.groups.map(group(_, figures))
+  def board(state: Model.State, document: Document, figures: Ledger[Text, pyrocosm.Figure] = Ledger(), memo: RowMemo = RowMemo()): List[Block] =
+    live(state, memo).lay(Nil: List[Block])(List(_)) + document.groups.map(group(_, figures))
 
   def board(state: Model.State): List[Block] = board(state, Documenting.document(state))
 

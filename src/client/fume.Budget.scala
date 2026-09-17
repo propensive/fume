@@ -73,8 +73,10 @@ object Budget:
     val nanofactor: Long = ((target.toDouble/expected.toDouble)*1e9).toLong.max(1L)
     t"${nanofactor/1_000_000_000L}.${(nanofactor%1_000_000_000L).show.pad(9, Rtl, '0')}"
 
-  // `12.3s` for sub-minute budgets, `4m06s` above: enough precision to confirm what was asked.
+  // `12.3s` for sub-minute budgets, `4m06s` above, `1h02m` beyond the hour: enough precision to
+  // confirm what was asked.
   def show(nanos: Long): Text =
     val tenths: Long = nanos/100_000_000L
     if tenths < 600L then t"${tenths/10L}.${tenths%10L}s"
-    else t"${tenths/600L}m${(tenths%600L/10L).show.pad(2, Rtl, '0')}s"
+    else if tenths < 36000L then t"${tenths/600L}m${(tenths%600L/10L).show.pad(2, Rtl, '0')}s"
+    else t"${tenths/36000L}h${(tenths%36000L/600L).show.pad(2, Rtl, '0')}m"

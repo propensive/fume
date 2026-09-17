@@ -341,47 +341,64 @@ def runClient(): Unit =
                 case List(only) => only
                 case _          => t"${suites.size} suites"
 
+              // The run's progress, forecast from the last run of this classpath where it can
+              // be: the board's status line, ticking as the suites go by.
+              val progress: Progress = Progress(suites, Forecasts.load(classpath()))
+
               val board: Optional[fume.Board] =
-                if (shown || Server.serving) && !fork then fume.Board(model, title) else Unset
+                if (shown || Server.serving) && !fork then fume.Board(model, title, progress) else Unset
 
               // The listing pre-pass over every suite: each runs with `--list` on the event
               // protocol, emitting one `TestScheduled` per admitted test — with its real ref,
-              // so paths group correctly whatever characters the names contain. The schedule
-              // seeds the model (so every test appears in the board's table immediately,
-              // blank, filling in as its result arrives) and prices a `--target` budget. It
-              // runs only when either is wanted, and decides — once, for the whole classpath —
-              // whether the suites can stream at all: `false` sends the run down the legacy
-              // path without opening a board.
+              // so paths group correctly whatever characters the names contain. Listing still
+              // RUNS every suite body (only the assertions are skipped), so it is done only
+              // when a `--target` budget has to be priced from the schedule — never merely to
+              // seed the board, whose rows appear as the suites stream. The schedule also seeds
+              // the model, and decides — once, for the whole classpath — whether the suites
+              // can stream at all: `false` sends the run down the legacy path without a board.
               //
-              // Each suite streams in a FRESH classloader, here and in the run below, and not
-              // only because a suite memoizes its runner on first use: a suite that INVOKES
-              // another top-level suite as a nested one (as proscenium's does) memoizes that
-              // suite's runner too, so a later invocation of it in the same loader would emit
-              // its results into the earlier, closed stream — and report nothing.
+              // The suites stream through ONE classloader, here and in the run below, when
+              // their Probably allows it (`EventStream.reentrant`): a suite memoizing its
+              // runner on first use — and a suite that INVOKES another top-level suite as a
+              // nested one (as proscenium's does) memoizing that suite's runner too, so a later
+              // invocation in the same loader would report nothing — is what a fresh loader per
+              // suite guarded against, and older suites still get one.
               val wantsBudget: Boolean = target.present && scaleTerm.absent
+
+              val loader: Classloader = classpath.classloader()
+
+              val shared: Optional[Classloader] =
+                if EventStream.reentrant(loader) then loader else Unset
 
               val schedule: scala.collection.mutable.ListBuffer[TestEvent.TestScheduled] =
                 scala.collection.mutable.ListBuffer()
 
               val listed: Optional[Boolean] =
-                if fork || (board.absent && !wantsBudget) then Unset else
+                if fork || !wantsBudget then Unset else
+                  Render.announce(t"pricing the budget: listing ${suites.size} suites")
+
                   def collect(event: TestEvent): Unit =
                     model.handle(event)
 
                     event match
-                      case scheduled: TestEvent.TestScheduled => schedule.append(scheduled)
-                      case _                                  => ()
+                      case scheduled: TestEvent.TestScheduled =>
+                        schedule.append(scheduled)
+                        model.listed()
+
+                      case _ =>
+                        ()
 
                   // The abort thunk is passed explicitly: the DEFAULT argument's root
                   // capability cannot flow into `safely`'s enclosing function under capture
                   // checking.
                   def recur(remaining: List[Text]): Boolean = remaining match
                     case head :: tail =>
+                      Render.announce(t"  listing $head")
                       model.enter(head)
 
                       val outcome: Optional[EventStream.Outcome] =
                         safely:
-                          EventStream.stream(classpath, head, t"--list" :: selectionArgs)
+                          EventStream.stream(classpath, head, t"--list" :: selectionArgs, shared)
                             (collect(_), () => false)
 
                       outcome match
@@ -416,7 +433,13 @@ def runClient(): Unit =
               val scaleTerms: List[Text] =
                 scaleTerm.or(budgetTerm).lay(Nil: List[Text])(List(_))
 
-              val args: List[Text] = scaleTerms + selectionArgs
+              // One worker behind the traversal, when the suites' Probably queues (see
+              // `EventStream.queued`): each suite's code between tests runs once, its rows
+              // appear as it is traversed, and declaration order is kept.
+              val workerTerms: List[Text] =
+                if !fork && EventStream.queued(loader) then List(t"--workers=1") else Nil
+
+              val args: List[Text] = scaleTerms + workerTerms + selectionArgs
 
               // The load gate, if `--max-load` asked for one. It is entered AFTER the signal
               // trap above, so Ctrl+C during the wait sets `aborted` and the run below then
@@ -446,7 +469,7 @@ def runClient(): Unit =
 
               // The frontend holds the run's monitor and its terminal-error tactic, which
               // outlive it; it is vouched pure so it can be held and stopped from here. The
-              // board opens a second into the run, so a run that finishes at once never
+              // board opens a moment into the run, so a run that finishes at once never
               // flashes the alternate screen, and stays up until the LAST suite has streamed
               // (`model.finish()` below). Leaving it (Escape, Ctrl+C or Ctrl+D) before then
               // aborts the run.
@@ -461,10 +484,22 @@ def runClient(): Unit =
               // report below prints onto the ordinary screen.
               val closed: Promise[Unit] = Promise()
 
+              // The board's own repaint task: ten times a second at most, whenever events have
+              // marked it, until the run is over. The event consumer only marks.
+              board.let: board =>
+                async:
+                  var tick: Int = 0
+                  while !model.finished do
+                    board.repaint(force = tick%10 == 0)
+                    tick += 1
+                    snooze(0.1*Second)
+
+                ()
+
               frontend.let: frontend =>
                 async:
                   try
-                    snooze(1*Second)
+                    snooze(0.3*Second)
                     board.let: board =>
                       if !model.finished then
                         frontend.run(board.interface):
@@ -489,9 +524,11 @@ def runClient(): Unit =
                   case head :: tail =>
                     Render.announce(t"running $head")
                     Journal.began(journalId, head)
+                    progress.begin(head)
                     val suiteStarted: Long = java.lang.System.currentTimeMillis
                     val passed: Boolean = invokeSuite(classpath, head, args, fork) == Exit.Ok
                     Journal.record(journalId, head, passed, Unset, suiteStarted)
+                    progress.end(head)
                     Render.announce(if passed then t"$head: passed" else t"$head: FAILED")
                     val failures2 = if passed then failures else failures + 1
 
@@ -519,12 +556,14 @@ def runClient(): Unit =
                     // would be lost when the screen is restored.
                     if board.absent then Render.announce(t"running $head")
                     Journal.began(journalId, head)
+                    progress.begin(head)
                     val suiteStarted: Long = java.lang.System.currentTimeMillis
-                    val before: Doc.Document = Documenting.document(model.state())
+                    val before: Model.State = model.state()
+                    val beforeTotals: Doc.Totals = Documenting.totals(before)
                     model.enter(head)
 
                     val outcome: Optional[EventStream.Outcome] =
-                      EventStream.stream(classpath, head, args)
+                      EventStream.stream(classpath, head, args, shared)
                         ( { event =>
                               model.handle(event)
                               board.let(_.refresh()) },
@@ -532,6 +571,7 @@ def runClient(): Unit =
 
                     def next(passed: Boolean, totals: Optional[Doc.Totals]): (Int, Int, List[Text]) =
                       Journal.record(journalId, head, passed, totals, suiteStarted)
+                      progress.end(head)
                       val failures2 = if passed then failures else failures + 1
 
                       if !passed && failFast then (failures2, ran + 1, Nil: List[Text])
@@ -539,8 +579,8 @@ def runClient(): Unit =
 
                     outcome match
                       case EventStream.Outcome.Completed(exit) =>
-                        val after: Doc.Document = Documenting.document(model.state())
-                        val suiteTotals: Doc.Totals = after.totals - before.totals
+                        val after: Model.State = model.state()
+                        val suiteTotals: Doc.Totals = Documenting.totals(after) - beforeTotals
                         val suiteFatal: Boolean = after.fatals.size > before.fatals.size
 
                         // A suite reports failure (exit 1) when NOTHING was admitted: right
@@ -591,9 +631,13 @@ def runClient(): Unit =
 
                   val document = Documenting.document(model.state())
 
+                  // The dashboard keeps a finished run's report; a run nobody is serving has
+                  // no need of one more full paint of the board.
                   board.let: board =>
-                    board.refresh(force = true)
-                    Server.detach(journalId, title, Blocks.document(document, board.figures))
+                    if Server.serving then
+                      board.refresh(force = true)
+                      Server.detach(journalId, title, Blocks.document(document, board.figures))
+                    else Server.detach(journalId, title, Nil)
 
                   consumerFailures.each: (suite, error) =>
                     // Written to a file first: the terminal may be mid-repaint, and a trace
@@ -625,6 +669,9 @@ def runClient(): Unit =
                 else Journal.Outcome.Failed
 
               Journal.finish(journalId, outcome, totals)
+
+              // What this run taught about its suites, for the next run's forecast.
+              Journal.completed.seek(_.id == journalId).let { run => Forecasts.save(classpath(), run.suites) }
 
               // The banner renders over the aggregate of every event-run suite; when every
               // suite ran legacy (each rendered its own report already), only the summary
