@@ -1,0 +1,43 @@
+tel 1.0
+
+# Flair checks Fume: every source, against Consequent Style, with the licence header every
+# file begins with. The rules below are measured by `flair metrics` commit by commit; `cast` is
+# enforced too. `make check` runs the profile; CI runs the same command.
+
+rule cast
+  invokes asInstanceOf
+  invokes isInstanceOf
+  message  Casts bypass the type checker; prefer a pattern match
+
+rule imperative
+  uses var
+  uses while
+  uses null
+  uses return
+
+profile default
+  source src/**/*.scala
+
+  # The `-language` features the build compiles with, so flair parses the sources exactly as
+  # the build does.
+  language implicitConversions
+  language experimental.modularity
+  language experimental.dependent
+  language experimental.relaxedLambdaSyntax
+  language experimental.genericNumberLiterals
+  language experimental.into
+  language experimental.erasedDefinitions
+  language experimental.saferExceptions
+  language experimental.strictEqualityPatternMatching
+  language experimental.subCases
+  language experimental.multiSpreads
+  language experimental.captureChecking
+  language experimental.separationChecking
+
+  style consequent
+    header etc/header.txt
+    columns 100
+    interpolator m
+    interpolator e
+
+  enforce cast
