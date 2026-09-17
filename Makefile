@@ -63,13 +63,25 @@ test:
 	mill fume.test.assembly
 	java -cp out/fume/test/assembly.dest/out.jar fume.runTests
 
-# Install the pinned pyrocosm release into the local ivy repository, as CI does, so a local build
-# resolves the released jars rather than whatever a pyrocosm checkout's `publishLocal` last
-# installed: the pinned version, or `VERSION=X.Y.Z`. Soundness itself is left alone.
-sync-releases:
-	./etc/shared sync-releases.sh propensive/pyrocosm pyrocosmVersion $(VERSION)
+# Install every library pinned in etc/refs — releases and snapshots alike, transitively —
+# into the local ivy repository, as CI does, so the build resolves exactly the pinned jars rather
+# than whatever a sibling checkout's `publishLocal` last installed under the same version. A
+# snapshot not yet on GitHub is built from the sibling checkout named by the pin's commit.
+sync-deps:
+	./etc/shared sync-deps.sh
+
+# Publish HEAD's libraries as a snapshot — a `snapshot-<hex>` pre-release named by the filtered
+# tree of the commit, at version `<fumeVersion>-<hex>` — for a dependent repository to pin in
+# its etc/refs before the next release. `LOCAL=1` stages and installs without publishing.
+# The last line printed is the pin. See snapshot.sh in propensive/.github.
+snapshot:
+	./etc/shared snapshot.sh fume "$$(sed -n 's/.*val fumeVersion = "\(.*\)".*/\1/p' build.mill)"
+
+# Delete snapshot pre-releases older than DAYS (default 60) days.
+snapshot-prune:
+	./etc/shared snapshot-prune.sh fume $(DAYS)
 
 dev:
 	mill -w fume.client.compile
 
-.PHONY: xeq-fetch sync-releases assembly release publishLocal run test dev install
+.PHONY: xeq-fetch sync-deps snapshot snapshot-prune assembly release publishLocal run test dev install
