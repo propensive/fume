@@ -38,5 +38,14 @@ version it declares for its next release. The build reads the file through the `
    `release-launcher.sh`, …) run here, and a bump is a deliberate one-line change. Set
    `PROPENSIVE_GITHUB=/path/to/a/.github/checkout` to test a change to the scripts themselves.
 
+### Tools are not dependencies
+
+What a repository *runs* (fume, for most of them; fume itself runs its tests in-process) is pinned in `etc/tools`, not in
+`etc/refs`. A tool is always a release, never a snapshot; it is not walked transitively and does
+not gate a release, because a release of it exists by definition. That distinction is what keeps
+the release graph free of cycles (Soundness runs flair, flair depends on Pyrocosm, Pyrocosm
+depends on Soundness). `make tools` installs the pinned commands. Never pin a tool in `etc/refs`
+to get an unreleased build of it: release the tool instead.
+
 The whole flow, and the scripts, are documented in the README of
 [propensive/.github](https://github.com/propensive/.github).

@@ -1,0 +1,5 @@
+# The propensive tools this repository runs (none yet: fume runs its own tests in-process): one per line, tab-separated, as
+# `repository  version`. A tool is always a release (never a snapshot), is not a dependency —
+# it appears in no POM — and does not gate a release; that is what keeps the release graph free
+# of cycles. `make tools` installs each command through its release's installer.
+# See propensive/.github.
