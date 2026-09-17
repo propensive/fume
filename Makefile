@@ -58,8 +58,16 @@ run: publishLocal
 	mill show fume.launcher.assembly
 	java -jar out/fume/launcher/assembly.dest/out.jar
 
-# Compile and run the test suite.
+# Compile and run the test suite with the RELEASED fume pinned in etc/tools (`make tools`
+# installs it), which discovers the suite from the assembly's META-INF/services/probably.Suite
+# index. CI runs the same command. fume testing fume with a release of itself is the tool
+# rule at work: what a repository runs is a release, never the build under test. `make
+# test-plain` drives `Tests.invoke` in-process without fume.
 test:
+	mill fume.test.assembly
+	fume run -c out/fume/test/assembly.dest/out.jar $(TESTS)
+
+test-plain:
 	mill fume.test.assembly
 	java -cp out/fume/test/assembly.dest/out.jar fume.runTests
 
@@ -70,7 +78,7 @@ test:
 sync-deps:
 	./etc/shared sync-deps.sh
 
-# Install the commands pinned in etc/tools (none yet) through their releases' installers.
+# Install the commands pinned in etc/tools (fume) through their releases' installers.
 tools:
 	./etc/shared tools.sh
 
@@ -88,4 +96,4 @@ snapshot-prune:
 dev:
 	mill -w fume.client.compile
 
-.PHONY: xeq-fetch sync-deps tools snapshot snapshot-prune assembly release publishLocal run test dev install
+.PHONY: xeq-fetch sync-deps tools snapshot snapshot-prune assembly release publishLocal run test test-plain dev install
