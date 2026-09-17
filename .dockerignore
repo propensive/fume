@@ -1,0 +1,21 @@
+# The snapshot input set: everything NOT excluded here is part of the filtered tree a snapshot
+# is named by (filtered_tree.py in propensive/.github), so a change to documentation or
+# repository metadata alone does not make a new snapshot. Keep `.dockerignore` itself out of
+# this list: it defines the set.
+.git
+.gitignore
+.gitattributes
+.github
+.claude
+.bsp
+.bloop
+.metals
+.vscode
+out
+dist
+doc
+**/*.md
+LICENSE
+
+# The pinned commit of propensive/.github runs the scripts around a build, not the build.
+etc/github-ref
