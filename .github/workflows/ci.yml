@@ -2,7 +2,7 @@ name: CI
 
 # Build and test every pull request and every merge into main, via the shared Soundness-application
 # workflow — see propensive/.github for what it does and what it expects of this repository (the
-# ./mill wrapper, and the version pins in build.mill).
+# ./mill wrapper, etc/shared, and the pins in etc/refs).
 
 on:
   pull_request:
@@ -19,6 +19,3 @@ jobs:
       assembly:      fume.launcher.assembly
       test_assembly: fume.test.assembly
       test_main:     fume.runTests
-      # The Pyrocosm release the board is built on (`pyrocosmVersion` in build.mill), synced
-      # from its own GitHub Releases like the Soundness release.
-      extra_releases: propensive/pyrocosm=0.2.0
