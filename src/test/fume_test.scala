@@ -47,6 +47,8 @@ import denominative.dysasymptotics.linearSize
 
 import probably.TestEvent
 
+import pyrocosm.Block
+
 object Tests extends Suite(m"Fume tests"):
   private def ref(id: Text, moniker: Optional[Text], path: List[Text]): TestEvent.Ref =
     TestEvent.Ref(id, path.last.or(t""), moniker, path, t"", 0)
@@ -460,6 +462,167 @@ object Tests extends Suite(m"Fume tests"):
 
         points(Documenting.curve(strains))
       . assert(_ == List((8, 79L, true), (16, 90L, false)))
+
+    suite(m"Charts"):
+      val testA2 = ref(t"000004", Unset, List(t"root", t"A", t"a2"))
+
+      def bench(test: TestEvent.Ref, mean: Double, runs: Int, sd: Double,
+          coordinates: List[TestEvent.Coordinate] = Nil): TestEvent.BenchmarkRecorded =
+        TestEvent.BenchmarkRecorded(test, coordinates, 1000000L, 1L, runs, mean, mean, mean, sd, 95, Unset, Unset, Unset, 0L)
+
+      def strain(test: TestEvent.Ref, concurrency: Int, operations: Long): TestEvent.StrainRecorded =
+        TestEvent.StrainRecorded(test, Nil, concurrency, operations, 1000000000L, 0L, 0L, 0L, 0L, 0L, Unset, Unset, Unset, Unset, Unset, false, 0L)
+
+      def integral(axis: Text, value: Long): TestEvent.Coordinate =
+        TestEvent.Coordinate(axis, t"integral", false, Unset, value, Unset)
+
+      def discrete(axis: Text, value: Text): TestEvent.Coordinate =
+        TestEvent.Coordinate(axis, t"discrete", false, value, Unset, Unset)
+
+      def benchModel(events: TestEvent*): Model =
+        val model = Model()
+        model.handle(TestEvent.SuiteStarted(root, 0L))
+        model.handle(TestEvent.SuiteStarted(suiteA, 0L))
+        events.each(model.handle(_))
+        model
+
+      def members(model: Model, kind: Text): List[Model.Entry] =
+        Documenting.measurements(model.state()).seek(_(1) == kind).lay(Nil: List[Model.Entry])(_(2))
+
+      val plainKey: Text = Charts.key(suiteA, t"bench", t"plain")
+      val stressKey: Text = Charts.key(suiteA, t"stress", t"stress")
+
+      val half: Double = Figures.tQuantile(95, 9)*100000.0/java.lang.Math.sqrt(10.0)
+
+      val expectedBars: List[Charts.Bar] =
+        List(Charts.Bar(t"a1", 2.0, (2000000.0 - half)/1e6, (2000000.0 + half)/1e6), Charts.Bar(t"a2", 0.5, 0.5, 0.5))
+
+      // The block kinds of a board, groups flattened, for checking where a figure stands.
+      def kinds(blocks: List[Block]): List[Text] =
+        blocks.bind[List[Text], Text, List[Text]]:
+          case Block.Group(content) => kinds(content)
+          case Block.Figure(_)      => List(t"figure")
+          case Block.Table(_, _, _) => List(t"table")
+          case Block.Heading(_, _)  => List(t"heading")
+          case Block.Chart(_, _)    => List(t"chart")
+          case _                    => List(t"other")
+
+      test(m"the timebase follows the report's thresholds"):
+        (Charts.timebase(50000.0).label, Charts.timebase(2000000.0).label, Charts.timebase(500000000.0).label)
+      . assert(_ == (t"µs", t"ms", t"s"))
+
+      test(m"a group's plain benchmarks are one series of bars, mean and confidence interval in the group's timebase"):
+        val model = benchModel(bench(testA1, 2000000.0, 10, 100000.0), bench(testA2, 500000.0, 1, 0.0))
+        Charts.plain(members(model, t"bench"))
+      . assert(_ == Charts.BarData(List(Charts.Slice(t"mean", expectedBars)), Charts.Timebase(t"ms", 1e6)))
+
+      test(m"a scheduled benchmark holds an empty bar until it records"):
+        val model = benchModel(TestEvent.TestScheduled(testA1, t"bench", Unset, Nil, Nil), TestEvent.TestScheduled(testA2, t"bench", Unset, Nil, Nil), bench(testA2, 40000.0, 1, 0.0))
+        Charts.plain(members(model, t"bench")).slices.bind(_.bars)
+      . assert(_ == List(Charts.Bar(t"a1", 0.0, 0.0, 0.0), Charts.Bar(t"a2", 40.0, 40.0, 40.0)))
+
+      test(m"a benchmark over one axis has a bar per value"):
+        val model = benchModel(bench(testA1, 40000.0, 1, 0.0, List(integral(t"N", 8))), bench(testA1, 60000.0, 1, 0.0, List(integral(t"N", 64))))
+        members(model, t"bench").prim.let(Charts.axial(_))
+      . assert(_ == Charts.BarData(List(Charts.Slice(t"a1", List(Charts.Bar(t"8", 40.0, 40.0, 40.0), Charts.Bar(t"64", 60.0, 60.0, 60.0)))), Charts.Timebase(t"µs", 1e3)))
+
+      test(m"a benchmark over two axes has a group per value of the first and a bar per value of the second"):
+        val model = benchModel
+          ( bench(testA1, 10000.0, 1, 0.0, List(integral(t"N", 4), discrete(t"parser", t"jacinta"))),
+            bench(testA1, 20000.0, 1, 0.0, List(integral(t"N", 4), discrete(t"parser", t"circe"))),
+            bench(testA1, 30000.0, 1, 0.0, List(integral(t"N", 8), discrete(t"parser", t"jacinta"))),
+            bench(testA1, 40000.0, 1, 0.0, List(integral(t"N", 8), discrete(t"parser", t"circe"))) )
+
+        members(model, t"bench").prim.let(Charts.axial(_)).let(_.slices)
+      . assert:
+          _ == List
+            ( Charts.Slice(t"jacinta", List(Charts.Bar(t"4", 10.0, 10.0, 10.0), Charts.Bar(t"8", 30.0, 30.0, 30.0))),
+              Charts.Slice(t"circe", List(Charts.Bar(t"4", 20.0, 20.0, 20.0), Charts.Bar(t"8", 40.0, 40.0, 40.0))) )
+
+      val scheduledGrid: TestEvent.TestScheduled =
+        TestEvent.TestScheduled(testA1, t"bench", Unset, Nil,
+            List(axis(t"N", t"integral", List(t"4", t"8")), axis(t"parser", t"discrete", List(t"jacinta", t"circe"))))
+
+      test(m"a scheduled crosstab is prefilled with empty bars, in the schedule's order"):
+        val model = benchModel(scheduledGrid)
+        members(model, t"bench").prim.let(Charts.axial(_)).let(_.slices)
+      . assert:
+          _ == List
+            ( Charts.Slice(t"jacinta", List(Charts.Bar(t"4", 0.0, 0.0, 0.0), Charts.Bar(t"8", 0.0, 0.0, 0.0))),
+              Charts.Slice(t"circe", List(Charts.Bar(t"4", 0.0, 0.0, 0.0), Charts.Bar(t"8", 0.0, 0.0, 0.0))) )
+
+      test(m"a record into a prefilled crosstab raises its own bar and revises only that series"):
+        val charts = Charts()
+        val model = benchModel(scheduledGrid, bench(testA1, 200.0, 1, 0.0, List(integral(t"N", 4), discrete(t"parser", t"jacinta"))))
+        val key = Charts.key(suiteA, t"bench", testA1.id)
+        val figure: Optional[pyrocosm.Figure] = charts.refresh(model.state())(key)
+        model.handle(bench(testA1, 100.0, 1, 0.0, List(integral(t"N", 8), discrete(t"parser", t"circe"))))
+        charts.refresh(model.state())
+
+        val part: Text = figure.let(_.revision()) match
+          case pyrocosm.Figure.Revision.Replace(part, _) => part
+          case _                                         => t"none"
+
+        (part, members(model, t"bench").prim.let(Charts.axial(_)).let(_.slices.map(_.bars.map(_.mean))))
+      . assert(_ == (t"series-1", List(List(0.2, 0.0), List(0.0, 0.1))))
+
+      test(m"a scheduled axial benchmark's table lists its values blank until they record"):
+        val model = benchModel(TestEvent.TestScheduled(testA1, t"bench", Unset, Nil, List(axis(t"N", t"integral", List(t"4", t"8")))), TestEvent.TestStarted(testA1, 0L))
+        val document = Documenting.document(model.state())
+        document.groups.bind(_.blocks).sweep { case Doc.Block.Table(title, _, rows, _) => (title.let(_.id), rows.size, rows.map(_.prim.or(Doc.Datum.Blank))) }
+      . assert(_ == List((testA1.id, 2, List(Doc.Datum.Str(t"4"), Doc.Datum.Str(t"8")))))
+
+      test(m"a recorded bar replaces only the bars when it fits the axes"):
+        val charts = Charts()
+        val model = benchModel(TestEvent.TestScheduled(testA1, t"bench", Unset, Nil, Nil), TestEvent.TestScheduled(testA2, t"bench", Unset, Nil, Nil), bench(testA2, 40000.0, 1, 0.0))
+        val figure: Optional[pyrocosm.Figure] = charts.refresh(model.state())(plainKey)
+        model.handle(bench(testA1, 20000.0, 1, 0.0))
+        charts.refresh(model.state())
+        figure.let(_.revision()) match
+          case pyrocosm.Figure.Revision.Replace(part, _) => part
+          case _                                         => t"none"
+      . assert(_ == t"series-0")
+
+      test(m"a stress curve is throughput against concurrency, each step once"):
+        val model = benchModel(strain(testA1, 1, 100L), strain(testA1, 2, 180L), strain(testA1, 2, 999L), strain(testA1, 4, 300L))
+        Charts.curves(members(model, t"stress"))
+      . assert(_ == List(Charts.Curve(t"a1", List((1, 100.0), (2, 180.0), (4, 300.0)))))
+
+      test(m"a refresh with nothing new keeps the figure and revises nothing"):
+        val charts = Charts()
+        val model = benchModel(strain(testA1, 1, 100L), strain(testA1, 2, 180L))
+        val first: Optional[pyrocosm.Figure] = charts.refresh(model.state())(stressKey)
+        val second: Optional[pyrocosm.Figure] = charts.refresh(model.state())(stressKey)
+        (first.present, first.let(_.id) == second.let(_.id), first.let(_.revision()).absent)
+      . assert(_ == (true, true, true))
+
+      test(m"a new point revises the same figure in place"):
+        val charts = Charts()
+        val model = benchModel(strain(testA1, 1, 100L), strain(testA1, 2, 180L))
+        val first: Optional[pyrocosm.Figure] = charts.refresh(model.state())(stressKey)
+        model.handle(strain(testA1, 4, 300L))
+        val second: Optional[pyrocosm.Figure] = charts.refresh(model.state())(stressKey)
+        ( first.let(_.id) == second.let(_.id),
+          second.let(_.revision()).present,
+          second.let(_.svg.contains(t"series-0")).or(false) )
+      . assert(_ == (true, true, true))
+
+      test(m"a group appearing adds its figure"):
+        val charts = Charts()
+        val model = benchModel(strain(testA1, 1, 100L), strain(testA1, 2, 180L))
+        val first = charts.refresh(model.state()).to[List].size
+        model.handle(bench(testA2, 2000000.0, 10, 100000.0))
+        val second = charts.refresh(model.state()).to[List].size
+        (first, second)
+      . assert(_ == (1, 2))
+
+      test(m"the web board places each chart above its table, and the terminal board has none"):
+        val charts = Charts()
+        val model = benchModel(bench(testA2, 2000000.0, 10, 100000.0), strain(testA1, 1, 100L), strain(testA1, 2, 180L))
+        val state = model.state()
+        val document = Documenting.document(state)
+        (kinds(Blocks.board(state, document, charts.refresh(state))), kinds(Blocks.board(state, document)))
+      . assert(_ == (List(t"heading", t"figure", t"table", t"heading", t"figure", t"table"), List(t"heading", t"table", t"heading", t"other", t"chart", t"table")))
 
     // A tagged, axial test of fume's own, so that `fume list --axes`, `tag:selection` and
     // `scale=` completion can be exercised against this very suite.

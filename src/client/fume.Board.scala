@@ -51,13 +51,22 @@ final class Board(model: Model, val title: Text):
   val results: pyrocosm.Live[List[Block]] = pyrocosm.Live(Nil)
   val progress: pyrocosm.Live[List[Block]] = pyrocosm.Live(Nil)
 
+  // The results again, with the dashboard's charts above their tables: for the web alone,
+  // since it is not a panel of this interface, so the terminal never draws them.
+  val webResults: pyrocosm.Live[List[Block]] = pyrocosm.Live(Nil)
+  private val charts: Charts = Charts()
+
+  def figures: Ledger[Text, pyrocosm.Figure] = charts.figures
+
   def refresh(force: Boolean = false): Unit =
     val now = jl.System.currentTimeMillis
 
     if force || now - painted >= throttle then
       painted = now
       val state = model.state()
-      results() = Blocks.board(state)
+      val document = Documenting.document(state)
+      results() = Blocks.board(state, document)
+      webResults() = Blocks.board(state, document, charts.refresh(state))
       progress() = List(Blocks.progress(state))
 
   val interface: Interface =

@@ -145,7 +145,7 @@ final class Dashboard():
     selected.let: run =>
       val board = Server.board(run)
       val finished = Server.done(run)
-      val live: AnyRef | Null = board.lay(null: AnyRef | Null) { board => board.results().asInstanceOf[AnyRef] }
+      val live: AnyRef | Null = board.lay(null: AnyRef | Null) { board => board.webResults().asInstanceOf[AnyRef] }
       val changed = lastRun != run || finished.size != lastFinished || !(live.asInstanceOf[AnyRef] eq lastLive.asInstanceOf[AnyRef])
       lastRun = run
       lastFinished = finished.size
@@ -155,7 +155,7 @@ final class Dashboard():
         val past: List[Block] = finished.bind: entry =>
           Block.Heading(2, Inline.text(entry.suite)) :: entry.blocks
 
-        val current: List[Block] = board.lay(Nil: List[Block]) { board => Block.Heading(2, Inline.text(board.title)) :: board.results() }
+        val current: List[Block] = board.lay(Nil: List[Block]) { board => Block.Heading(2, Inline.text(board.title)) :: board.webResults() }
         val all = past + current
         content() = if all.nil then List(Block.paragraph(t"Nothing recorded yet.")) else all
         // A run in flight shows its progress; a finished one, its outcome and totals.
