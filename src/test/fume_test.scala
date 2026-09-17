@@ -92,17 +92,6 @@ object Tests extends Suite(m"Fume tests"):
   private val testB1 = ref(t"000003", Unset, List(t"root", t"B", t"b1"))
   private val passed = TestEvent.Outcome(t"pass", 1L, Unset)
 
-  // A stress measurement of `operations` over one second at `concurrency` workers.
-  private def strain(concurrency: Int, operations: Long, sustained: Boolean = false)
-  :   TestEvent.StrainRecorded =
-
-    TestEvent.StrainRecorded
-      ( testX, Nil, concurrency, operations, 1_000_000_000L, 0L, 0L, 0L, 0L, 0L,
-        Unset, Unset, Unset, Unset, Unset, sustained, 0L )
-
-  private def points(curve: List[TestEvent.StrainRecorded]): List[(Int, Long, Boolean)] =
-    curve.map { strain => (strain.concurrency, strain.operations, strain.sustained) }
-
   private def paths(state: Model.State): List[Text] =
     state.lines.map:
       case Model.Line.SuiteLine(ref)   => ref.path.join(t"/")
@@ -446,31 +435,6 @@ object Tests extends Suite(m"Fume tests"):
       model.handle(TestEvent.SuiteEnded(root, 0L))
       paths(model.state())
     . assert(_ == List(t"root", t"root/x", t"root/A", t"root/A/a1", t"root/B", t"root/B/b1"))
-
-    suite(m"Stress curves"):
-      test(m"a curve keeps one strain per concurrency, in measured order"):
-        points(Documenting.curve(List(strain(1, 10), strain(4, 40), strain(2, 20))))
-      . assert(_ == List((1, 10L, false), (4, 40L, false), (2, 20L, false)))
-
-      test(m"a repeated concurrency keeps its first measurement"):
-        points(Documenting.curve(List(strain(1, 10), strain(2, 20), strain(2, 25))))
-      . assert(_ == List((1, 10L, false), (2, 20L, false)))
-
-      // A capacity search, or a refined sweep, confirms its winner by measuring a
-      // concurrency it has already probed: the flagged re-measurement must survive.
-      test(m"a sustained re-measurement replaces the first measurement"):
-        val strains =
-          List(strain(8, 80), strain(16, 90), strain(12, 85), strain(12, 84, sustained = true))
-
-        points(Documenting.curve(strains))
-      . assert(_ == List((8, 80L, false), (16, 90L, false), (12, 84L, true)))
-
-      test(m"a sustained strain keeps its concurrency's first position"):
-        val strains =
-          List(strain(8, 80), strain(16, 90), strain(8, 79, sustained = true), strain(16, 91))
-
-        points(Documenting.curve(strains))
-      . assert(_ == List((8, 79L, true), (16, 90L, false)))
 
     suite(m"Charts"):
       val testA2 = ref(t"000004", Unset, List(t"root", t"A", t"a2"))

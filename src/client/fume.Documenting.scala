@@ -560,36 +560,22 @@ object Documenting:
   private def allocationRate(strain: TestEvent.StrainRecorded): Long =
     if strain.operations == 0L then 0L else strain.allocation/strain.operations
 
-  // A stress entry's scaling curve: one strain per concurrency, in the order the concurrencies
-  // were first measured. A concurrency measured more than once keeps its first measurement,
-  // unless a later one is flagged `sustained`: a capacity search, or a refined sweep, confirms
-  // its winner by re-measuring a concurrency it has already probed, and that flagged strain is
-  // the one the sparkline and the summary are built around. Keeping the first measurement
-  // regardless discarded every winner, so the summary fell back to the fastest probe.
-  def curve(strains: List[TestEvent.StrainRecorded]): List[TestEvent.StrainRecorded] =
-    def recur
-      ( rest: List[TestEvent.StrainRecorded], seen: List[Int], acc: List[TestEvent.StrainRecorded] )
-    :   List[TestEvent.StrainRecorded] =
-
-      rest match
-        case head :: tail =>
-          if seen.has(head.concurrency) then recur(tail, seen, acc) else
-            val winner: Optional[TestEvent.StrainRecorded] = rest.seek: strain =>
-              strain.concurrency == head.concurrency && strain.sustained
-
-            recur(tail, head.concurrency :: seen, winner.or(head) :: acc)
-
-        case _ =>
-          acc.reverse
-
-    recur(strains, Nil, Nil)
-
-  // An entry's scaling curve, for the board's sparkline and the dashboard's charts alike.
-  private[fume] def curve(entry: Entry): List[TestEvent.StrainRecorded] = curve(entry.strains)
-
   // A stress group renders as the sparkline of every curve, then one row per implementation
   // at its best point, ranked. (The per-step detail table upstream was reserved for a
   // verbose mode that was never reachable; it is not reproduced.)
+  // An entry's scaling curve: concurrency against the strain measured there; a repeated
+  // concurrency keeps its first measurement.
+  private[fume] def curve(entry: Entry): List[TestEvent.StrainRecorded] =
+    def recur(rest: List[TestEvent.StrainRecorded], seen: List[Int],
+        acc: List[TestEvent.StrainRecorded]): List[TestEvent.StrainRecorded] =
+      rest match
+        case head :: tail =>
+          if seen.has(head.concurrency) then recur(tail, seen, acc)
+          else recur(tail, head.concurrency :: seen, head :: acc)
+        case _ => acc.reverse
+
+    recur(entry.strains, Nil, Nil)
+
   private def stressBlocks(entries0: List[Entry]): List[Block] =
     val pending: List[Entry] = entries0.filter(_.strains.nil)
     val entries: List[Entry] = entries0.filter(!_.strains.nil)

@@ -31,17 +31,21 @@ object settings:
   // to use its `release/lib` jars directly (fork-developer mode).
   val scalaHome = sys.env.getOrElse("SOUNDNESS_SCALA_HOME", "")
 
-  // The Soundness and Pyrocosm versions fume builds against (from `~/.ivy2/local`) are pinned in
-  // etc/refs and read by `deps`, below; `soundnessDeps` takes them as parameters.
+  val soundnessVersion = "0.66.0"
 
-  // The version fume's OWN library modules are released under, AND the version the `launcher`
-  // module resolves them at. Kept as a single value so the released coordinates and the launcher's
-  // dependency coordinates cannot drift apart: burdock externalizes a module only when the exact
-  // released jar bytes are on the launcher's classpath, so a mismatch would silently fall back to
-  // inlining. Bump (and commit) per release; release-launcher.sh (in propensive/.github) refuses to
-  // release when this pin disagrees with its VERSION argument. Snapshots override it through
-  // `publishVersion` (below), never here.
-  val fumeVersion = "0.3.0"
+  // The Maven Central version fume's OWN library module (`fume-client`) is published under, AND the
+  // version the `launcher` module resolves it at. Kept as a single value so the published
+  // coordinate and the launcher's dependency coordinate cannot drift apart: burdock externalizes a
+  // module only when the exact published jar bytes are on the launcher's classpath, so a mismatch
+  // would silently fall back to inlining. Override at release time.
+  val fumeVersion = sys.env.getOrElse("FUME_VERSION", "0.3.0")
+
+  // The Pyrocosm release the board is built on, resolved from `~/.ivy2/local` like the
+  // Soundness components: installed from Pyrocosm's GitHub Releases by the shared CI workflow's
+  // `extra_releases` input (see .github/workflows/ci.yml), or locally by Soundness's sync script
+  // pointed at Pyrocosm, or by `make publishLocal` in the Pyrocosm repository for an unreleased
+  // version. The repackager names propensive/pyrocosm among its hints so the jars externalize.
+  val pyrocosmVersion = "0.2.0"
 
   val scalaOptions = Seq(
     // The fork's opt-in behaviours, enabled by name, exactly as the Soundness build enables
@@ -112,30 +116,30 @@ object settings:
   // These are fume's TOP-LEVEL components only: each jar's embedded POM names its own
   // dependencies, so the rest of the surface fume's `import soundness.*` touches arrives
   // transitively.
-  def soundnessDeps(soundness: String, pyrocosm: String) = Seq(
-    mvn"dev.propensive:aviation-core:$soundness",       // timespec literals (0.2*Second)
-    mvn"dev.propensive:burdock-core:$soundness",        // externalize + the repackager
-    mvn"dev.propensive:digression-ansi:$soundness",     // stack-trace diagnostics
-    mvn"dev.propensive:escapade-io:$soundness",         // Teletype ↔ Stdio writables
-    mvn"dev.propensive:escritoire-core:$soundness",     // the board's tables
-    mvn"dev.propensive:ethereal-core:$soundness",       // the daemon
-    mvn"dev.propensive:eucalyptus-core:$soundness",     // logging.silentLogging
-    mvn"dev.propensive:exoskeleton-completions:$soundness", // execute + tab-completion
-    mvn"dev.propensive:exoskeleton-manpage:$soundness", // fume install's manpage
-    mvn"dev.propensive:galilei-jvm:$soundness",         // filesystem + glob
-    mvn"dev.propensive:guillotine-core:$soundness",     // sh"…" for forked suites
-    mvn"dev.propensive:hellenism-jvm:$soundness",       // LocalClasspath, classloaders
-    mvn"dev.propensive:iridescence-core:$soundness",    // the palette
-    mvn"dev.propensive:probably-cli:$soundness",        // Suite and its runner
-    mvn"dev.propensive:probably-events:$soundness",     // the BinTEL event stream
-    mvn"dev.propensive:sedentary-core:$soundness",      // benchmarks and stress tests
-    mvn"dev.propensive:stratiform-core:$soundness",     // .pyrocosm/fume/config.tel
-    mvn"dev.propensive:tasseomancy-core:$soundness",    // the dashboard's charts
-    mvn"dev.propensive:tessellate-core:$soundness",     // Flow.wrap for report text
-    mvn"dev.propensive:ultimatum-core:$soundness",      // the scrolling viewport
-    mvn"dev.propensive:pyrocosm-model:$pyrocosm",       // the board's semantic model
-    mvn"dev.propensive:pyrocosm-terminal:$pyrocosm",    // its terminal frontend,
-    mvn"dev.propensive:pyrocosm-web:$pyrocosm")         // and its web frontend
+  val soundnessDeps = Seq(
+    mvn"dev.propensive:aviation-core:$soundnessVersion",       // timespec literals (0.2*Second)
+    mvn"dev.propensive:burdock-core:$soundnessVersion",        // externalize + the repackager
+    mvn"dev.propensive:digression-ansi:$soundnessVersion",     // stack-trace diagnostics
+    mvn"dev.propensive:escapade-io:$soundnessVersion",         // Teletype ↔ Stdio writables
+    mvn"dev.propensive:escritoire-core:$soundnessVersion",     // the board's tables
+    mvn"dev.propensive:ethereal-core:$soundnessVersion",       // the daemon
+    mvn"dev.propensive:eucalyptus-core:$soundnessVersion",     // logging.silentLogging
+    mvn"dev.propensive:exoskeleton-completions:$soundnessVersion", // execute + tab-completion
+    mvn"dev.propensive:exoskeleton-manpage:$soundnessVersion", // fume install's manpage
+    mvn"dev.propensive:galilei-jvm:$soundnessVersion",         // filesystem + glob
+    mvn"dev.propensive:guillotine-core:$soundnessVersion",     // sh"…" for forked suites
+    mvn"dev.propensive:hellenism-jvm:$soundnessVersion",       // LocalClasspath, classloaders
+    mvn"dev.propensive:iridescence-core:$soundnessVersion",    // the palette
+    mvn"dev.propensive:probably-cli:$soundnessVersion",        // Suite and its runner
+    mvn"dev.propensive:probably-events:$soundnessVersion",     // the BinTEL event stream
+    mvn"dev.propensive:sedentary-core:$soundnessVersion",      // benchmarks and stress tests
+    mvn"dev.propensive:stratiform-core:$soundnessVersion",     // .pyrocosm/fume/config.tel
+    mvn"dev.propensive:tasseomancy-core:$soundnessVersion",    // the dashboard's charts
+    mvn"dev.propensive:tessellate-core:$soundnessVersion",     // Flow.wrap for report text
+    mvn"dev.propensive:ultimatum-core:$soundnessVersion",      // the scrolling viewport
+    mvn"dev.propensive:pyrocosm-model:$pyrocosmVersion",       // the board's semantic model
+    mvn"dev.propensive:pyrocosm-terminal:$pyrocosmVersion",    // its terminal frontend,
+    mvn"dev.propensive:pyrocosm-web:$pyrocosmVersion")         // and its web frontend
 
 // Exposes the fork compiler's `release/lib` jars (from a local build via `settings.scalaHome`, or
 // downloaded from the `settings.scalaRelease` GitHub release) as a Maven-layout repository,
@@ -291,28 +295,6 @@ trait Toolchain extends ScalaModule:
   override def scalaCompilerBridge: T[Option[PathRef]] = Task:
     Some(PathRef(toolchain.distribution().path / "scala3-sbt-bridge.jar"))
 
-
-// The propensive libraries this build depends on, pinned in etc/refs (the format, the
-// snapshot flow and the shared scripts are documented in propensive/.github): each is a release
-// `X.Y.Z`, or a snapshot `X.Y.Z-<12 hex>` of an unreleased upstream build, published there by
-// `make snapshot` and installed here — transitively — by `make sync-deps`, which the shared CI
-// workflow runs too. Read through a `Task.Source`, not a `val`: the Mill daemon evaluates the
-// build script once and keeps the module tree until build.mill itself changes, so a value read
-// at evaluation time would not see the file edited.
-object deps extends Module:
-  def file = Task.Source(mill.api.BuildCtx.workspaceRoot / "etc" / "refs")
-
-  def pins: T[Map[String, String]] = Task:
-    os.read.lines(file().path).map(_.trim).filter(line => line.nonEmpty && !line.startsWith("#"))
-      .map(_.split("\t").map(_.trim).filter(_.nonEmpty))
-      .map(columns => columns(0).stripPrefix("propensive/") -> columns(1)).toMap
-
-  def version(name: String): Task[String] = Task.Anon:
-    pins().getOrElse(name, sys.error(s"etc/refs has no pin for $name"))
-
-  def soundness: T[String] = Task(version("soundness")())
-  def pyrocosm: T[String] = Task(version("pyrocosm")())
-
 trait Project extends Module:
   def moduleDir = super.moduleDir / os.up / "src"
 
@@ -346,13 +328,7 @@ trait Component(dependencies: PublishModule*) extends Toolchain:
 // Central without generating real docs. `SonatypeCentralPublishModule` targets the Central Portal
 // (central.sonatype.com), driven by the standard `MILL_SONATYPE_*`/`MILL_PGP_*` env vars at release.
 trait Publishing extends Toolchain, SonatypeCentralPublishModule:
-  // A `Task.Input` reading `Task.env`, not a plain value: `FUME_RELEASE_VERSION` is how
-  // `make snapshot` (snapshot.sh in propensive/.github) drives the snapshot version through a
-  // Mill daemon that is already running — the daemon freezes `sys.env` at its own start, while
-  // `Task.env` is the environment of each `./mill` invocation. A release never sets it: the
-  // released version is `settings.fumeVersion`, and the release script insists on it.
-  def publishVersion = Task.Input:
-    Task.env.get("FUME_RELEASE_VERSION").filter(_.nonEmpty).getOrElse(settings.fumeVersion)
+  def publishVersion = settings.fumeVersion
   def artifactSuffix = Task("")
 
   def pomSettings = Task(PomSettings(
@@ -373,7 +349,7 @@ object fume extends Project:
   // All of fume's logic — subcommands, flags, dispatch and (later) the test-running machinery.
   // Published to Maven Central as `dev.propensive:fume-client`.
   object client extends Component(), Publishing:
-    def mvnDeps = Task(settings.soundnessDeps(deps.soundness(), deps.pyrocosm()))
+    def mvnDeps = settings.soundnessDeps
 
   // The invocation point, ALONE in its own module (`src/launcher/fume_launcher.scala` — just the
   // `@main def fume = externalize(runClient())`). It depends on `client` NOT as a Mill `moduleDep`
@@ -388,9 +364,8 @@ object fume extends Project:
   // `publishLocal` copy has different bytes and would be inlined, not externalized). Before the
   // first release, `make run` publishes locally and assembles against that instead.
   object launcher extends Component():
-    def mvnDeps = Task:
-      mvn"dev.propensive:fume-client:${settings.fumeVersion}"
-        +: settings.soundnessDeps(deps.soundness(), deps.pyrocosm())
+    def mvnDeps =
+      mvn"dev.propensive:fume-client:${settings.fumeVersion}" +: settings.soundnessDeps
     def finalMainClass = "fume.fume"
     // A clean zip (no executable shell preamble) so the Burdock repackager can read and rewrite the
     // assembled JAR.
@@ -401,47 +376,6 @@ object fume extends Project:
   // must run on this module or `fume run -c` finds nothing. `fume.runTests` is a plain-`java`
   // entry point that drives `Tests.invoke` in-process, for `make test` and the shared CI.
   object test extends Component(client):
-    def mvnDeps = Task(settings.soundnessDeps(deps.soundness(), deps.pyrocosm()))
-    def scalacPluginMvnDeps = Task(Seq(mvn"dev.propensive:beneficence-plugin:${deps.soundness()}"))
+    def mvnDeps = settings.soundnessDeps
+    def scalacPluginMvnDeps = Seq(mvn"dev.propensive:beneficence-plugin:${settings.soundnessVersion}")
     def finalMainClass = "fume.runTests"
-
-// The release: the library modules' jars, each with its POM and ivy.xml embedded under
-// `META-INF/maven/<group>/<artifactId>/`, named `<artifactId>-<version>.jar`, exactly as the
-// Soundness and Pyrocosm builds stage theirs. A jar so staged is all a consumer needs: the shared
-// sync script (propensive/.github) reconstructs the ivy2 layout coursier resolves from, which is
-// how `make snapshot` publishes an unreleased build for a dependent repository to pin.
-object release extends Module:
-  def modules: Seq[PublishModule] = Seq(fume.client)
-
-  private def withDescriptors(source: os.Path, target: os.Path, entries: Seq[(String, os.Path)])
-  :   Unit =
-    val input = new java.util.zip.ZipFile(source.toIO)
-    val output = new java.util.zip.ZipOutputStream(new java.io.FileOutputStream(target.toIO))
-    try
-      val existing = input.entries()
-      while existing.hasMoreElements do
-        val entry = existing.nextElement()
-        output.putNextEntry(new java.util.zip.ZipEntry(entry.getName))
-        if !entry.isDirectory then input.getInputStream(entry).transferTo(output)
-        output.closeEntry()
-
-      for (name, file) <- entries do
-        output.putNextEntry(new java.util.zip.ZipEntry(name))
-        output.write(os.read.bytes(file))
-        output.closeEntry()
-    finally
-      output.close()
-      input.close()
-
-  def stage: T[Seq[PathRef]] = Task:
-    val jars: Seq[(PathRef, String, String, String, PathRef, PathRef)] =
-      Task.traverse(modules)(module =>
-        Task.Anon((module.jar(), module.pomSettings().organization, module.artifactId(),
-                   module.publishVersion(), module.pom(), module.ivy())))()
-
-    jars.map: (jar, group, artifactId, version, pom, ivy) =>
-      val target = Task.dest / s"$artifactId-$version.jar"
-      val prefix = s"META-INF/maven/$group/$artifactId"
-      val descriptors = Seq(s"$prefix/pom.xml" -> pom.path, s"$prefix/ivy.xml" -> ivy.path)
-      withDescriptors(jar.path, target, descriptors)
-      PathRef(target)

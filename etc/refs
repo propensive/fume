@@ -1,8 +1,0 @@
-# The propensive libraries this repository builds against: one per line, tab-separated, as
-# `repository  version  [commit]`. A version `X.Y.Z` is a GitHub Release; `X.Y.Z-<12 hex>` is a
-# snapshot of an unreleased build, published by `make snapshot` in that repository (the commit
-# column says which commit), and `make release` here refuses to run while one is pinned. The
-# build reads this file (`deps` in build.mill); `make sync-deps` and CI install what it names.
-# See propensive/.github for the whole flow.
-propensive/soundness	0.67.0-664f58870ed6	3c96b5b42db3d039c2ed70860debcb8f802d473f
-propensive/pyrocosm	0.2.0-1d402a2e97e5	5559e3abfa15a6c26ccd767f0c002a6a99d109ba
