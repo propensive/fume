@@ -87,8 +87,9 @@ object Blocks:
     val alignment = if column.numeric then Block.Alignment.End else Block.Alignment.Start
     Block.Column(Inline.text(column.title), alignment, sizing, column.numeric)
 
+  // A table's title, with the test's hash on a line of its own beneath it.
   private def caption(ref: TestEvent.Ref): List[Inline] =
-    List(Inline.Reference(ref.id), Inline.Textual(t" "), Inline.Emphasis(Inline.text(ref.name)))
+    List(Inline.Emphasis(Inline.text(ref.name)), Inline.Break(), Inline.Reference(ref.id))
 
   def kindTitle(kind: Text): Text = kind match
     case t"bench"   => t"Benchmarks"

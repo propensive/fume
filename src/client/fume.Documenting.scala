@@ -272,13 +272,25 @@ object Documenting:
             List(Column(axes.join(t", "), stretch = true), Column(t"Status")),
             rows )
 
+  // Whether a two-axis entry is laid out with its axes the other way round from the test's
+  // declaration: the second axis as the crosstab's rows and the chart's groups. Toggled from
+  // the dashboard, for the one report the daemon shows.
+  @scala.caps.unsafe.untrackedCaptures
+  @volatile
+  var transposed: Boolean = false
+
   // An entry's axes: those its records carry, or, before it has recorded, those its schedule
-  // announced (an emergent axis, whose values are found by running, is not one to lay out).
+  // announced (an emergent axis, whose values are found by running, is not one to lay out). A
+  // test's first axis is the crosstab's rows and the chart's groups, unless transposed.
   private[fume] def axesOf(entry: Entry): List[Text] =
     val recorded: List[Text] =
       entry.benches.bind[List[Text], Text, List[Text]] { bench => bench.coordinates.map(_.axis) }.distinct
 
-    if recorded.nil then entry.axes.filter(!_.emergent).map(_.axis) else recorded
+    val declared: List[Text] = if recorded.nil then entry.axes.filter(!_.emergent).map(_.axis) else recorded
+
+    declared match
+      case first :: second :: Nil if transposed => List(second, first)
+      case other                                => other
 
   // The values of one axis across an entry's cells — those the schedule announced first, then
   // any others its records carry — in first-appearance order for discrete axes and numeric

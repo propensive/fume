@@ -4,5 +4,5 @@
 # column says which commit), and `make release` here refuses to run while one is pinned. The
 # build reads this file (`deps` in build.mill); `make sync-deps` and CI install what it names.
 # See propensive/.github for the whole flow.
-propensive/soundness	0.67.0
-propensive/pyrocosm	0.3.0-980213367721	ca77a788416a2915030c7461745ea086d5169d26
+propensive/soundness	0.68.0-b963c9733024	8a36bc8039adc33a1259a9e96d18769ee5ac3e3b
+propensive/pyrocosm	0.3.0-dee893e2baaa	ba17063adf77bed41c7799d4d4dcbe23e2707860

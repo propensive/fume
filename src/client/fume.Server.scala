@@ -128,9 +128,19 @@ final class Dashboard():
   val content: pyrocosm.Live[List[Block]] = pyrocosm.Live(List(Block.paragraph(t"Select a run.")))
   val progress: pyrocosm.Live[List[Block]] = pyrocosm.Live(Nil)
 
+  // Lays a two-axis benchmark out the other way round: its second axis as the rows and the
+  // bar groups, its first as the columns and the bars within a group.
+  val transpose: pyrocosm.Toggle = pyrocosm.Toggle(t"transpose")
+  val transposeControl: pyrocosm.Control = pyrocosm.Control.Toggle(transpose, Inline.text(t"Transpose axes"))
+
   private def action(run: Int): Action = actions.computeIfAbsent(run, _ => Action(t"run-$run")).nn
 
   def handle(event: Event): Unit = event match
+    case Event.Toggled(`transpose`, state) =>
+      Documenting.transposed = state
+      lastLive = null
+      refresh()
+
     case Event.Pressed(action) =>
       val chosen = actions.entrySet.nn.iterator.nn
       var found: Optional[Int] = Unset
@@ -142,10 +152,19 @@ final class Dashboard():
     case _ =>
       ()
 
+  // When a run started: relative to now within the hour — "just now", "5 minutes ago" — and
+  // as a time of day beyond it. The dashboard is rebuilt a few times a second, so a relative
+  // time keeps current.
   private def when(millis: Long): Text =
-    val instant = java.time.Instant.ofEpochMilli(millis).nn
-    val zoned = instant.atZone(java.time.ZoneId.systemDefault).nn
-    java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss").nn.format(zoned).nn.tt
+    val minutes: Long = (java.lang.System.currentTimeMillis - millis)/60000L
+
+    if minutes < 1L then t"just now"
+    else if minutes == 1L then t"1 minute ago"
+    else if minutes < 60L then t"${minutes.toString} minutes ago"
+    else
+      val instant = java.time.Instant.ofEpochMilli(millis).nn
+      val zoned = instant.atZone(java.time.ZoneId.systemDefault).nn
+      java.time.format.DateTimeFormatter.ofPattern("HH:mm").nn.format(zoned).nn.tt
 
   private def runItem(run: Journal.Run): Block.Item =
     val standing: Inline = run.outcome.lay(Inline.Toned(Tone.Accent, List(Inline.Symbol(pyrocosm.Glyph.Running)))):
@@ -211,5 +230,5 @@ final class Dashboard():
       ( Inline.text(t"fume"),
         List
           ( Panel(Panel.Id(t"runs"), Panel.Role.Navigation, Inline.text(t"Runs"), runs, Panel.Priority.Important),
-            Panel(Panel.Id(t"run"), Panel.Role.Primary, Unset, content, Panel.Priority.Essential, hints = Hints(hints.Follow)),
+            Panel(Panel.Id(t"run"), Panel.Role.Primary, Unset, content, Panel.Priority.Essential, controls = List(transposeControl), hints = Hints(hints.Follow)),
             Panel(Panel.Id(t"progress"), Panel.Role.Status, Unset, progress, Panel.Priority.Important) ) )
