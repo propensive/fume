@@ -43,6 +43,27 @@ object settings:
   // `publishVersion` (below), never here.
   val fumeVersion = "0.4.0"
 
+  // What a build of fume identifies itself as, written into the client jar as
+  // `META-INF/pyrocosm/fume/version` for `pyrocosm-cli` to read (`fume about`,
+  // `fume --version`): the version a release or snapshot is published as, when
+  // `FUME_RELEASE_VERSION` names it (`make snapshot` and `make release` both set it);
+  // otherwise the pinned version with the filtered tree hash of HEAD — the identity
+  // `make snapshot` would give this commit — and `-dirty` if the working tree has changes
+  // that no commit records. Called from a `Task.Input`, so that HEAD is consulted on every
+  // invocation.
+  def buildVersion(env: Map[String, String], pinned: String): String =
+    env.get("FUME_RELEASE_VERSION").filter(_.nonEmpty).getOrElse:
+      val root = mill.api.BuildCtx.workspaceRoot
+
+      val tree: String =
+        scala.util.Try:
+          os.proc("./etc/shared", "filtered_tree.py", "HEAD").call(cwd = root).out.text().trim
+        . getOrElse(os.proc("git", "rev-parse", "HEAD^{tree}").call(cwd = root).out.text().trim)
+
+      val dirty: Boolean =
+        os.proc("git", "status", "--porcelain").call(cwd = root).out.text().trim.nonEmpty
+      s"$pinned-${tree.take(12)}${if dirty then "-dirty" else ""}"
+
   val scalaOptions = Seq(
     // The fork's opt-in behaviours, enabled by name, exactly as the Soundness build enables
     // them (fume compiles the same idioms from the same TASTy): every capture-checking
@@ -135,7 +156,8 @@ object settings:
     mvn"dev.propensive:ultimatum-core:$soundness",      // the scrolling viewport
     mvn"dev.propensive:pyrocosm-model:$pyrocosm",       // the board's semantic model
     mvn"dev.propensive:pyrocosm-terminal:$pyrocosm",    // its terminal frontend,
-    mvn"dev.propensive:pyrocosm-web:$pyrocosm")         // and its web frontend
+    mvn"dev.propensive:pyrocosm-web:$pyrocosm",         // and its web frontend
+    mvn"dev.propensive:pyrocosm-cli:$pyrocosm")         // the standard command line (Tool)
 
 // Exposes the fork compiler's `release/lib` jars (from a local build via `settings.scalaHome`, or
 // downloaded from the `settings.scalaRelease` GitHub release) as a Maven-layout repository,
@@ -349,8 +371,10 @@ trait Publishing extends Toolchain, SonatypeCentralPublishModule:
   // A `Task.Input` reading `Task.env`, not a plain value: `FUME_RELEASE_VERSION` is how
   // `make snapshot` (snapshot.sh in propensive/.github) drives the snapshot version through a
   // Mill daemon that is already running — the daemon freezes `sys.env` at its own start, while
-  // `Task.env` is the environment of each `./mill` invocation. A release never sets it: the
-  // released version is `settings.fumeVersion`, and the release script insists on it.
+  // `Task.env` is the environment of each `./mill` invocation. `make release` sets it too, to
+  // the version it releases, which the release script insists equals `settings.fumeVersion` —
+  // so a release's `publishVersion` is unchanged, and the `META-INF/pyrocosm/fume/version`
+  // resource (`buildVersion`) records the release version rather than a tree hash.
   def publishVersion = Task.Input:
     Task.env.get("FUME_RELEASE_VERSION").filter(_.nonEmpty).getOrElse(settings.fumeVersion)
   def artifactSuffix = Task("")
@@ -374,6 +398,15 @@ object fume extends Project:
   // Published to Maven Central as `dev.propensive:fume-client`.
   object client extends Component(), Publishing:
     def mvnDeps = Task(settings.soundnessDeps(deps.soundness(), deps.pyrocosm()))
+
+    // Fume's own version, as `fume about` and `fume --version` report it: see
+    // `settings.buildVersion`.
+    def buildVersion = Task.Input(settings.buildVersion(Task.env, settings.fumeVersion))
+
+    override def resources = Task:
+      val file = Task.dest / "META-INF" / "pyrocosm" / "fume" / "version"
+      os.write.over(file, buildVersion() + "\n", createFolders = true)
+      super.resources() ++ Seq(PathRef(Task.dest))
 
   // The invocation point, ALONE in its own module (`src/launcher/fume_launcher.scala` — just the
   // `@main def fume = externalize(runClient())`). It depends on `client` NOT as a Mill `moduleDep`

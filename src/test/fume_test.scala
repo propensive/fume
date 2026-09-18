@@ -112,13 +112,19 @@ object Tests extends Suite(m"Fume tests"):
     jnf.Files.write(ji.File(fumeDir, "config.tel").nn.toPath, content.s.getBytes("UTF-8"))
     nested
 
+  // The user's config plays no part here: an empty environment has no `XDG_CONFIG_HOME` and
+  // no `HOME`, so only the project's `.pyrocosm/fume/config.tel` is read.
   private def read(directory: ji.File, name: Text): Optional[Text] =
-    Workspace.configurator(directory.getAbsolutePath.nn.tt).read(name)
+    given Environment = _ => Unset
+    Fume.configurator(directory.getAbsolutePath.nn.tt).read(name)
 
   def run(): Unit =
+    // The build writes `META-INF/pyrocosm/fume/version` into the client's resources: a
+    // release's `X.Y.Z`, a snapshot's `X.Y.Z-<hex>`, or a development build's tree hash,
+    // `-dirty` if uncommitted.
     test(m"the version is set"):
-      fumeVersion
-    . assert(_ == t"0.2.0")
+      Fume.version
+    . assert(_.s.matches("^\\d+\\.\\d+\\.\\d+(-[0-9a-f]{12}(-dirty)?)?$"))
 
     test(m"a config file is located in an ancestor directory"):
       read(project(t"tel 1.0\n\nclasspath out/tests.jar\n"), t"classpath")
