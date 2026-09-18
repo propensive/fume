@@ -8,7 +8,8 @@ jar it compiles.
 
 Fume runs as an [Ethereal](https://soundness.dev/ethereal/) daemon, so invocations after the
 first are fast, and uses [Exoskeleton](https://soundness.dev/exoskeleton/) for its command line,
-tab-completions and manpage.
+tab-completions and manpage. It is a [Pyrocosm](https://github.com/propensive/pyrocosm) tool,
+so the subcommands and configuration files every Pyrocosm tool shares are fume's too.
 
 ## Usage
 
@@ -18,7 +19,11 @@ fume run -c out.jar --bench             # only benchmarks
 fume run -c out.jar json/* 'N<=64'      # a path glob and an axis constraint
 fume list -c out.jar                    # enumerate tests without running them
 fume watch -c out.jar                   # rerun whenever the jar changes
+fume serve                              # serve the dashboard of runs until Ctrl+C
 fume install                            # install tab-completions and the manpage
+fume about                              # fume's version, and the daemon serving it
+fume --version                          # the version alone
+fume quit                               # stop the daemon, and any dashboard it serves
 ```
 
 The non-flag arguments to `run`, `list` and `watch` are raw Probably selection terms — 6-hex-digit
@@ -31,16 +36,18 @@ than narrow it.
 
 Single-valued options such as `--classpath` and `--fail-fast` are Exoskeleton `Setting`s, read
 from a cascade of sources in priority order: the command-line flag, a `fume.`-prefixed system
-property, a `FUME_`-prefixed environment variable (`FUME_CLASSPATH=…`), and finally the
-project's configuration file.
+property, a `FUME_`-prefixed environment variable (`FUME_CLASSPATH=…`), the project's
+configuration file, and finally the user's.
 
-## Configuration file
+## Configuration files
 
 A project configures fume with a [TEL](https://soundness.dev/tel/) document at
 `.pyrocosm/fume/config.tel`, where the `.pyrocosm` directory sits in the project root (typically
 alongside `.git`) and holds one subdirectory per tool; fume finds the file from the current
-directory or any ancestor, so it can be invoked from anywhere inside the project. Because fume
-is a daemon, the parsed file is cached, but its timestamp and size are checked on every
+directory or any ancestor, so it can be invoked from anywhere inside the project. A user's own
+defaults, for every project, go in `~/.config/fume/config.tel` (or
+`$XDG_CONFIG_HOME/fume/config.tel`), which the project's file overrides. Because fume is a
+daemon, the parsed files are cached, but their timestamps and sizes are checked on every
 invocation, so edits take effect immediately.
 
 The schema is exactly fume's set of `Setting`s: each setting's camelCase name is a kebab-case
@@ -57,6 +64,12 @@ fail-fast
 
 A missing file is fine (fume needs no configuration), and a file that fails to parse is treated
 as absent rather than aborting the command.
+
+Two keywords are read by the daemon itself rather than by a subcommand: `port` is the port the
+dashboard serves on (8090 by default), and a bare `serve` asks the daemon to serve the dashboard
+from the moment it starts, for as long as it lives, without a `fume serve` ever being run — so
+`serve` in `~/.config/fume/config.tel` keeps a dashboard at `http://localhost:8090/` whenever fume
+is in use. `fume quit` stops both.
 
 ## Status
 

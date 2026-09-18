@@ -32,14 +32,13 @@
                                                                                                   */
 package fume
 
-import java.lang as jl
 import java.util.concurrent as juc
 
 import soundness.*
 
 import denominative.dysasymptotics.linearSize
 
-import pyrocosm.{Action, Block, Event, Hints, Inline, Interface, Panel, Tone, hints}
+import pyrocosm.{Action, Block, Event, Hints, Inline, Interface, Panel, Tone, Tool, hints}
 
 // The runs the daemon has seen, for the web front-end: the board of every suite in flight,
 // and the final blocks of every suite that has finished, kept for the runs the journal
@@ -67,6 +66,41 @@ object Server:
   def forget(run: Int): Unit =
     boards.remove(run)
     finished.remove(run)
+
+// The dashboard as the web front-end `Tool` serves from the daemon: launched once, for as long
+// as the daemon lives, when a config says `serve` (on its `port`, or 8090), and stopped by
+// `fume quit`. `fume serve` remains the interactive way to serve it, from a terminal.
+object Dashboard:
+  val web: Tool.Web = new Tool.Web:
+    def port: Int = 8090
+
+    // The frontend holds the monitor and the error page, which outlive it; vouched pure so it
+    // can be stopped from another invocation.
+    @scala.caps.unsafe.untrackedCaptures
+    @volatile
+    private var frontend: Optional[pyrocosm.WebFrontend] = Unset
+
+    // Serves until `stop`: the dashboard is rebuilt a few times a second by a ticker, for as
+    // long as the front-end runs, exactly as the interactive `fume serve` loop rebuilds it.
+    def serve(port: Int)(using Monitor, Probate): Unit =
+      import webserverErrorPages.minimalErrorPage
+
+      val dashboard = Dashboard()
+      val running: pyrocosm.WebFrontend =
+        scala.caps.unsafe.unsafeAssumePure(pyrocosm.WebFrontend(port))
+      frontend = running
+      Server.serving = true
+
+      try
+        async:
+          while Server.serving do
+            dashboard.refresh()
+            snooze(0.25*Second)
+
+        running.run(dashboard.interface)(dashboard.handle)
+      finally Server.serving = false
+
+    def stop(): Unit = frontend.let(_.stop())
 
 // The dashboard: the journal's runs to choose from, and the chosen run's report, live while it
 // runs. Rebuilt from the journal and the registry a few times a second; each cell is assigned

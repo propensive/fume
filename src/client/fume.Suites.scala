@@ -262,7 +262,7 @@ object Suites:
 
   // Every test on the classpath, from every suite's FULL schedule (no terms), cached in the
   // daemon so completion is instant after the first keystroke. Keyed by the classpath entries'
-  // paths, modification times and sizes, as `Workspace` caches configurations: a rebuilt jar
+  // paths, modification times and sizes, as `pyrocosm.Tool` caches configurations: a rebuilt jar
   // is rescheduled on the next keystroke, and an unbuilt one costs an empty schedule until it
   // appears.
   private val cache: scala.collection.concurrent.TrieMap[Text, List[Scheduled]] =

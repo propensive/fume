@@ -9,7 +9,7 @@ assembly:
 # indexed — the repackaged `fume` executable, added to the same release. See release-launcher.sh
 # in propensive/.github (run through etc/shared) for the two-step ordering and its verification.
 release:
-	./etc/shared release-launcher.sh fume "fume-client" $(VERSION)
+	FUME_RELEASE_VERSION=$(VERSION) ./etc/shared release-launcher.sh fume "fume-client" $(VERSION)
 
 # Publish the library to the local ~/.ivy2 (config sanity check only — local bytes differ from
 # Central, so burdock will NOT externalize a locally-published copy).
