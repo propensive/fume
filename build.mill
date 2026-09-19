@@ -403,10 +403,15 @@ object fume extends Project:
     // `settings.buildVersion`.
     def buildVersion = Task.Input(settings.buildVersion(Task.env, settings.fumeVersion))
 
+    // The static files the dashboard serves (`res/fume/*.svg`, the invokers' icons), as
+    // pyrocosm's build maps `res/web`: the directory is the classpath root, so `res/fume/x.svg`
+    // is the resource `fume/x.svg`.
+    def assets = Task.Sources(mill.api.BuildCtx.workspaceRoot / "res")
+
     override def resources = Task:
       val file = Task.dest / "META-INF" / "pyrocosm" / "fume" / "version"
       os.write.over(file, buildVersion() + "\n", createFolders = true)
-      super.resources() ++ Seq(PathRef(Task.dest))
+      super.resources() ++ assets() ++ Seq(PathRef(Task.dest))
 
   // The invocation point, ALONE in its own module (`src/launcher/fume_launcher.scala` — just the
   // `@main def fume = externalize(runClient())`). It depends on `client` NOT as a Mill `moduleDep`

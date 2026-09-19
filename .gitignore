@@ -1,7 +1,7 @@
 .bloop
 .metals
 .bsp
-out
-fume
-fume.jar
-dist/
+/out
+/fume
+/fume.jar
+/dist/

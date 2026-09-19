@@ -39,6 +39,10 @@ from a cascade of sources in priority order: the command-line flag, a `fume.`-pr
 property, a `FUME_`-prefixed environment variable (`FUME_CLASSPATH=…`), the project's
 configuration file, and finally the user's.
 
+Each run also records what launched it: `CODEX_SANDBOX=1` in the environment marks a run as
+Codex's and `CLAUDECODE=1` as Claude Code's, and the dashboard shows the agent's icon beside such
+a run in its list of runs; any other invocation is taken to be a human's.
+
 ## Configuration files
 
 A project configures fume with a [TEL](https://soundness.dev/tel/) document at

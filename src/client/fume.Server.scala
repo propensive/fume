@@ -87,7 +87,7 @@ object Dashboard:
 
       val dashboard = Dashboard()
       val running: pyrocosm.WebFrontend =
-        scala.caps.unsafe.unsafeAssumePure(pyrocosm.WebFrontend(port))
+        scala.caps.unsafe.unsafeAssumePure(pyrocosm.WebFrontend(port, fallback = Assets.serve))
       frontend = running
       Server.serving = true
 
@@ -172,10 +172,17 @@ final class Dashboard():
       case Journal.Outcome.Failed  => Inline.Toned(Tone.Failure, List(Inline.Symbol(pyrocosm.Glyph.Cross)))
       case Journal.Outcome.Aborted => Inline.Toned(Tone.Warning, List(Inline.Symbol(pyrocosm.Glyph.Warning)))
 
+    // An agent's run carries the agent's icon, served by `Assets`; a human's carries nothing.
+    val agent: List[Inline] = run.invoker.icon.lay(Nil: List[Inline]): icon =>
+      List(Inline.Icon(Assets.location(icon), run.invoker.name), Inline.Textual(t" "))
+
     val name: Text = run.current.or(run.suites.last.let(_.suite).or(run.scheduled.prim.or(t"run ${run.id}")))
-    val label: List[Inline] =
-      List(standing, Inline.Textual(t" "), Inline.Emphasis(Inline.text(name)), Inline.Textual(t" "),
+
+    val detail: List[Inline] =
+      List(Inline.Emphasis(Inline.text(name)), Inline.Textual(t" "),
           Inline.Toned(Tone.Muted, Inline.text(t"${when(run.started)} · ${run.client}")))
+
+    val label: List[Inline] = List(standing, Inline.Textual(t" ")) + agent + detail
 
     val selectedMark: List[Inline] = if selected == run.id then List(Inline.Toned(Tone.Accent, List(Inline.Symbol(pyrocosm.Glyph.ArrowRight))), Inline.Textual(t" ")) else Nil
     Block.Item(List(Block.Paragraph(selectedMark + label)), action(run.id))
