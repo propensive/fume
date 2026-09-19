@@ -186,12 +186,14 @@ object Suggest:
   def axes(word: Text, others: List[Text], schedule: List[Suites.Scheduled]): List[Suggestion] =
     if word.contains(t"=") then apply(word, others, schedule) else stubs(others, schedule)
 
-  private def numeric(text: Text): Optional[Double] =
-    if text.s.matches("-?[0-9]+(\\.[0-9]+)?") then java.lang.Double.parseDouble(text.s) else Unset
+  private def numeric(text: Text): Optional[Double] = text.absolve match
+    case r"-?[0-9]+" | r"-?[0-9]+\.[0-9]+" => safely(text.as[Double])
+    case _                                 => Unset
 
-  // A bound rendered in the axis's own domain: `4` on an integral axis, not `4.0`.
+  // A bound rendered in the axis's own domain: `4` on an integral axis, not `4.0`. A decimal is
+  // rendered as it was typed, which is the shortest form that reads back as itself.
   private def render(number: Double, integral: Boolean): Text =
-    if integral then number.toLong.show else java.lang.Double.toString(number).tt
+    if integral then number.toLong.show else number.toString.tt
 
   private def values(axis: Text, typed: Text, tests: List[Suites.Scheduled]): List[Suggestion] =
     val axes: List[TestEvent.AxisSchedule] = tests.flatMap(_.axes).filter(_.axis == axis)

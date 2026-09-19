@@ -89,9 +89,11 @@ not yet implemented and exits with status 10. Reporting is currently whatever ea
 (a pass/fail count per suite) plus a one-line suite-count summary; richer aggregated output is
 planned.
 
-Note that `Suite#invoke` (and the `systemStdio`-based suite output that lets an in-process host
-redirect it) is a pending Soundness change, developed on the `fume-support` branch, built from
-the worktree at `~/work/worktrees/soundness/fume`.
+Whatever a suite prints through the JVM's own streams while it runs in-process — a stray
+`println`, a stack trace, a library's diagnostic — is captured rather than shown, since the
+terminal is the board's while a run is up. It is appended to `$XDG_STATE_HOME/fume/output.log`
+(`~/.local/state/fume/output.log`), announced in a line after the run, and shown as captured
+output in the dashboard's report.
 
 ## Modules
 

@@ -318,12 +318,11 @@ def runClient(): Unit =
                 // event consumption stops, the partial report renders, and no further suite
                 // starts. (The suite's threads — and any measurement JVMs a staged benchmark
                 // has spawned — are cancelled, not awaited.)
-                val aborted: java.util.concurrent.atomic.AtomicBoolean =
-                  java.util.concurrent.atomic.AtomicBoolean(false)
+                val aborted: Atomic[Boolean] = Atomic(false)
 
                 trap:
                   case Interrupt.Int =>
-                    aborted.set(true)
+                    aborted() = true
                     SignalResponse.Accept
 
                 // ONE model and ONE board for the whole run: every suite's events fold into the
@@ -345,7 +344,7 @@ def runClient(): Unit =
 
                 // The run's progress, forecast from the last run of this classpath where it can
                 // be: the board's status line, ticking as the suites go by.
-                val progress: Progress = Progress(suites, Forecasts.load(classpath()))
+                val progress: Progress = Progress(suites, Forecasts.load(classpath(), Forecasts.directory))
 
                 val board: Optional[fume.Board] =
                   if (shown || Server.serving) && !fork then fume.Board(model, title, progress) else Unset
@@ -401,7 +400,7 @@ def runClient(): Unit =
                         val outcome: Optional[EventStream.Outcome] =
                           safely:
                             EventStream.stream(classpath, head, t"--list" :: selectionArgs, shared)
-                              (collect(_), () => false)
+                              ( collect(_), () => false, (_, _) => () )
 
                         outcome match
                           case EventStream.Outcome.Completed(_) => recur(tail)
@@ -508,7 +507,7 @@ def runClient(): Unit =
                       board.let: board =>
                         if !model.finished then
                           frontend.run(board.interface):
-                            case pyrocosm.Event.Closed => if !model.finished then aborted.set(true)
+                            case pyrocosm.Event.Closed => if !model.finished then aborted() = true
                             case _                     => ()
                     finally closed.offer(())
 
@@ -517,20 +516,25 @@ def runClient(): Unit =
                 val consumerFailures: scala.collection.mutable.ListBuffer[(Text, Throwable)] =
                   scala.collection.mutable.ListBuffer()
 
+                // What each suite printed through the JVM's streams, kept off the terminal
+                // while the board may be up, and logged once the run is over.
+                val captures: scala.collection.mutable.ListBuffer[Captures.Captured] =
+                  scala.collection.mutable.ListBuffer()
+
                 // The LEGACY loop: each suite runs through `Suite#invoke` in-process (or, with
                 // `--fork`, in its own JVM) and renders its own report, so only the verdict —
                 // its exit status — reaches fume. Also the tail of an event run whose classpath
                 // turned out unable to stream.
                 def legacyRun(remaining: List[Text], failures: Int, ran: Int): (Int, Int) =
                   remaining match
-                    case _ if aborted.get =>
+                    case _ if aborted() =>
                       (failures, ran)
 
                     case head :: tail =>
                       Render.announce(t"running $head")
                       Journal.began(journalId, head)
                       progress.begin(head)
-                      val suiteStarted: Long = java.lang.System.currentTimeMillis
+                      val suiteStarted: Instant over Unix = now()
                       val passed: Boolean = invokeSuite(classpath, head, args, fork) == Exit.Ok
                       Journal.record(journalId, head, passed, Unset, suiteStarted)
                       progress.end(head)
@@ -553,7 +557,7 @@ def runClient(): Unit =
                 :   (Int, Int, List[Text]) =
 
                   remaining match
-                    case _ if aborted.get =>
+                    case _ if aborted() =>
                       (failures, ran, Nil: List[Text])
 
                     case head :: tail =>
@@ -562,7 +566,7 @@ def runClient(): Unit =
                       if board.absent then Render.announce(t"running $head")
                       Journal.began(journalId, head)
                       progress.begin(head)
-                      val suiteStarted: Long = java.lang.System.currentTimeMillis
+                      val suiteStarted: Instant over Unix = now()
                       val before: Model.State = model.state()
                       val beforeTotals: Doc.Totals = Documenting.totals(before)
                       model.enter(head)
@@ -572,7 +576,8 @@ def runClient(): Unit =
                           ( { event =>
                                 model.handle(event)
                                 board.let(_.refresh()) },
-                            () => aborted.get )
+                            () => aborted(),
+                            (out, err) => captures.append(Captures.Captured(head, out, err)) )
 
                       def next(passed: Boolean, totals: Optional[Doc.Totals]): (Int, Int, List[Text]) =
                         Journal.record(journalId, head, passed, totals, suiteStarted)
@@ -642,23 +647,45 @@ def runClient(): Unit =
                     board.let: board =>
                       if Server.serving then
                         board.refresh(force = true)
-                        Server.detach(journalId, title, Blocks.document(document, board.figures))
-                      else Server.detach(journalId, title, Nil)
+                        val blocks: List[pyrocosm.Block] = Blocks.document(document, board.figures)
+                        Server.detach(journalId, title, blocks + Captures.blocks(captures.to(List)))
+                      else
+                        Server.detach(journalId, title, Nil)
+
+                    // A suite's stray output is a line in the report, not the output itself:
+                    // the log has that, and the terminal has just been the board's.
+                    captures.each: captured =>
+                      if !captured.empty then
+                        val kept: Text = Captures.record(captured).lay(t"not kept"): path =>
+                          t"kept in ${path.encode}"
+
+                        Render.announce
+                          ( t"${captured.suite} printed ${captured.lines} lines outside its report; $kept" )
 
                     consumerFailures.each: (suite, error) =>
                       // Written to a file first: the terminal may be mid-repaint, and a trace
                       // on stderr inside the alternate buffer is lost when the board closes.
-                      val trace = java.io.StringWriter()
-                      error.printStackTrace(java.io.PrintWriter(trace))
-                      val path = java.nio.file.Path.of(java.lang.System.getProperty("java.io.tmpdir").nn, "fume-failure.log").nn
-                      java.nio.file.Files.writeString(path, trace.toString)
+                      import charEncoders.utf8Encoder
+                      import filesystemBackends.javaBaseFilesystem
+                      import temporaryDirectories.systemTemporaryDirectory
+
+                      val trace: Text = error.stackTrace.show
+
+                      val path: Optional[Path on Linux] = safely:
+                        val file: Path on Linux = temporaryDirectory[Path on Linux] / "fume-failure.log"
+                        file.write(trace)
+                        file
+
                       Render.announce(t"the event consumer failed while $suite was running; the suite was stopped")
-                      Render.announce(t"the stack trace is in ${path.toString.tt}, and follows:")
-                      trace.toString.tt.cut(t"\n").each { (line: Text) => Out.println(line) }
+
+                      path.let: path =>
+                        Render.announce(t"the stack trace is in ${path.encode}, and follows:")
+
+                      trace.cut(t"\n").each { (line: Text) => Out.println(line) }
 
                     val totals: Optional[Doc.Totals] =
                       if ran == 0 then Unset else
-                        if aborted.get then Render.announce(t"aborted; the partial report follows")
+                        if aborted() then Render.announce(t"aborted; the partial report follows")
                         Render.suite(document, width, terse)
                         document.totals
 
@@ -670,14 +697,15 @@ def runClient(): Unit =
                 val (failures, ran, totals) = result
 
                 val outcome: Journal.Outcome =
-                  if aborted.get then Journal.Outcome.Aborted
+                  if aborted() then Journal.Outcome.Aborted
                   else if failures == 0 then Journal.Outcome.Passed
                   else Journal.Outcome.Failed
 
                 Journal.finish(journalId, outcome, totals)
 
                 // What this run taught about its suites, for the next run's forecast.
-                Journal.completed.seek(_.id == journalId).let { run => Forecasts.save(classpath(), run.suites) }
+                Journal.completed.seek(_.id == journalId).let: run =>
+                  Forecasts.save(classpath(), run.suites, Forecasts.directory)
 
                 // The banner renders over the aggregate of every event-run suite; when every
                 // suite ran legacy (each rendered its own report already), only the summary
@@ -812,16 +840,15 @@ def runClient(): Unit =
 
             val stdio: Stdio = summon[Stdio]
             val tty: Boolean = summon[DaemonService[?]].cliInput == ethereal.Stdin.Terminal
-            val aborted: java.util.concurrent.atomic.AtomicBoolean =
-              java.util.concurrent.atomic.AtomicBoolean(false)
+            val aborted: Atomic[Boolean] = Atomic(false)
 
             trap:
               case Interrupt.Int =>
-                aborted.set(true)
+                aborted() = true
                 SignalResponse.Accept
 
             val dashboard = fume.Dashboard()
-            val served: java.util.concurrent.atomic.AtomicBoolean = java.util.concurrent.atomic.AtomicBoolean(false)
+            val served: Atomic[Boolean] = Atomic(false)
 
             // The frontend holds the monitor and the error page, which outlive it; vouched pure so
             // it can be stopped from here.
@@ -832,7 +859,7 @@ def runClient(): Unit =
 
             async:
               try frontend.run(dashboard.interface)(dashboard.handle)
-              finally served.set(true)
+              finally served() = true
 
             Render.announce
               (t"serving the fume dashboard at http://localhost:$port/ (Ctrl+C to stop)")
@@ -845,7 +872,7 @@ def runClient(): Unit =
               if tty then while stdio.in.available() > 0 do input.offer(stdio.in.read())
               dashboard.refresh()
 
-              if !aborted.get && !served.get then
+              if !aborted() && !served() then
                 snooze(0.25*Second)
                 loop()
 
@@ -1062,7 +1089,8 @@ private def invokeSuite(classpath: LocalClasspath, suite: Text, args: List[Text]
 
   if fork then forkSuite(classpath, suite, args)
   else
-    Suites.invoke(classpath, suite, args).or:
+    // The suite renders its own report through the JVM's streams; here they are the terminal's.
+    Stdio.divert(summon[Stdio])(Suites.invoke(classpath, suite, args)).or:
       Render.announce(t"$suite could not be run in-process; running it in a separate JVM")
       forkSuite(classpath, suite, args)
 

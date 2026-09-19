@@ -32,8 +32,6 @@
                                                                                                   */
 package fume
 
-import java.util.concurrent as juc
-
 import soundness.*
 
 import denominative.dysasymptotics.linearSize
@@ -47,30 +45,43 @@ import pyrocosm.{Action, Block, Event, Hints, Inline, Interface, Panel, Tone, To
 object Server:
   case class Finished(suite: Text, blocks: List[Block])
 
-  private val serving0: juc.atomic.AtomicBoolean = juc.atomic.AtomicBoolean(false)
-  private val boards: juc.ConcurrentHashMap[Int, fume.Board] = juc.ConcurrentHashMap()
-  private val finished: juc.ConcurrentHashMap[Int, List[Finished]] = juc.ConcurrentHashMap()
+  private val serving0: Atomic[Boolean] = Atomic(false)
 
-  def serving: Boolean = serving0.get
-  def serving_=(value: Boolean): Unit = serving0.set(value)
+  // Both registries are amended by the runs' threads and read by the dashboard's, so every
+  // access is mutex-guarded, as the journal's are.
+  private val mutex: Mutex = Mutex()
 
-  def attach(run: Int, board: fume.Board): Unit = boards.put(run, board)
+  @scala.caps.unsafe.untrackedCaptures
+  private var boards: Map[Int, fume.Board] = Map()
 
-  def detach(run: Int, suite: Text, blocks: List[Block]): Unit =
-    boards.remove(run)
-    finished.compute(run, (_, existing) => (if existing == null then Nil else existing) + List(Finished(suite, blocks)))
+  @scala.caps.unsafe.untrackedCaptures
+  private var finished: Map[Int, List[Finished]] = Map()
 
-  def board(run: Int): Optional[fume.Board] = Optional(boards.get(run))
-  def done(run: Int): List[Finished] = Optional(finished.get(run)).or(Nil)
+  def serving: Boolean = serving0()
+  def serving_=(value: Boolean): Unit = serving0() = value
 
-  def forget(run: Int): Unit =
-    boards.remove(run)
-    finished.remove(run)
+  def attach(run: Int, board: fume.Board): Unit = mutex { boards = boards.define(run, board) }
+
+  def detach(run: Int, suite: Text, blocks: List[Block]): Unit = mutex:
+    boards = boards.omit(run)
+    finished = finished.define(run, finished(run).or(Nil) + List(Finished(suite, blocks)))
+
+  def board(run: Int): Optional[fume.Board] = mutex(boards(run))
+  def done(run: Int): List[Finished] = mutex(finished(run).or(Nil))
+
+  def forget(run: Int): Unit = mutex:
+    boards = boards.omit(run)
+    finished = finished.omit(run)
 
 // The dashboard as the web front-end `Tool` serves from the daemon: launched once, for as long
 // as the daemon lives, when a config says `serve` (on its `port`, or 8090), and stopped by
 // `fume quit`. `fume serve` remains the interactive way to serve it, from a terminal.
 object Dashboard:
+  // The host's zone, for a run's time of day. Aviation has no notion of a system default, so
+  // the JVM is asked for its name; UTC if aviation does not know it.
+  private lazy val timezone: Timezone =
+    safely(Timezone(java.time.ZoneId.systemDefault.nn.getId.nn.tt)).or(tz"UTC")
+
   val web: Tool.Web = new Tool.Web:
     def port: Int = 8090
 
@@ -86,8 +97,10 @@ object Dashboard:
       import webserverErrorPages.minimalErrorPage
 
       val dashboard = Dashboard()
+
       val running: pyrocosm.WebFrontend =
         scala.caps.unsafe.unsafeAssumePure(pyrocosm.WebFrontend(port, fallback = Assets.serve))
+
       frontend = running
       Server.serving = true
 
@@ -106,7 +119,11 @@ object Dashboard:
 // runs. Rebuilt from the journal and the registry a few times a second; each cell is assigned
 // only when its content has changed, so a quiet dashboard sends nothing.
 final class Dashboard():
-  private val actions: juc.ConcurrentHashMap[Int, Action] = juc.ConcurrentHashMap()
+  private val mutex: Mutex = Mutex()
+
+  // The action selecting each run, by run id, made as the run first appears.
+  @scala.caps.unsafe.untrackedCaptures
+  private var actions: Map[Int, Action] = Map()
 
   @scala.caps.unsafe.untrackedCaptures
   @volatile
@@ -133,7 +150,11 @@ final class Dashboard():
   val transpose: pyrocosm.Toggle = pyrocosm.Toggle(t"transpose")
   val transposeControl: pyrocosm.Control = pyrocosm.Control.Toggle(transpose, Inline.text(t"Transpose axes"))
 
-  private def action(run: Int): Action = actions.computeIfAbsent(run, _ => Action(t"run-$run")).nn
+  private def action(run: Int): Action = mutex:
+    actions(run).or:
+      val action = Action(t"run-$run")
+      actions = actions.define(run, action)
+      action
 
   def handle(event: Event): Unit = event match
     case Event.Toggled(`transpose`, state) =>
@@ -142,11 +163,7 @@ final class Dashboard():
       refresh()
 
     case Event.Pressed(action) =>
-      val chosen = actions.entrySet.nn.iterator.nn
-      var found: Optional[Int] = Unset
-      while chosen.hasNext do
-        val entry = chosen.next.nn
-        if entry.getValue == action then found = entry.getKey.nn.intValue
+      val found: Optional[Int] = mutex(actions.to[List]).seek(_(1) == action).let(_(0))
       found.let { run => selected = run; refresh() }
 
     case _ =>
@@ -155,16 +172,16 @@ final class Dashboard():
   // When a run started: relative to now within the hour — "just now", "5 minutes ago" — and
   // as a time of day beyond it. The dashboard is rebuilt a few times a second, so a relative
   // time keeps current.
-  private def when(millis: Long): Text =
-    val minutes: Long = (java.lang.System.currentTimeMillis - millis)/60000L
+  private def when(started: Instant over Unix): Text =
+    val minutes: Long = ((now() - started).value/60.0).toLong
 
     if minutes < 1L then t"just now"
     else if minutes == 1L then t"1 minute ago"
     else if minutes < 60L then t"${minutes.toString} minutes ago"
     else
-      val instant = java.time.Instant.ofEpochMilli(millis).nn
-      val zoned = instant.atZone(java.time.ZoneId.systemDefault).nn
-      java.time.format.DateTimeFormatter.ofPattern("HH:mm").nn.format(zoned).nn.tt
+      import calendars.gregorianCalendar
+      import timeFormats.railwayTimeFormat
+      (started in Dashboard.timezone).time.show
 
   private def runItem(run: Journal.Run): Block.Item =
     val standing: Inline = run.outcome.lay(Inline.Toned(Tone.Accent, List(Inline.Symbol(pyrocosm.Glyph.Running)))):

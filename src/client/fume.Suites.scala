@@ -32,8 +32,6 @@
                                                                                                   */
 package fume
 
-import java.lang as jl
-
 import soundness.*
 
 import denominative.dysasymptotics.linearSize
@@ -127,9 +125,10 @@ object Suites:
   // dispatches on an INSTANCE, so the module instance is fetched from the `<suite>$` class's
   // `MODULE$` field rather than going through the static forwarder.
   //
-  // A suite writes its report through the JVM's own `System.out`/`System.err`, which under the
-  // Ethereal daemon belong to the daemon process, not the client; both are pointed at the
-  // invocation's stdio for the duration (suite runs are serial, so the global swap is safe).
+  // A suite of this vintage writes its report through the JVM's own `System.out`/`System.err`,
+  // which under the Ethereal daemon belong to the daemon process, not the client: the caller
+  // says where they go for the duration, with `Stdio.divert` (to the invocation's terminal,
+  // since the report is the result) or `Stdio.capture` (to read it back).
   //
   // Returns `Unset` when the suite predates `Suite#invoke` (no such method), so the caller can
   // fall back to a forked JVM.
@@ -141,44 +140,23 @@ object Suites:
   // array type it synthesizes for the call, under capture checking (a proscala bug).
   private type Invocable = { def invoke(arguments: Text): Int }
 
-  def invoke(classpath: LocalClasspath, suite: Text, args: List[Text])(using stdio: Stdio)
-  :   Optional[Exit] =
-
+  def invoke(classpath: LocalClasspath, suite: Text, args: List[Text]): Optional[Exit] =
     import scala.reflect.Selectable.reflectiveSelectable
 
     val loader: Classloader = classpath.classloader()
     val arguments: Text = args.join(t"\n")
 
-    // The streams are swapped BEFORE the suite class is touched: loading the module class
-    // runs the object initializer, which constructs the suite's default `Runner` — and that
-    // captures `System.out` at construction, so it must already be the invocation's.
-    val out = jl.System.out.nn
-    val err = jl.System.err.nn
-    jl.System.setOut(stdio.out)
-    jl.System.setErr(stdio.err)
-
     // `safely` absorbs every `Exception` the reflective machinery can produce — a missing
     // module class or `MODULE$` field, a `NoSuchMethodException` from a Probably too old to
     // have `Suite#invoke`, an `InvocationTargetException` — into `Unset`, and the caller's
-    // response to all of them is the same: fall back to a forked JVM. The `try`/`finally`
-    // remains (with no `catch`): it is resource restoration, not error handling.
-    try
-      safely:
-        loader.on(t"$suite$$").let: moduleClass =>
-          val instance: Any = moduleClass.getField("MODULE$").nn.get(null).nn
+    // response to all of them is the same: fall back to a forked JVM.
+    safely:
+      loader.on(t"$suite$$").let: moduleClass =>
+        val instance: Any = moduleClass.getField("MODULE$").nn.get(null).nn
 
-          loader.use:
-            val code = instance.asInstanceOf[Invocable].invoke(arguments)
-            if code == 0 then Exit.Ok else Exit.Fail(code)
-
-    finally
-      // The suite writes through non-auto-flushing `PrintStream`s; flush before the
-      // originals are restored, or a suite's final lines can be lost in the buffer when
-      // the invocation ends.
-      stdio.out.flush()
-      stdio.err.flush()
-      jl.System.setOut(out)
-      jl.System.setErr(err)
+        loader.use:
+          val code = instance.asInstanceOf[Invocable].invoke(arguments)
+          if code == 0 then Exit.Ok else Exit.Fail(code)
 
   // One test of a suite's SCHEDULE as tab-completion and `fume list --axes` see it: its wire
   // ref, kind (`check`, `bench`, `stress` or `profile`), tags, and axes with the values (or
@@ -189,7 +167,7 @@ object Suites:
   // The schedule of one suite by the EVENT protocol (`--list` streamed as `TestScheduled`s), or
   // `Unset` for a suite whose Probably cannot stream it (predating the event stream, or built
   // against a Soundness with an incompatible event layout), which the caller lists as text.
-  def schedule(classpath: LocalClasspath, suite: Text, args: List[Text])(using Stdio, Monitor)
+  def schedule(classpath: LocalClasspath, suite: Text, args: List[Text])(using Monitor)
   :   Optional[List[Scheduled]] =
 
     // Accumulated in reverse and inverted at the end, as `Model` does.
@@ -203,7 +181,8 @@ object Suites:
           { case TestEvent.TestScheduled(ref, kind, _, tags, axes) =>
               rows = Scheduled(ref, kind, tags, axes) :: rows
             case _ => () },
-          () => false)
+          () => false,
+          (_, _) => ())
 
     outcome match
       case EventStream.Outcome.Completed(_) =>
@@ -216,17 +195,11 @@ object Suites:
   // protocol every Probably since `Suite#invoke` speaks): ids and paths only, with the last
   // path segment taken as the moniker when it is a plain identifier (a name with spaces
   // cannot complete unquoted); no tags, no axes. The suite's output is captured, not printed.
-  def listing(classpath: LocalClasspath, suite: Text, args: List[Text])(using Stdio)
-  :   List[Scheduled] =
+  def listing(classpath: LocalClasspath, suite: Text, args: List[Text]): List[Scheduled] =
+    val capture: Stdio.Capture[Optional[Exit]] =
+      Stdio.capture(safely(invoke(classpath, suite, t"--list" :: args)))
 
-    val buffer = java.io.ByteArrayOutputStream()
-    val print = java.io.PrintStream(buffer, true, "UTF-8")
-    val capture: Stdio = Stdio(print, print, null, termcapDefinitions.basicTermcap)
-
-    safely(invoke(classpath, suite, t"--list" :: args)(using capture))
-    print.flush()
-
-    Text(buffer.toString("UTF-8").nn).cut(t"\n").bind[List[Scheduled], Scheduled, List[Scheduled]]:
+    capture.out.cut(t"\n").bind[List[Scheduled], Scheduled, List[Scheduled]]:
       line =>
         if line.length <= 8 then Nil else
           val id: Text = line.keep(6)
@@ -251,10 +224,6 @@ object Suites:
   def fetch(classpath: LocalClasspath, suite: Text, args: List[Text]): List[Scheduled] =
     import threading.platformThreading
 
-    val buffer = java.io.ByteArrayOutputStream()
-    val print = java.io.PrintStream(buffer, true, "UTF-8")
-    given capture: Stdio = Stdio(print, print, null, termcapDefinitions.basicTermcap)
-
     val streamed: Optional[List[Scheduled]] =
       safely(supervise(schedule(classpath, suite, args)))
 
@@ -277,8 +246,15 @@ object Suites:
         case Classpath.Entry.Directory(path) => path
         case _                               => t"jrt"
 
-      val file = java.io.File(path.s)
-      t"$path@${file.lastModified}:${file.length}"
+      import filesystemBackends.javaBaseFilesystem
+      val backend: FilesystemBackend on Linux = summon[FilesystemBackend on Linux]
+
+      val file: Optional[Path on Linux] = safely(path.as[Path on Linux])
+      val stat: Optional[Stat] = file.let { file => safely(backend.stat(file, true)) }
+      val stamp: Text = stat.lay(t"?") { stat => t"${stat.modified}:${stat.size}" }
+
+      t"$path@$stamp"
+
     . join(t"\n")
 
   def cached(classpath: LocalClasspath): List[Scheduled] =

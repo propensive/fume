@@ -32,10 +32,16 @@
                                                                                                   */
 package fume
 
-import java.nio.file as jnf
-import java.util as ju
-
 import soundness.*
+
+import alphabets.hexLowerCase
+import charDecoders.utf8Decoder
+import charEncoders.utf8Encoder
+import filesystemBackends.javaBaseFilesystem
+import logging.silentLogging
+import providers.javaBaseProvider
+import systems.javaBaseSystem
+import textSanitizers.skipSanitizer
 
 // What the last run of a classpath taught about each of its suites — how many tests it ran and
 // how long it took — kept on disk under the XDG state home (`~/.local/state/fume/forecasts`),
@@ -44,84 +50,71 @@ import soundness.*
 // forecast. A suite that did not run keeps its last observation, so a run of one suite refines
 // one line. Plain lines (`suite<TAB>tests<TAB>millis`): a cache, never a document.
 object Forecasts:
-  case class Observation(tests: Int, millis: Long)
-
-  // A classpath's forecast: an observation per suite it knows.
-  final class Forecast(entries: ju.HashMap[String, Observation]):
-    def apply(suite: Text): Optional[Observation] = Optional(entries.get(suite.s))
-    def size: Int = entries.size
-    def known(suite: Text): Boolean = entries.containsKey(suite.s)
+  case class Observation(tests: Int, time: Duration)
 
   object Forecast:
-    def empty: Forecast = Forecast(ju.HashMap())
+    def empty: Forecast = Forecast(Map())
 
-  def directory: Text =
-    val xdg: String | Null = java.lang.System.getenv("XDG_STATE_HOME")
-    val base: String = if xdg == null || xdg.isEmpty then s"${java.lang.System.getProperty("user.home")}/.local/state" else xdg
-    t"$base/fume/forecasts"
+  // A classpath's forecast: an observation per suite it knows.
+  final class Forecast(entries: Map[Text, Observation]):
+    def apply(suite: Text): Optional[Observation] = entries(suite)
+    def size: Int = entries.size
+    def known(suite: Text): Boolean = entries.defines(suite)
 
-  private def digest(classpath: Text): String =
-    val bytes = java.security.MessageDigest.getInstance("SHA-256").nn.digest(classpath.s.getBytes("UTF-8")).nn
-    val out = StringBuilder()
-    var index = 0
-    while index < bytes.length do
-      val hex = Integer.toHexString(bytes(index) & 0xff).nn
-      if hex.length < 2 then out.append('0')
-      out.append(hex)
-      index += 1
-    out.toString
+  // The forecasts' directory, under the XDG state home; `Unset` if the environment names no
+  // home to put it under.
+  def directory(using Environment): Optional[Path on Linux] =
+    safely(Xdg.stateHome[Path on Linux] / "fume" / "forecasts")
 
-  private def file(directory: Text, classpath: Text): jnf.Path =
-    jnf.Path.of(directory.s, s"${digest(classpath)}.tsv").nn
+  private def digest(classpath: Text): Text = classpath.digest[Sha2[256]].serialize[Hex]
 
-  private def read(path: jnf.Path): ju.HashMap[String, Observation] =
-    val entries: ju.HashMap[String, Observation] = ju.HashMap()
+  // The digest is hex, so the name is always admissible.
+  private def file(directory: Path on Linux, classpath: Text): Path on Linux =
+    unsafely(directory / t"${digest(classpath)}.tsv")
 
-    try
-      if jnf.Files.exists(path) then
-        val lines: ju.List[String] = jnf.Files.readAllLines(path).nn
-        var index = 0
-        while index < lines.size do
-          val parts = lines.get(index).nn.split('\t')
-          if parts.length == 3 then
-            try entries.put(parts(0).nn, Observation(parts(1).nn.toInt, parts(2).nn.toLong))
-            catch case _: NumberFormatException => ()
-          index += 1
-    catch case _: Exception => ()
+  // One line of a forecast file as an entry, or nothing for a line that is not one.
+  private def entry(line: Text): List[(Text, Observation)] = line.cut(t"\t") match
+    case suite :: tests :: millis :: Nil =>
+      val observation: Optional[Observation] =
+        safely(tests.as[Int]).let: tests =>
+          safely(millis.as[Long]).let { millis => Observation(tests, Duration(millis)) }
 
-    entries
+      observation.lay(Nil: List[(Text, Observation)]) { observation => List(suite -> observation) }
+
+    case _ =>
+      Nil
+
+  // The entries of a forecast file: none when it is absent or cannot be read.
+  private def read(path: Path on Linux): Map[Text, Observation] =
+    if !path.existent() then Map()
+    else safely(path.read[Text]).lay(Map())(_.cut(t"\n").bind(entry).to[Map])
 
   // The forecast for `classpath`, empty when there is none or it cannot be read.
-  def load(classpath: Text, directory: Text = directory): Forecast = Forecast(read(file(directory, classpath)))
+  def load(classpath: Text, directory: Optional[Path on Linux]): Forecast =
+    Forecast(directory.lay(Map()) { directory => read(file(directory, classpath)) })
 
-  private def learn(entries: ju.HashMap[String, Observation], run: Journal.SuiteRun): Boolean =
-    run.totals match
-      case Unset          => false
-      case totals: Doc.Totals =>
-        entries.put(run.suite.s, Observation(totals.total, run.duration))
-        true
+  private def millis(time: Duration): Long = (time.value*1000.0).round
+
+  private def line(entry: (Text, Observation)): Text =
+    t"${entry(0)}\t${entry(1).tests}\t${millis(entry(1).time)}"
+
+  private def learn(entries: Map[Text, Observation], run: Journal.SuiteRun)
+  :   Map[Text, Observation] =
+
+    run.totals.lay(entries): totals =>
+      entries.define(run.suite, Observation(totals.total, run.duration))
 
   // Records a run's suites over the existing forecast; a suite without totals (a legacy or
-  // forked run) teaches nothing.
-  def save(classpath: Text, suites: List[Journal.SuiteRun], directory: Text = directory): Unit =
-    val path = file(directory, classpath)
-    val entries: ju.HashMap[String, Observation] = read(path)
-    var learned = false
+  // forked run) teaches nothing, and a directory that could not be written is left as it is.
+  def save(classpath: Text, suites: List[Journal.SuiteRun], directory: Optional[Path on Linux])
+  :   Unit =
 
-    def observe(run: Journal.SuiteRun): Unit = if learn(entries, run) then learned = true
-    suites.each(observe)
+    directory.let: directory =>
+      if suites.exists(_.totals.present) then
+        val path = file(directory, classpath)
+        val entries: Map[Text, Observation] = suites.fold(read(path))(learn)
+        val content: Text = entries.to[List].map(line).join(t"\n") + t"\n"
 
-    if learned then
-      val content = StringBuilder()
-      val keys: ju.Iterator[String] = entries.keySet.nn.iterator.nn
-
-      while keys.hasNext do
-        val key: String = keys.next.nn
-        val observation: Observation = entries.get(key).nn
-        content.append(key).append('\t').append(observation.tests).append('\t').append(observation.millis).append('\n')
-
-      try
-        jnf.Files.createDirectories(path.getParent.nn)
-        jnf.Files.writeString(path, content.toString)
-        ()
-      catch case _: Exception => ()
+        safely:
+          if !directory.existent() then directory.create[Directory](CreateFlag.Parents)
+          path.write(content)

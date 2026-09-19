@@ -32,12 +32,9 @@
                                                                                                   */
 package fume
 
-import java.util.concurrent.atomic as juca
-
 import soundness.*
 
 import probably.TestEvent
-
 
 // What remains of the hand-rolled live board, which Pyrocosm's `Board` and `TerminalFrontend`
 // replaced: the byte-level key decoder the load gate (`Load`) still reads the raw terminal
@@ -46,37 +43,38 @@ object Live:
   enum Key:
     case Idle, Up, Down
 
-  final class Input(aborted: juca.AtomicBoolean):
-    val reply: juca.AtomicReference[String | Null] = juca.AtomicReference(null)
+  final class Input(aborted: Atomic[Boolean]):
+    val reply: Atomic[Optional[Text]] = Atomic.Ref.vacant[Text]
 
     @scala.caps.unsafe.untrackedCaptures
-    private var pending: String = ""
+    private var pending: Text = t""
+
     @scala.caps.unsafe.untrackedCaptures
     private var collecting: Boolean = false
 
     def offer(byte: Int): Key =
       if byte == 3 || byte == 4 then
-        aborted.set(true)
+        aborted() = true
         Key.Idle
       else if byte == 27 then
         collecting = true
-        pending = ""
+        pending = t""
         Key.Idle
       else if collecting then
-        if pending == "[" && byte == 'A'.toInt then
+        if pending == t"[" && byte == 'A'.toInt then
           collecting = false
           Key.Up
-        else if pending == "[" && byte == 'B'.toInt then
+        else if pending == t"[" && byte == 'B'.toInt then
           collecting = false
           Key.Down
         else if byte == 'R'.toInt then
-          reply.set(pending)
+          reply() = pending
           collecting = false
           Key.Idle
         else if pending.length > 15 then
           collecting = false
           Key.Idle
         else
-          pending = pending + byte.toChar
+          pending = t"$pending${byte.toChar}"
           Key.Idle
       else Key.Idle

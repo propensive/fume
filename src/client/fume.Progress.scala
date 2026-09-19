@@ -32,8 +32,6 @@
                                                                                                   */
 package fume
 
-import java.lang as jl
-
 import soundness.*
 
 import denominative.dysasymptotics.linearSize
@@ -43,6 +41,10 @@ import denominative.dysasymptotics.linearSize
 // of the classpath (`Forecasts`), where it had one. The forecast is scaled by how the suites
 // finished so far compared with their forecasts, so a slower machine or a heavier build is
 // reflected as the run proceeds.
+object Progress:
+  // No time at all, the sum's starting point.
+  val none: Duration = 0.0*Second
+
 final class Progress(val suites: List[Text], forecast: Forecasts.Forecast):
   private val count: Int = suites.size
 
@@ -53,27 +55,28 @@ final class Progress(val suites: List[Text], forecast: Forecasts.Forecast):
   @volatile private var current0: Optional[Text] = Unset
 
   @scala.caps.unsafe.untrackedCaptures
-  @volatile private var currentStarted: Long = 0L
+  @volatile private var currentStarted: Instant over Unix = Instant.of[Unix](0L)
 
   // Elapsed and forecast time over the suites finished so far, for the scaling ratio.
   @scala.caps.unsafe.untrackedCaptures
-  @volatile private var observedMillis: Long = 0L
+  @volatile private var observed: Duration = Progress.none
 
   @scala.caps.unsafe.untrackedCaptures
-  @volatile private var forecastMillis: Long = 0L
+  @volatile private var forecastTime: Duration = Progress.none
 
   @scala.caps.unsafe.untrackedCaptures
   @volatile private var finishedSuites: List[Text] = Nil
 
-  def begin(suite: Text, now: Long = jl.System.currentTimeMillis): Unit =
+  // `time` is when the suite began or ended: now, unless a test says otherwise.
+  def begin(suite: Text, time: Instant over Unix = now()): Unit =
     current0 = suite
-    currentStarted = now
+    currentStarted = time
 
-  def end(suite: Text, now: Long = jl.System.currentTimeMillis): Unit =
+  def end(suite: Text, time: Instant over Unix = now()): Unit =
     finished0 += 1
     finishedSuites = suite :: finishedSuites
-    observedMillis += now - currentStarted
-    forecast(suite).let { observation => forecastMillis += observation.millis }
+    observed = observed + (time - currentStarted)
+    forecast(suite).let { observation => forecastTime = forecastTime + observation.time }
     current0 = Unset
 
   def finished: Int = finished0
@@ -89,7 +92,10 @@ final class Progress(val suites: List[Text], forecast: Forecasts.Forecast):
     suites.bind[List[Forecasts.Observation], Forecasts.Observation, List[Forecasts.Observation]](observation(_))
 
   private def meanTests: Int = if known.nil then 0 else known.map(_.tests).fold(0)(_ + _)/known.size
-  private def meanMillis: Long = if known.nil then 0L else known.map(_.millis).fold(0L)(_ + _)/known.size
+
+  private def meanTime: Duration =
+    if known.nil then Progress.none
+    else known.map(_.time).fold(Progress.none)(_ + _)/known.size.toDouble
 
   // Whether any suite of the run is unknown to the forecast: the total is then approximate.
   def approximate: Boolean = known.size < count
@@ -101,8 +107,8 @@ final class Progress(val suites: List[Text], forecast: Forecasts.Forecast):
   // The observed time so far against the forecast for the same suites, clamped: a wildly
   // different first suite should not swing the whole estimate.
   private def ratio: Double =
-    if forecastMillis <= 0L || observedMillis <= 0L then 1.0
-    else (observedMillis.toDouble/forecastMillis.toDouble).max(0.5).min(2.0)
+    if forecastTime.value <= 0.0 || observed.value <= 0.0 then 1.0
+    else (observed.value/forecastTime.value).max(0.5).min(2.0)
 
   // The forecast time left: the unfinished suites' forecasts, the one in flight net of the
   // time it has had, scaled by the ratio; `Unset` with no forecast at all.
@@ -110,17 +116,21 @@ final class Progress(val suites: List[Text], forecast: Forecasts.Forecast):
   // compiler inside implicit search (`wildApprox` assertion) when passed to `filter` or `map`.
   private def unfinished(suite: Text): Boolean = !finishedSuites.has(suite)
 
-  private def expected(suite: Text, now: Long): Long =
-    val forecastMillis: Long = forecast(suite).let(_.millis).or(meanMillis)
-    if current0 == suite then (forecastMillis - (now - currentStarted)).max(0L) else forecastMillis
+  private def expected(suite: Text, time: Instant over Unix): Duration =
+    val forecast0: Duration = forecast(suite).let(_.time).or(meanTime)
+
+    if current0 == suite then
+      val left: Duration = forecast0 - (time - currentStarted)
+      if left.value < 0.0 then Progress.none else left
+    else
+      forecast0
 
   private def forecastTests(suite: Text): Int = forecast(suite).let(_.tests).or(meanTests)
 
-  def remaining(now: Long = jl.System.currentTimeMillis): Optional[Long] =
+  def remaining(time: Instant over Unix = now()): Optional[Duration] =
     if known.nil then Unset else
       val pending: List[Text] = suites.filter(unfinished(_))
-      val millis: Long = pending.map(expected(_, now)).fold(0L)(_ + _)
-      (millis.toDouble*ratio).toLong
+      pending.map(expected(_, time)).fold(Progress.none)(_ + _)*ratio
 
   // The status line: the suite in flight of the total, the tests done of the forecast total
   // (or simply done, with no forecast), and the time left. Named methods rather than lambdas
@@ -134,10 +144,11 @@ final class Progress(val suites: List[Text], forecast: Forecasts.Forecast):
     val mark: Text = if approximate then t"≈" else t""
     t"${Figures.grouped(done)} of $mark${Figures.grouped(total)}"
 
-  private def leftText(millis: Long): Text = t" · about ${Budget.show(millis*1_000_000L)} left"
+  private def leftText(left: Duration): Text =
+    t" · about ${Budget.show((left.value*1_000_000_000.0).round)} left"
 
-  def caption(done: Int, now: Long = jl.System.currentTimeMillis): Text =
+  def caption(done: Int, time: Instant over Unix = now()): Text =
     val doneText: Text = t"${Figures.grouped(done)} done"
     val tests: Text = forecastTotal.lay(doneText)(ofTotal(done, _))
-    val left: Text = remaining(now).lay(t"")(leftText(_))
+    val left: Text = remaining(time).lay(t"")(leftText(_))
     t"$place · $tests$left"

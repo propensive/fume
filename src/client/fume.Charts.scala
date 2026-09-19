@@ -102,7 +102,7 @@ object Charts:
   // exactly as the report's `Confidence` column recomputes it; zero for a single run.
   def interval(bench: TestEvent.BenchmarkRecorded): Double =
     if bench.runs < 2 then 0.0
-    else Figures.tQuantile(bench.confidence, bench.runs - 1)*bench.sd/java.lang.Math.sqrt(bench.runs.toDouble)
+    else Figures.tQuantile(bench.confidence, bench.runs - 1)*bench.sd/bench.runs.toDouble.sqrt
 
   private def bar(category: Text, bench: TestEvent.BenchmarkRecorded, base: Timebase): Bar =
     val ci: Double = interval(bench)
@@ -240,7 +240,7 @@ object Charts:
   // The widest label the ordinate may show: the largest mean's integer digits and a decimal.
   private def ordinateLabel(data: BarData): Double =
     val most: Double = data.slices.bind(_.bars).map(_.upper).fold(0.0)(_.max(_))
-    val digits: Int = if most < 1.0 then 1 else (java.lang.Math.log10(most).toInt + 1)
+    val digits: Int = if most < 1.0 then 1 else (log10(most).double.toInt + 1)
     (digits + 2)*0.6*labelSize
 
   // A single series needs no legend; the series of a crosstab are named in one.
