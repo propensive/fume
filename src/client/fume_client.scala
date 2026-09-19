@@ -400,7 +400,7 @@ def runClient(): Unit =
                         val outcome: Optional[EventStream.Outcome] =
                           safely:
                             EventStream.stream(classpath, head, t"--list" :: selectionArgs, shared)
-                              (collect(_), () => false)
+                              ( collect(_), () => false, (_, _) => () )
 
                         outcome match
                           case EventStream.Outcome.Completed(_) => recur(tail)
@@ -516,6 +516,11 @@ def runClient(): Unit =
                 val consumerFailures: scala.collection.mutable.ListBuffer[(Text, Throwable)] =
                   scala.collection.mutable.ListBuffer()
 
+                // What each suite printed through the JVM's streams, kept off the terminal
+                // while the board may be up, and logged once the run is over.
+                val captures: scala.collection.mutable.ListBuffer[Captures.Captured] =
+                  scala.collection.mutable.ListBuffer()
+
                 // The LEGACY loop: each suite runs through `Suite#invoke` in-process (or, with
                 // `--fork`, in its own JVM) and renders its own report, so only the verdict —
                 // its exit status — reaches fume. Also the tail of an event run whose classpath
@@ -571,7 +576,8 @@ def runClient(): Unit =
                           ( { event =>
                                 model.handle(event)
                                 board.let(_.refresh()) },
-                            () => aborted() )
+                            () => aborted(),
+                            (out, err) => captures.append(Captures.Captured(head, out, err)) )
 
                       def next(passed: Boolean, totals: Optional[Doc.Totals]): (Int, Int, List[Text]) =
                         Journal.record(journalId, head, passed, totals, suiteStarted)
@@ -641,8 +647,20 @@ def runClient(): Unit =
                     board.let: board =>
                       if Server.serving then
                         board.refresh(force = true)
-                        Server.detach(journalId, title, Blocks.document(document, board.figures))
-                      else Server.detach(journalId, title, Nil)
+                        val blocks: List[pyrocosm.Block] = Blocks.document(document, board.figures)
+                        Server.detach(journalId, title, blocks + Captures.blocks(captures.to(List)))
+                      else
+                        Server.detach(journalId, title, Nil)
+
+                    // A suite's stray output is a line in the report, not the output itself:
+                    // the log has that, and the terminal has just been the board's.
+                    captures.each: captured =>
+                      if !captured.empty then
+                        val kept: Text = Captures.record(captured).lay(t"not kept"): path =>
+                          t"kept in ${path.encode}"
+
+                        Render.announce
+                          ( t"${captured.suite} printed ${captured.lines} lines outside its report; $kept" )
 
                     consumerFailures.each: (suite, error) =>
                       // Written to a file first: the terminal may be mid-repaint, and a trace
@@ -1071,7 +1089,8 @@ private def invokeSuite(classpath: LocalClasspath, suite: Text, args: List[Text]
 
   if fork then forkSuite(classpath, suite, args)
   else
-    Suites.invoke(classpath, suite, args).or:
+    // The suite renders its own report through the JVM's streams; here they are the terminal's.
+    Stdio.divert(summon[Stdio])(Suites.invoke(classpath, suite, args)).or:
       Render.announce(t"$suite could not be run in-process; running it in a separate JVM")
       forkSuite(classpath, suite, args)
 

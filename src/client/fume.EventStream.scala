@@ -33,7 +33,6 @@
 package fume
 
 import java.io as ji
-import java.lang as jl
 
 import soundness.*
 
@@ -97,8 +96,10 @@ object EventStream:
   // protocol, feeding each decoded event to `handle` as it arrives, and returning the run's
   // exit status. `Unset` when the suite's Probably predates the event stream (no
   // `probably.Streamer` on its classpath); `Incompatible` when the schema fingerprints
-  // disagree. The `System.out`/`err` swap covers the whole run, exactly as the legacy path:
-  // the suite's own prints reach the invocation's stdio, while events travel the chunk chain.
+  // disagree. Whatever the suite prints through the JVM's streams — which under the daemon
+  // are nobody's — is captured for the whole run and handed to `captured` at its end, never
+  // shown as it happens: the invocation's terminal may be the board's, which stray output
+  // would corrupt. Events travel the chunk chain.
   // The exit status reported for an aborted run, conventionally 128 + SIGINT.
   val abortExit: Int = 130
 
@@ -115,9 +116,15 @@ object EventStream:
   def queued(loader: Classloader): Boolean =
     safely(loader.on(t"probably.Streamer$$")).let { streamer => safely(streamer.getMethod("queued")) }.present
 
-  def stream(classpath: LocalClasspath, suite: Text, args: List[Text], shared: Optional[Classloader] = Unset)
-     (handle: probably.TestEvent => Unit, abort: () => Boolean = () => false)
-     (using stdio: Stdio, monitor: Monitor)
+  def stream
+    ( classpath: LocalClasspath,
+      suite:     Text,
+      args:      List[Text],
+      shared:    Optional[Classloader] = Unset )
+    ( handle:   probably.TestEvent => Unit,
+      abort:    () => Boolean,
+      captured: (Text, Text) => Unit )
+    ( using monitor: Monitor )
   :   Optional[Outcome] =
 
     import scala.reflect.Selectable.reflectiveSelectable
@@ -132,12 +139,8 @@ object EventStream:
       safely:
         val instance = moduleClass.getField("MODULE$").nn.get(null).nn
         val output = StreamOutputStream()
-        val out = jl.System.out.nn
-        val err = jl.System.err.nn
-        jl.System.setOut(stdio.out)
-        jl.System.setErr(stdio.err)
 
-        try
+        val capture: Stdio.Capture[Outcome] = Stdio.capture:
           val arguments: Text = args.join(t"\n")
 
           val task = async:
@@ -194,8 +197,5 @@ object EventStream:
             case _ =>
               Outcome.Completed(exit())
 
-        finally
-          stdio.out.flush()
-          stdio.err.flush()
-          jl.System.setOut(out)
-          jl.System.setErr(err)
+        captured(capture.out, capture.err)
+        capture.result
