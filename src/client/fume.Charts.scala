@@ -40,7 +40,6 @@ import probably.TestEvent
 
 import pyrocosm.Inline
 
-import palettes.solarizedDarkChartPalette
 import fontMetrics.averageFontMetric
 
 // The dashboard's charts: a tasseomancy drawing above each measurement table of a run, kept
@@ -56,6 +55,21 @@ import fontMetrics.averageFontMetric
 // over two, a category per value of the first axis with a series per value of the second — the
 // crosstab's rows and columns — so the i-th bar of every group is the same colour.
 object Charts:
+  // The dashboard's chart palette: a white ground with black axes and lettering, a faint grid,
+  // and a ramp from pale lime to deep blue for the series.
+  private def rgb(hex: Int): Color in Srgb =
+    Srgb(((hex >> 16) & 0xff)/255.0, ((hex >> 8) & 0xff)/255.0, (hex & 0xff)/255.0)
+
+  given palette: ChartPalette = new ChartPalette:
+    val series: Sequence[Color in Srgb] =
+      Sequence(rgb(0xcceeaa), rgb(0xa5d08a), rgb(0x74aaa9), rgb(0x568d9f), rgb(0x4d7298))
+
+    def background: Color in Srgb = rgb(0xffffff)
+    def foreground: Color in Srgb = rgb(0x000000)
+    def axis: Color in Srgb = rgb(0x000000)
+    def grid: Color in Srgb = rgb(0xe0e0e0)
+    def text: Color in Srgb = rgb(0x000000)
+
   // The time unit a benchmark chart is drawn in, chosen for the chart's largest mean by the
   // thresholds `Figures.scaled` applies to a figure: µs, then ms past a tenth of a millisecond,
   // then seconds past a tenth of a second.
@@ -162,19 +176,116 @@ object Charts:
   def stressSeries(curves: List[Curve]): List[Series[Int, Double]] =
     curves.map { curve => Series(curve.name, curve.points.to[Sequence]) }
 
-  // Drawn five units wide to two high, and shown at the full width of the panel.
-  private val width: Double = 800.0
-  private val height: Double = 320.0
+  // The chart's lettering: Sono, from Google Fonts, at variable width — the face and axis the
+  // web front-end sets its labels in — and at the size those labels have on the page, since a
+  // drawing is shown at its own size.
+  private case class Link(text: Text)
+  private given Link is Abstractable across Urls to Text = _.text
+
+  private given (Typeface of "Sono") is Typesettable in Web =
+    Web.imported(Link(t"https://fonts.googleapis.com/css2?family=Sono:wght,MONO@200..800,0..1&display=swap"), Coverage.Unknown)
+
+  private val sono: Font in Web =
+    unsafely(Web.font(Typeface["Sono"].face.varying(Variation.Axis(t"MONO"), 0.0)))
+
+  private val labelSize: Double = 11.5
+  private val height: Double = 260.0
+
+  // Fume's chart style: an ordinate label's baseline sits a little above its tick, and an
+  // abscissa label starts a little to the right of its tick, rather than being centred on it.
+  final class Style
+    ( width:         Double,
+      height:        Double,
+      legend:        Chart.Legend,
+      abscissaTitle: Optional[Text] = Unset,
+      ordinateTitle: Optional[Text] = Unset,
+      markers:       Boolean        = false,
+      barGap:        Double         = leastGap,
+      smoothing:     Double         = 0.0 )
+  extends Chart.Standard
+    ( width = width, height = height, font = sono, fontSize = labelSize, legend = legend,
+      abscissaTitle = abscissaTitle, ordinateTitle = ordinateTitle, markers = markers,
+      markerRadius = 2.1, smoothing = smoothing, barGap = barGap ):
+
+    override def tickLabel(at: Chart.Anchoring, text: Text, axis: Chart.Axis, color: Color in Srgb)
+    :   List[Figure] =
+
+      axis match
+        case Chart.Axis.Ordinate =>
+          val position = Point(at.point.x, (at.point.y - fontSize*0.15).toFloat)
+          List(lettering(position, text, at.anchor, Lettering.Baseline.Alphabetic, color))
+
+        case Chart.Axis.Abscissa =>
+          val position = Point((at.point.x + fontSize*0.3).toFloat, at.point.y)
+          List(lettering(position, text, Lettering.Anchor.Start, at.baseline, color))
+
+  // A chart is as wide as its data needs and no wider: a bar of a single series is thirty
+  // pixels wide, a bar within a group twelve, and the width follows from that, the gap between
+  // groups, the room the ordinate's labels and title take, and a legend's when there is one —
+  // reckoned as tasseomancy's framing reckons them, with the average font metric it measures
+  // text by. The page scrolls a chart wider than the matter.
+  private val leastGap: Double = 0.35
+  private val singleBar: Double = 30.0
+  private val groupedBar: Double = 12.0
+  private val inset: Double = 12.0
+  private val tickLength: Double = 5.0
+
+  // Room beyond the reckoning, since the framing's own is not known until it has measured
+  // the axis's labels: an excess is whitespace, a shortfall a clipped legend.
+  private val slack: Double = 24.0
+
+  private def textWidth(text: Text): Double = text.length*0.6*labelSize
+  private def gap: Double = labelSize*0.4
+
+  // The widest label the ordinate may show: the largest mean's integer digits and a decimal.
+  private def ordinateLabel(data: BarData): Double =
+    val most: Double = data.slices.bind(_.bars).map(_.upper).fold(0.0)(_.max(_))
+    val digits: Int = if most < 1.0 then 1 else (java.lang.Math.log10(most).toInt + 1)
+    (digits + 2)*0.6*labelSize
 
   // A single series needs no legend; the series of a crosstab are named in one.
-  def benchStyle(base: Timebase, grouped: Boolean): Chart.Standard =
-    val legend: Chart.Legend = if grouped then Chart.Legend.Right else Chart.Legend.Hidden
-    Chart.Standard(width = width, height = height, legend = legend, ordinateTitle = t"mean / ${base.label}")
+  def benchStyle(data: BarData): Style =
+    val grouped: Boolean = data.slices.size > 1
+    val groups: Int = data.slices.map(_.bars.size).fold(0)(_.max(_))
+    val widestCategory: Double = data.slices.bind(_.bars).map { bar => textWidth(bar.category) }.fold(0.0)(_.max(_))
+    val widestName: Double = data.slices.map { slice => textWidth(slice.name) }.fold(0.0)(_.max(_))
 
-  val stressStyle: Chart.Standard =
-    Chart.Standard
-      ( width = width, height = height, legend = Chart.Legend.Right, abscissaTitle = t"concurrency",
-        ordinateTitle = t"throughput / op·s¯¹", markers = true )
+    // A band is what its bars need at the least gap, or wider when its label is; the gap then
+    // grows to keep the bars at their width.
+    val bars: Double = if grouped then groupedBar*data.slices.size else singleBar
+    val band: Double = (bars/(1.0 - leastGap)).max(widestCategory + 8.0)
+    val barGap: Double = 1.0 - bars/band
+
+    val left: Double = inset + tickLength + gap + ordinateLabel(data) + labelSize*1.6
+    val legendRoom: Double = if grouped then widestName + labelSize + gap + gap*2.0 else 0.0
+    val right: Double = inset + labelSize*0.6 + legendRoom + slack
+    val width: Double = (left + right + groups*band).max(240.0)
+
+    val legend: Chart.Legend = if grouped then Chart.Legend.Right else Chart.Legend.Hidden
+    Style(width, height, legend, ordinateTitle = t"mean / ${data.base.label}", barGap = barGap)
+
+  // A stress chart's plot is wide — a sweep may run to hundreds of concurrency steps — and
+  // its width does not depend on its points, which arrive one step at a time and revise the
+  // chart in place; only its legend's names, which a new curve adds to, bear on the width.
+  private val stressPlot: Double = 580.0
+
+  def stressStyle(curves: List[Curve]): Style =
+    val widestName: Double = curves.map { curve => textWidth(curve.name) }.fold(0.0)(_.max(_))
+    val left: Double = inset + tickLength + gap + 7*0.6*labelSize + labelSize*1.6
+    val right: Double = inset + labelSize*0.6 + widestName + labelSize + gap + gap*2.0 + slack
+
+    Style
+      ( left + right + stressPlot, height, Chart.Legend.Right, abscissaTitle = t"concurrency",
+        ordinateTitle = t"throughput / op·s¯¹", markers = true, smoothing = 4.0 )
+
+  // Concurrency on a logarithmic abscissa, since a sweep doubles it step by step; throughput
+  // on an exponential ordinate, which opens up the small differences among high values, with
+  // the gradations still at regular intervals. The line through the measured points is
+  // Kalman-smoothed, the markers at the points themselves.
+  private val stressLines: Lines =
+    Lines
+      ( abscissa = Calibration[Int](Calibration.Policy.Logarithmic),
+        ordinate = Calibration[Double](Calibration.Policy.Exponential()) )
 
   private def show(svg: Svg): Text = svg.xml.show
 
@@ -234,11 +345,12 @@ final class Charts:
   // timebase (a chart's first record was quick, a later one slow) redraws with a new scale.
   private def bench(key: Text, data: BarData, alt: List[Inline]): Optional[pyrocosm.Figure] =
     if data.empty then Unset else
-      val grouped: Boolean = data.slices.size > 1
-      given Chart.Standard = benchStyle(data.base, grouped)
+      val style: Style = benchStyle(data)
+      given Chart.Standard = style
 
+      // A chart keeps its axes while the timebase, the grouping and the width it needs hold.
       val next: Held.Bench = existing(key) { case held: Held.Bench => held } match
-        case Held.Bench(figure, chart, data0) if data0.base == data.base && (data0.slices.size > 1) == grouped =>
+        case Held.Bench(figure, chart, data0) if data0.base == data.base && benchStyle(data0).width == style.width && benchStyle(data0).legend == style.legend =>
           if data0 == data then Held.Bench(figure, chart, data) else
             val known = partIds(chart.drawing)
             val (chart2, revisions) = chart.revise(benchSeries(data))
@@ -259,19 +371,24 @@ final class Charts:
   // axes redraws them.
   private def stress(key: Text, curves: List[Curve], alt: List[Inline]): Optional[pyrocosm.Figure] =
     if curves.nil then Unset else
-      given Chart.Standard = stressStyle
+      val style: Style = stressStyle(curves)
+      given Chart.Standard = style
 
+      // A chart keeps its axes while its legend, and so its width, holds; a new curve redraws.
       val next: Held.Stress = existing(key) { case held: Held.Stress => held } match
-        case Held.Stress(figure, chart, curves0) =>
+        case Held.Stress(figure, chart, curves0) if stressStyle(curves0).width == style.width =>
           if curves0 == curves then Held.Stress(figure, chart, curves) else
             val known = partIds(chart.drawing)
             val (chart2, revisions) = chart.revise(stressSeries(curves))
             Charts.revise(figure, revisions, known, chart2.svg)
             Held.Stress(figure, chart2, curves)
 
-        case _ =>
-          val chart = stressSeries(curves).chart(Lines())
-          Held.Stress(pyrocosm.Figure(alt, chart.svg.xml.show), chart, curves)
+        case other =>
+          val chart = stressSeries(curves).chart(stressLines)
+          val drawing: Text = chart.svg.xml.show
+          val figure: pyrocosm.Figure = other.let(figureOf(_)).or(pyrocosm.Figure(alt, drawing))
+          if other.present then figure.redraw(drawing)
+          Held.Stress(figure, chart, curves)
 
       held = held.define(key, next)
       next.figure
