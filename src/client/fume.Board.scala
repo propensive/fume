@@ -32,8 +32,6 @@
                                                                                                   */
 package fume
 
-import java.util.concurrent as juc
-
 import soundness.*
 
 import pyrocosm.{Block, Hints, Inline, Interface, Panel, hints}
@@ -44,7 +42,7 @@ import pyrocosm.{Block, Hints, Inline, Interface, Panel, hints}
 // has changed since the last paint, so the thread consuming the run's events never renders,
 // and a burst of events costs one repaint.
 final class Board(model: Model, val title: Text, progress0: Optional[Progress] = Unset):
-  private val dirty: juc.atomic.AtomicBoolean = juc.atomic.AtomicBoolean(true)
+  private val dirty: Atomic[Boolean] = Atomic(true)
 
   val results: pyrocosm.Live[List[Block]] = pyrocosm.Live(Nil)
   val progress: pyrocosm.Live[List[Block]] = pyrocosm.Live(Nil)
@@ -58,11 +56,11 @@ final class Board(model: Model, val title: Text, progress0: Optional[Progress] =
   def figures: Ledger[Text, pyrocosm.Figure] = charts.figures
 
   // Marks the board, or paints it now when forced: the final state must always be shown.
-  def refresh(force: Boolean = false): Unit = if force then paint() else dirty.set(true)
+  def refresh(force: Boolean = false): Unit = if force then paint() else dirty() = true
 
   // Paints if anything has been marked since the last paint, or when forced: the repaint task
   // forces one every second, so a time-left estimate ticks while the run is quiet.
-  def repaint(force: Boolean = false): Unit = if dirty.getAndSet(false) || force then paint()
+  def repaint(force: Boolean = false): Unit = if dirty.swap(false) || force then paint()
 
   private def paint(): Unit = synchronized:
     val state = model.state()

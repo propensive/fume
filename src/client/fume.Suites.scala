@@ -277,8 +277,15 @@ object Suites:
         case Classpath.Entry.Directory(path) => path
         case _                               => t"jrt"
 
-      val file = java.io.File(path.s)
-      t"$path@${file.lastModified}:${file.length}"
+      import filesystemBackends.javaBaseFilesystem
+      val backend: FilesystemBackend on Linux = summon[FilesystemBackend on Linux]
+
+      val file: Optional[Path on Linux] = safely(path.as[Path on Linux])
+      val stat: Optional[Stat] = file.let { file => safely(backend.stat(file, true)) }
+      val stamp: Text = stat.lay(t"?") { stat => t"${stat.modified}:${stat.size}" }
+
+      t"$path@$stamp"
+
     . join(t"\n")
 
   def cached(classpath: LocalClasspath): List[Scheduled] =

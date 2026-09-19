@@ -143,8 +143,7 @@ object EventStream:
           val task = async:
             loader.use(instance.asInstanceOf[Streamable].stream(suite, arguments, output))
 
-          def matches(left: Data, right: Data): Boolean =
-            java.util.Arrays.equals(Array.unsafeJvm(left), Array.unsafeJvm(right))
+          def matches(left: Data, right: Data): Boolean = left.readable.sameElements(right.readable)
 
           // The task is single-owner and awaited exactly once after the frame chain is
           // exhausted; the separation checker cannot see that through the capture-polymorphic
@@ -163,12 +162,12 @@ object EventStream:
               // A failure in a handler (the model or the live board) must end the run with its
               // cause on stderr, not leave the invocation polling a dead task for ever while the
               // suite runs on unobserved.
-              val failure = java.util.concurrent.atomic.AtomicReference[Throwable | Null](null)
+              val failure: Atomic[Optional[Throwable]] = Atomic.Ref.vacant[Throwable]
 
               val consumer = async:
                 try rest.each { (frame: Data) => handle(probably.Streamer.read(frame)) }
                 catch case error: Throwable =>
-                  failure.set(error)
+                  failure() = error
                   throw error
 
               // A short wait, so a finished suite is noticed at once: the slack compounds
@@ -176,17 +175,19 @@ object EventStream:
               def drained(): Boolean =
                 scala.caps.unsafe.unsafeAssumeSeparate(safely(consumer.await(0.01*Second)).present)
 
-              def spin(): Outcome =
-                val failed = failure.get()
-                if failed != null then
+              def spin(): Outcome = failure() match
+                case failed: Throwable =>
                   task.cancel()
                   Outcome.Failed(failed)
-                else if drained() then Outcome.Completed(exit())
-                else if abort() then
-                  consumer.cancel()
-                  task.cancel()
-                  Outcome.Completed(abortExit)
-                else spin()
+
+                case _ =>
+                  if drained() then Outcome.Completed(exit())
+                  else if abort() then
+                    consumer.cancel()
+                    task.cancel()
+                    Outcome.Completed(abortExit)
+                  else
+                    spin()
 
               spin()
 

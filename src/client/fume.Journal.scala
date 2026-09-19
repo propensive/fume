@@ -32,8 +32,6 @@
                                                                                                   */
 package fume
 
-import java.lang as jl
-
 import soundness.*
 
 import denominative.dysasymptotics.linearSize
@@ -65,27 +63,27 @@ object Journal:
     ( suite:    Text,
       passed:   Boolean,
       totals:   Optional[Doc.Totals],
-      started:  Long,
-      finished: Long ):
+      started:  Instant over Unix,
+      finished: Instant over Unix ):
 
-    def duration: Long = finished - started
+    def duration: Duration = finished - started
 
   case class Run
     ( id:        Int,
       client:    Text,
       invoker:   Invoker,
-      started:   Long,
+      started:   Instant over Unix,
       classpath: Text,
       selection: List[Text],
       scheduled: List[Text],
       suites:    List[SuiteRun],
       current:   Optional[Text],
-      finished:  Optional[Long],
+      finished:  Optional[Instant over Unix],
       outcome:   Optional[Outcome],
       totals:    Optional[Doc.Totals] ):
 
     def running: Boolean = finished.absent
-    def duration: Optional[Long] = finished.let(_ - started)
+    def duration: Optional[Duration] = finished.let(_ - started)
     def failures: Int = suites.count(!_.passed)
 
   // The completed runs kept in memory. Old enough runs fall off the end: the daemon is
@@ -119,7 +117,7 @@ object Journal:
 
       val run =
         Run
-          ( next, client, invoker, jl.System.currentTimeMillis, classpath, selection, scheduled,
+          ( next, client, invoker, now(), classpath, selection, scheduled,
             Nil, Unset, Unset, Unset, Unset )
 
       active0 = run :: active0
@@ -129,12 +127,17 @@ object Journal:
   def began(id: Int, suite: Text): Unit = mutex:
     amend(id) { run => run.copy(current = suite) }
 
-  def record(id: Int, suite: Text, passed: Boolean, totals: Optional[Doc.Totals], started: Long)
+  def record
+    ( id:      Int,
+      suite:   Text,
+      passed:  Boolean,
+      totals:  Optional[Doc.Totals],
+      started: Instant over Unix )
   :   Unit =
 
     mutex:
       amend(id): run =>
-        val entry = SuiteRun(suite, passed, totals, started, jl.System.currentTimeMillis)
+        val entry = SuiteRun(suite, passed, totals, started, now())
         run.copy(suites = run.suites + List(entry), current = Unset)
 
   // Completes a run, moving it out of the active list.
@@ -143,7 +146,7 @@ object Journal:
       val done =
         run.copy
           ( current = Unset,
-            finished = jl.System.currentTimeMillis,
+            finished = now(),
             outcome = outcome,
             totals = totals )
 

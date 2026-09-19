@@ -32,11 +32,11 @@
                                                                                                   */
 package fume
 
-import java.lang as jl
-import java.util.concurrent.atomic as juca
-
 import soundness.*
+
 import probably.TestEvent
+import stdios.fileDescriptorStdio
+import termcapDefinitions.basicTermcap
 
 // Fume's own suite, run WITHOUT fume: a `Suite` has no `main` (the host — normally fume —
 // drives it through `invoke`), so this is the plain-`java` entry point `make test` and CI use,
@@ -44,27 +44,27 @@ import probably.TestEvent
 // 1 = failures, 2 = the suite threw). `fume run -c <test jar>` remains the full experience.
 @main
 def runTests(): Unit =
-  val passes = juca.AtomicInteger(0)
-  val failures = juca.AtomicInteger(0)
-  val out = jl.System.out.nn
+  val passes: Atomic[Int] = Atomic(0)
+  val failures: Atomic[Int] = Atomic(0)
 
   val status = Tests.invoke(t"", event => event match
     case TestEvent.TestCompleted(test, _, _, outcome, _, _) =>
-      if outcome.outcome == t"pass" || outcome.outcome == t"aspire-pass" then passes.incrementAndGet()
-      else failures.incrementAndGet()
-      out.println(t"[${outcome.outcome}] ${test.path.join(t" / ")}".s)
+      if outcome.outcome == t"pass" || outcome.outcome == t"aspire-pass" then passes.since(_ + 1)
+      else failures.since(_ + 1)
+
+      Out.println(t"[${outcome.outcome}] ${test.path.join(t" / ")}")
 
     case TestEvent.DetailMessage(_, message) =>
-      out.println(t"    $message".s)
+      Out.println(t"    $message")
 
     case TestEvent.DetailCompare(_, expected, found, _) =>
-      out.println(t"    expected: $expected".s)
-      out.println(t"    found:    $found".s)
+      Out.println(t"    expected: $expected")
+      Out.println(t"    found:    $found")
 
     case TestEvent.RunTerminated(error, _, _) =>
-      out.println(t"suite threw: ${error.components.map(_.message).join(t"; ")}".s)
+      Out.println(t"suite threw: ${error.components.map(_.message).join(t"; ")}")
 
     case _ => ())
 
-  out.println(t"${passes.get} passed, ${failures.get} failed".s)
-  jl.System.exit(status)
+  Out.println(t"${passes()} passed, ${failures()} failed")
+  Exit(status).terminate()

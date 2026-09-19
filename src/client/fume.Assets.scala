@@ -32,19 +32,24 @@
                                                                                                   */
 package fume
 
-import java.util.concurrent as juc
-
 import soundness.*
 
+import charDecoders.utf8Decoder
 import charEncoders.utf8Encoder
 import denominative.dysasymptotics.linearAccess
+import logging.silentLogging
+import textSanitizers.skipSanitizer
 
 // The static files the dashboard serves beyond pyrocosm's own: the invokers' icons, read from
 // the client jar's `fume/` resources (the build puts `res/` on the classpath). Pyrocosm's web
 // frontend answers only its own paths and hands every other request to a fallback, which is
 // what `serve` is.
 object Assets:
-  private val cache: juc.ConcurrentHashMap[Text, Text] = juc.ConcurrentHashMap()
+  private val mutex: Mutex = Mutex()
+
+  // The icons read so far, by basename.
+  @scala.caps.unsafe.untrackedCaptures
+  private var icons: Map[Text, Text] = Map()
 
   // The path an invoker's icon is served at.
   def location(icon: Text): Text = t"/fume/$icon.svg"
@@ -53,20 +58,18 @@ object Assets:
   // classes live in the launcher's sibling loader, which the system loader cannot see (see the
   // note on `ui.Classpath`).
   private def read(resource: Text): Optional[Text] =
-    val loader: ClassLoader =
-      Optional(Thread.currentThread.nn.getContextClassLoader).or(classOf[Invoker].getClassLoader.nn)
-
-    Optional(loader.getResourceAsStream(resource.s)).let: stream =>
-      try new String(stream.readAllBytes(), "UTF-8").tt finally stream.close()
+    given Classloader = Classloader.threadContext
+    safely(resource.as[Path on Classpath]).let { path => safely(path.read[Text]) }
 
   // An icon by the path it is served at. Only a path naming an invoker's icon is answered, so
   // no other resource can be reached through the dashboard.
   def asset(path: Text): Optional[Text] =
     Invoker.all.seek(_.icon.let(location(_)) == path).let(_.icon).let: icon =>
-      Optional(cache.get(icon)).or:
-        read(t"fume/$icon.svg").let: svg =>
-          cache.put(icon, svg)
-          svg
+      mutex:
+        icons(icon).or:
+          read(t"/fume/$icon.svg").let: svg =>
+            icons = icons.define(icon, svg)
+            svg
 
   // The fallback for pyrocosm's `WebFrontend`: an icon's SVG, or `Unset` for it to answer 404.
   // A method, not a function value, so that `Assets` holds no capability.

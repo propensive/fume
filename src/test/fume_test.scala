@@ -32,9 +32,6 @@
                                                                                                   */
 package fume
 
-import java.io as ji
-import java.nio.file as jnf
-
 import soundness.*
 
 // A wildcard import brings no givens: the `n"…"` tag literal's plane inference needs the
@@ -48,6 +45,13 @@ import denominative.dysasymptotics.linearSize
 import probably.TestEvent
 
 import pyrocosm.Block
+
+import charEncoders.utf8Encoder
+import filesystemBackends.javaBaseFilesystem
+import logging.silentLogging
+import strategies.throwUnsafely
+import systems.javaBaseSystem
+import temporaryDirectories.systemTemporaryDirectory
 
 object Tests extends Suite(m"Fume tests"):
   private def ref(id: Text, moniker: Optional[Text], path: List[Text]): TestEvent.Ref =
@@ -103,20 +107,28 @@ object Tests extends Suite(m"Fume tests"):
   // A fresh project directory whose `.pyrocosm/fume/config.tel` holds `content`, with a nested
   // `sub/dir` to invoke from, so the upward search is exercised. Rooted in a unique temporary
   // directory per call.
-  private def project(content: Text): ji.File =
-    val root = jnf.Files.createTempDirectory("fume-test").nn.toFile.nn
-    val fumeDir = ji.File(root, ".pyrocosm/fume").nn
-    fumeDir.mkdirs()
-    val nested = ji.File(root, "sub/dir").nn
-    nested.mkdirs()
-    jnf.Files.write(ji.File(fumeDir, "config.tel").nn.toPath, content.s.getBytes("UTF-8"))
+  // A fresh, empty directory under the system's temporary directory.
+  private def scratch(): Path on Linux =
+    val directory: Path on Linux = temporaryDirectory[Path on Linux] / Uuid().show
+    directory.create[Directory]()
+
+  private def project(content: Text): Path on Linux =
+    val root = scratch()
+    val fumeDir = root / ".pyrocosm" / "fume"
+    fumeDir.create[Directory](CreateFlag.Parents)
+    val nested = root / "sub" / "dir"
+    nested.create[Directory](CreateFlag.Parents)
+    (fumeDir / "config.tel").write(content)
     nested
+
+  // An instant by its epoch milliseconds, for the tests that fix their own clock.
+  private def at(millis: Long): Instant over Unix = Instant.of[Unix](millis)
 
   // The user's config plays no part here: an empty environment has no `XDG_CONFIG_HOME` and
   // no `HOME`, so only the project's `.pyrocosm/fume/config.tel` is read.
-  private def read(directory: ji.File, name: Text): Optional[Text] =
+  private def read(directory: Path on Linux, name: Text): Optional[Text] =
     given Environment = _ => Unset
-    Fume.configurator(directory.getAbsolutePath.nn.tt).read(name)
+    Fume.configurator(directory.encode).read(name)
 
   def run(): Unit =
     // The build writes `META-INF/pyrocosm/fume/version` into the client's resources: a
@@ -135,8 +147,7 @@ object Tests extends Suite(m"Fume tests"):
     . assert(_ == Unset)
 
     test(m"a directory with no config reads as Unset"):
-      val empty = jnf.Files.createTempDirectory("fume-empty").nn.toFile.nn
-      read(empty, t"classpath")
+      read(scratch(), t"classpath")
     . assert(_ == Unset)
 
     test(m"repeated classpath entries join with ':'"):
@@ -148,47 +159,46 @@ object Tests extends Suite(m"Fume tests"):
     . assert(_ == t"true")
 
     test(m"suites are discovered from a directory-form classpath entry"):
-      val root = jnf.Files.createTempDirectory("fume-classes").nn.toFile.nn
-      val services = ji.File(root, "META-INF/services").nn
-      services.mkdirs()
+      val root = scratch()
+      val services = root / "META-INF" / "services"
+      services.create[Directory](CreateFlag.Parents)
 
-      jnf.Files.write
-        ( ji.File(services, "probably.Suite").nn.toPath,
-          "# source: one.scala\nexample.Tests\n\n# source: two.scala\nother.Tests\n".getBytes("UTF-8") )
+      (services / "probably.Suite")
+      . write(t"# source: one.scala\nexample.Tests\n\n# source: two.scala\nother.Tests\n")
 
-      Suites.discover(LocalClasspath(List(Classpath.Entry.Directory(root.getAbsolutePath.nn.tt))*))
+      Suites.discover(LocalClasspath(List(Classpath.Entry.Directory(root.encode))*))
     . assert(_ == List(t"example.Tests", t"other.Tests"))
 
     test(m"glob classpath entries expand, sorted, one segment at a time"):
-      val root = jnf.Files.createTempDirectory("fume-glob").nn.toFile.nn
-      ji.File(root, "b/test").nn.mkdirs()
-      ji.File(root, "a/test").nn.mkdirs()
-      ji.File(root, "a/other").nn.mkdirs()
-      jnf.Files.write(ji.File(root, "b/test/out.jar").nn.toPath, "x".getBytes)
-      jnf.Files.write(ji.File(root, "a/test/out.jar").nn.toPath, "x".getBytes)
-      val base = root.getAbsolutePath.nn.tt
+      val root = scratch()
+      (root / "b" / "test").create[Directory](CreateFlag.Parents)
+      (root / "a" / "test").create[Directory](CreateFlag.Parents)
+      (root / "a" / "other").create[Directory](CreateFlag.Parents)
+      (root / "b" / "test" / "out.jar").write(t"x")
+      (root / "a" / "test" / "out.jar").write(t"x")
+      val base = root.encode
 
       Suites.expand(base, t"$base/*/test/out.jar").map(_.skip(base.length))
     . assert(_ == List(t"/a/test/out.jar", t"/b/test/out.jar"))
 
     test(m"glob classpath entries support ? and character ranges"):
-      val root = jnf.Files.createTempDirectory("fume-glob2").nn.toFile.nn
-      jnf.Files.write(ji.File(root, "m1.jar").nn.toPath, "x".getBytes)
-      jnf.Files.write(ji.File(root, "m2.jar").nn.toPath, "x".getBytes)
-      jnf.Files.write(ji.File(root, "n1.jar").nn.toPath, "x".getBytes)
-      val base = root.getAbsolutePath.nn.tt
+      val root = scratch()
+      (root / "m1.jar").write(t"x")
+      (root / "m2.jar").write(t"x")
+      (root / "n1.jar").write(t"x")
+      val base = root.encode
 
       Suites.expand(base, t"$base/m?.jar").map(_.skip(base.length))
         + Suites.expand(base, t"$base/[n]1.jar").map(_.skip(base.length))
     . assert(_ == List(t"/m1.jar", t"/m2.jar", t"/n1.jar"))
 
     test(m"a whole-segment ** spans directories"):
-      val root = jnf.Files.createTempDirectory("fume-globstar").nn.toFile.nn
-      ji.File(root, "x/deep/test").nn.mkdirs()
-      ji.File(root, "y").nn.mkdirs()
-      jnf.Files.write(ji.File(root, "x/deep/test/out.jar").nn.toPath, "x".getBytes)
-      jnf.Files.write(ji.File(root, "y/out.jar").nn.toPath, "x".getBytes)
-      val base = root.getAbsolutePath.nn.tt
+      val root = scratch()
+      (root / "x" / "deep" / "test").create[Directory](CreateFlag.Parents)
+      (root / "y").create[Directory](CreateFlag.Parents)
+      (root / "x" / "deep" / "test" / "out.jar").write(t"x")
+      (root / "y" / "out.jar").write(t"x")
+      val base = root.encode
 
       Suites.expand(base, t"$base/**/out.jar").map(_.skip(base.length))
     . assert(_ == List(t"/x/deep/test/out.jar", t"/y/out.jar"))
@@ -196,9 +206,11 @@ object Tests extends Suite(m"Fume tests"):
     test(m"an edited config file is reparsed"):
       val directory = project(t"tel 1.0\n\nclasspath out/old.jar\n")
       val first = read(directory, t"classpath")
-      val root = directory.getParentFile.nn.getParentFile.nn
-      val file = ji.File(ji.File(root, ".pyrocosm/fume"), "config.tel")
-      jnf.Files.write(file.toPath, "tel 1.0\n\nclasspath out/renewed.jar\n".getBytes("UTF-8"))
+      // The project root is two levels above `sub/dir`, where the config was read from.
+      val file: Optional[Path on Linux] =
+        directory.parent.let(_.parent).let(_ / ".pyrocosm" / "fume" / "config.tel")
+
+      file.let(_.write(t"tel 1.0\n\nclasspath out/renewed.jar\n"))
       (first, read(directory, t"classpath"))
     . assert(_ == (t"out/old.jar", t"out/renewed.jar"))
 
@@ -218,8 +230,8 @@ object Tests extends Suite(m"Fume tests"):
 
     test(m"each suite's verdict is recorded against its run"):
       val id = Journal.start(t"1", Invoker.Human, t"out.jar", List(), List(t"c.Tests", t"d.Tests"))
-      Journal.record(id, t"c.Tests", true, Unset, 0L)
-      Journal.record(id, t"d.Tests", false, Unset, 0L)
+      Journal.record(id, t"c.Tests", true, Unset, at(0L))
+      Journal.record(id, t"d.Tests", false, Unset, at(0L))
       Journal.finish(id, Journal.Outcome.Failed, Unset)
 
       Journal.completed.seek(_.id == id).let: run =>
@@ -231,7 +243,7 @@ object Tests extends Suite(m"Fume tests"):
       val id = Journal.start(t"1", Invoker.Human, t"out.jar", List(), List(t"e.Tests"))
       Journal.began(id, t"e.Tests")
       val during = Journal.active.seek(_.id == id).let(_.current)
-      Journal.record(id, t"e.Tests", true, Unset, 0L)
+      Journal.record(id, t"e.Tests", true, Unset, at(0L))
       (during, Journal.active.seek(_.id == id).let(_.current))
     . assert(_ == (t"e.Tests", Unset))
 
@@ -499,7 +511,7 @@ object Tests extends Suite(m"Fume tests"):
       val plainKey: Text = Charts.key(suiteA, t"bench", t"plain")
       val stressKey: Text = Charts.key(suiteA, t"stress", t"stress")
 
-      val half: Double = Figures.tQuantile(95, 9)*100000.0/java.lang.Math.sqrt(10.0)
+      val half: Double = Figures.tQuantile(95, 9)*100000.0/10.0.sqrt
 
       val expectedBars: List[Charts.Bar] =
         List(Charts.Bar(t"a1", 2.0, (2000000.0 - half)/1e6, (2000000.0 + half)/1e6), Charts.Bar(t"a2", 0.5, 0.5, 0.5))
@@ -633,10 +645,9 @@ object Tests extends Suite(m"Fume tests"):
 
     suite(m"Progress"):
       def observed(suite: Text, tests: Int, millis: Long): Journal.SuiteRun =
-        Journal.SuiteRun(suite, true, Doc.Totals(tests, 0, 0, 0, Nil), 1000L, 1000L + millis)
+        Journal.SuiteRun(suite, true, Doc.Totals(tests, 0, 0, 0, Nil), at(1000L), at(1000L + millis))
 
-      def forecastDirectory(): Text =
-        jnf.Files.createTempDirectory("fume-forecasts").nn.toString.tt
+      def forecastDirectory(): Path on Linux = scratch()
 
       val classpath = t"/build/tests.jar:/build/lib.jar"
 
@@ -649,7 +660,7 @@ object Tests extends Suite(m"Fume tests"):
         Forecasts.save(classpath, List(observed(t"a.Tests", 120, 4000L), observed(t"b.Tests", 30, 1000L)), directory)
         val forecast = Forecasts.load(classpath, directory)
         (forecast(t"a.Tests"), forecast(t"b.Tests"), forecast(t"c.Tests"))
-      . assert(_ == (Forecasts.Observation(120, 4000L), Forecasts.Observation(30, 1000L), Unset))
+      . assert(_ == (Forecasts.Observation(120, Duration(4000L)), Forecasts.Observation(30, Duration(1000L)), Unset))
 
       test(m"a later run of one suite refines that line and keeps the others"):
         val directory = forecastDirectory()
@@ -657,11 +668,11 @@ object Tests extends Suite(m"Fume tests"):
         Forecasts.save(classpath, List(observed(t"b.Tests", 31, 1500L)), directory)
         val forecast = Forecasts.load(classpath, directory)
         (forecast(t"a.Tests"), forecast(t"b.Tests"))
-      . assert(_ == (Forecasts.Observation(120, 4000L), Forecasts.Observation(31, 1500L)))
+      . assert(_ == (Forecasts.Observation(120, Duration(4000L)), Forecasts.Observation(31, Duration(1500L))))
 
       test(m"a suite without totals teaches nothing, and different classpaths do not share"):
         val directory = forecastDirectory()
-        Forecasts.save(classpath, List(Journal.SuiteRun(t"a.Tests", true, Unset, 0L, 100L)), directory)
+        Forecasts.save(classpath, List(Journal.SuiteRun(t"a.Tests", true, Unset, at(0L), at(100L))), directory)
         Forecasts.save(t"/other.jar", List(observed(t"a.Tests", 5, 50L)), directory)
         Forecasts.load(classpath, directory).size
       . assert(_ == 0)
@@ -683,45 +694,45 @@ object Tests extends Suite(m"Fume tests"):
 
       test(m"with no forecast at all there is no total and no time left"):
         val progress = Progress(List(t"a", t"b"), Forecasts.Forecast.empty)
-        (progress.forecastTotal, progress.remaining(0L))
+        (progress.forecastTotal, progress.remaining(at(0L)))
       . assert(_ == (Unset, Unset))
 
       test(m"the time left is the unfinished suites' forecast, the current one net of its elapsed time"):
         val progress = Progress(List(t"a", t"b", t"c"), forecastOf(observed(t"a", 10, 1000L), observed(t"b", 10, 2000L), observed(t"c", 10, 3000L)))
-        progress.begin(t"a", 0L)
-        progress.end(t"a", 1000L)
-        progress.begin(t"b", 1000L)
-        progress.remaining(1500L)
-      . assert(_ == 4500L)
+        progress.begin(t"a", at(0L))
+        progress.end(t"a", at(1000L))
+        progress.begin(t"b", at(1000L))
+        progress.remaining(at(1500L))
+      . assert(_ == Duration(4500L))
 
       test(m"a slow start scales the estimate, clamped to at most double"):
         val progress = Progress(List(t"a", t"b"), forecastOf(observed(t"a", 10, 1000L), observed(t"b", 10, 1000L)))
-        progress.begin(t"a", 0L)
-        progress.end(t"a", 5000L)
-        progress.begin(t"b", 5000L)
-        progress.remaining(5000L)
-      . assert(_ == 2000L)
+        progress.begin(t"a", at(0L))
+        progress.end(t"a", at(5000L))
+        progress.begin(t"b", at(5000L))
+        progress.remaining(at(5000L))
+      . assert(_ == Duration(2000L))
 
       test(m"a fast start scales the estimate, clamped to at least half"):
         val progress = Progress(List(t"a", t"b"), forecastOf(observed(t"a", 10, 1000L), observed(t"b", 10, 1000L)))
-        progress.begin(t"a", 0L)
-        progress.end(t"a", 100L)
-        progress.begin(t"b", 100L)
-        progress.remaining(100L)
-      . assert(_ == 500L)
+        progress.begin(t"a", at(0L))
+        progress.end(t"a", at(100L))
+        progress.begin(t"b", at(100L))
+        progress.remaining(at(100L))
+      . assert(_ == Duration(500L))
 
       test(m"the caption names the suite in flight, the tests of the total and the time left"):
         val progress = Progress(List(t"a", t"b", t"c"), forecastOf(observed(t"a", 5000, 10000L), observed(t"b", 9000, 90000L)))
-        progress.begin(t"a", 0L)
-        progress.end(t"a", 10000L)
-        progress.begin(t"b", 10000L)
-        progress.caption(6234, 20000L)
+        progress.begin(t"a", at(0L))
+        progress.end(t"a", at(10000L))
+        progress.begin(t"b", at(10000L))
+        progress.caption(6234, at(20000L))
       . assert(_ == t"suite 2/3 · 6,234 of ≈21,000 · about 2m10s left")
 
       test(m"without a forecast the caption counts the tests done"):
         val progress = Progress(List(t"a", t"b"), Forecasts.Forecast.empty)
-        progress.begin(t"a", 0L)
-        progress.caption(12, 100L)
+        progress.begin(t"a", at(0L))
+        progress.caption(12, at(100L))
       . assert(_ == t"suite 1/2 · 12 done")
 
       test(m"budgets of an hour or more show hours and minutes"):

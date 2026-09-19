@@ -32,9 +32,7 @@
                                                                                                   */
 package fume
 
-import java.lang as jl
 import java.lang.management as jlm
-import java.util.concurrent.atomic as juca
 
 import soundness.*
 
@@ -56,10 +54,11 @@ object Load:
   // The scale is logarithmic because load averages are: the difference between 0.5 and 1.0
   // matters as much as the difference between 8 and 16, and a linear bar sized for a busy
   // 16-core machine would render every interesting value in its first two cells.
-  private def log2(value: Double): Double = jl.Math.log(value)/jl.Math.log(2.0)
-  private def exp2(value: Double): Double = jl.Math.pow(2.0, value)
+  private def log2(value: Double): Double = ln(value).double/ln(2.0).double
+  private def exp2(value: Double): Double = 2.0 ** value
 
-  private def cores: Int = jl.Runtime.getRuntime.nn.availableProcessors
+  // The core count and the load average are the JVM's alone: Soundness has no view of either.
+  private def cores: Int = Runtime.getRuntime.nn.availableProcessors
 
   // The 1-minute load average, or `Unset` where the platform does not keep one:
   // `getSystemLoadAverage` answers a negative number then, as it always does on Windows.
@@ -176,7 +175,7 @@ object Load:
   //
   // `0.2*Second`, NOT a bare `0.2` or `200L`: `snooze`'s `Long` overload is in NANOSECONDS,
   // so `snooze(200L)` would spin, repainting as fast as the terminal could take it.
-  def settle(target: Double, width: Int, tty: Boolean, aborted: juca.AtomicBoolean)
+  def settle(target: Double, width: Int, tty: Boolean, aborted: Atomic[Boolean])
      (using Stdio, Monitor, Environment)
   :   Unit =
 
@@ -220,7 +219,7 @@ object Load:
                 stdio.out.flush()
                 drain()
 
-              if load >= target && !aborted.get then
+              if load >= target && !aborted() then
                 snooze(0.2*Second)
                 recur()
 
@@ -233,5 +232,5 @@ object Load:
           if tty then Out.println()
 
           average.let: load =>
-            if aborted.get then Render.announce(t"interrupted while waiting for the load to fall")
+            if aborted() then Render.announce(t"interrupted while waiting for the load to fall")
             else Render.announce(t"load average is ${show(load)}; starting")
