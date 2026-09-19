@@ -73,6 +73,7 @@ object Journal:
   case class Run
     ( id:        Int,
       client:    Text,
+      invoker:   Invoker,
       started:   Long,
       classpath: Text,
       selection: List[Text],
@@ -105,14 +106,21 @@ object Journal:
     active0 = active0.map { run => if run.id == id then lambda(run) else run }
 
   // Enters a starting run, returning the id by which it is later amended and completed.
-  def start(client: Text, classpath: Text, selection: List[Text], scheduled: List[Text]): Int =
+  def start
+    ( client:    Text,
+      invoker:   Invoker,
+      classpath: Text,
+      selection: List[Text],
+      scheduled: List[Text] )
+  :   Int =
+
     mutex:
       next += 1
 
       val run =
         Run
-          ( next, client, jl.System.currentTimeMillis, classpath, selection, scheduled, Nil,
-            Unset, Unset, Unset, Unset )
+          ( next, client, invoker, jl.System.currentTimeMillis, classpath, selection, scheduled,
+            Nil, Unset, Unset, Unset, Unset )
 
       active0 = run :: active0
       next

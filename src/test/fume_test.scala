@@ -203,12 +203,12 @@ object Tests extends Suite(m"Fume tests"):
     . assert(_ == (t"out/old.jar", t"out/renewed.jar"))
 
     test(m"a started run is entered in the active ledger"):
-      val id = Journal.start(t"1", t"out.jar", List(t"kind:bench"), List(t"a.Tests"))
+      val id = Journal.start(t"1", Invoker.Human, t"out.jar", List(t"kind:bench"), List(t"a.Tests"))
       Journal.active.seek(_.id == id).let { run => (run.running, run.scheduled) }
     . assert(_ == (true, List(t"a.Tests")))
 
     test(m"a finished run moves to the completed ledger"):
-      val id = Journal.start(t"1", t"out.jar", List(), List(t"b.Tests"))
+      val id = Journal.start(t"1", Invoker.Human, t"out.jar", List(), List(t"b.Tests"))
       Journal.finish(id, Journal.Outcome.Passed, Unset)
 
       ( Journal.active.exists(_.id == id),
@@ -217,7 +217,7 @@ object Tests extends Suite(m"Fume tests"):
     . assert(_ == (false, Journal.Outcome.Passed))
 
     test(m"each suite's verdict is recorded against its run"):
-      val id = Journal.start(t"1", t"out.jar", List(), List(t"c.Tests", t"d.Tests"))
+      val id = Journal.start(t"1", Invoker.Human, t"out.jar", List(), List(t"c.Tests", t"d.Tests"))
       Journal.record(id, t"c.Tests", true, Unset, 0L)
       Journal.record(id, t"d.Tests", false, Unset, 0L)
       Journal.finish(id, Journal.Outcome.Failed, Unset)
@@ -228,12 +228,40 @@ object Tests extends Suite(m"Fume tests"):
     . assert(_ == (List(t"c.Tests", t"d.Tests"), 1))
 
     test(m"a run in flight names the suite it is running"):
-      val id = Journal.start(t"1", t"out.jar", List(), List(t"e.Tests"))
+      val id = Journal.start(t"1", Invoker.Human, t"out.jar", List(), List(t"e.Tests"))
       Journal.began(id, t"e.Tests")
       val during = Journal.active.seek(_.id == id).let(_.current)
       Journal.record(id, t"e.Tests", true, Unset, 0L)
       (during, Journal.active.seek(_.id == id).let(_.current))
     . assert(_ == (t"e.Tests", Unset))
+
+    test(m"a run under Codex is detected from CODEX_SANDBOX"):
+      given Environment = name => if name == t"CODEX_SANDBOX" then t"1" else Unset
+      Invoker.detect
+    . assert(_ == Invoker.Codex)
+
+    test(m"a run under Claude Code is detected from CLAUDECODE"):
+      given Environment = name => if name == t"CLAUDECODE" then t"1" else Unset
+      Invoker.detect
+    . assert(_ == Invoker.Claude)
+
+    test(m"a run is a human's unless a variable is set to 1"):
+      given Environment = name => if name == t"CLAUDECODE" then t"0" else Unset
+      Invoker.detect
+    . assert(_ == Invoker.Human)
+
+    // The build puts `res/` on the client's classpath, so each agent's icon is a resource.
+    test(m"Claude's icon is served from the classpath"):
+      Assets.asset(Assets.location(t"claude")).let(_.starts(t"<svg"))
+    . assert(_ == true)
+
+    test(m"Codex's icon is served from the classpath"):
+      Assets.asset(Assets.location(t"codex")).let(_.starts(t"<svg"))
+    . assert(_ == true)
+
+    test(m"no other resource is served as an asset"):
+      Assets.asset(t"/META-INF/pyrocosm/fume/version")
+    . assert(_ == Unset)
 
     // The load gate's scale is fixed explicitly in these tests rather than derived from the
     // target: `Load.Scale.apply` sizes the top of the scale from the core count, which

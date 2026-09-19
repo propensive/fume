@@ -464,6 +464,7 @@ def runClient(): Unit =
                 val journalId: Int =
                   Journal.start
                     ( summon[DaemonService[?]].pid.value.show,
+                      Invoker.detect,
                       classpath(),
                       args,
                       suites )
@@ -825,7 +826,7 @@ def runClient(): Unit =
             // The frontend holds the monitor and the error page, which outlive it; vouched pure so
             // it can be stopped from here.
             val frontend: pyrocosm.WebFrontend =
-              scala.caps.unsafe.unsafeAssumePure(pyrocosm.WebFrontend(port))
+              scala.caps.unsafe.unsafeAssumePure(pyrocosm.WebFrontend(port, fallback = Assets.serve))
 
             Server.serving = true
 
