@@ -185,23 +185,25 @@ object Blocks:
   // The rows of the live table, kept between refreshes: a row is rebuilt only when its entry
   // (a new object whenever it changes) or its running state has, so an unchanged test keeps
   // the SAME row object, which is how a frontend can tell it need not be drawn again. Keyed by
-  // identity; the map is rebuilt from the lines each refresh, so a stale entry's row is
-  // dropped rather than kept for ever.
+  // the line's value: an unchanged line is the same object, which a case class's equality
+  // notices before comparing anything, and two lines that happen to be equal want the same row
+  // anyway. The map is rebuilt from the lines each refresh, so a stale line's row is dropped
+  // rather than kept for ever.
   final class RowMemo:
     @scala.caps.unsafe.untrackedCaptures
-    private var previous: java.util.IdentityHashMap[AnyRef, (Boolean, Block.Row)] = java.util.IdentityHashMap()
+    private var previous: Map[Model.Line, (Boolean, Block.Row)] = Map()
 
     @scala.caps.unsafe.untrackedCaptures
-    private var current: java.util.IdentityHashMap[AnyRef, (Boolean, Block.Row)] = java.util.IdentityHashMap()
+    private var current: Map[Model.Line, (Boolean, Block.Row)] = Map()
 
     def begin(): Unit =
       previous = current
-      current = java.util.IdentityHashMap()
+      current = Map()
 
-    def row(key: AnyRef, running: Boolean)(make: => Block.Row): Block.Row =
-      val kept: Optional[(Boolean, Block.Row)] = Optional(previous.get(key))
+    def row(line: Model.Line, running: Boolean)(make: => Block.Row): Block.Row =
+      val kept: Optional[(Boolean, Block.Row)] = previous(line)
       val row: Block.Row = kept.let { pair => if pair(0) == running then pair(1) else Unset }.or(make)
-      current.put(key, (running, row))
+      current = current.define(line, (running, row))
       row
 
   // The live table of scheduled checks: what is running, what has finished, what waits.
@@ -217,15 +219,15 @@ object Blocks:
       memo.begin()
 
       val rows: List[Block.Row] = state.lines.map:
-        case Model.Line.SuiteLine(ref) =>
-          memo.row(ref, false):
+        case line @ Model.Line.SuiteLine(ref) =>
+          memo.row(line, false):
             val text = t"${t"  "*Documenting.depth(ref)}${ref.name}"
             Block.Row(List(Block.Cell(Nil), Block.Cell(List(Inline.Reference(ref.id))), Block.Cell(List(Inline.Emphasis(Inline.text(text)))), Block.Cell(Nil), Block.Cell(Nil)))
 
-        case Model.Line.EntryLine(entry) =>
+        case line @ Model.Line.EntryLine(entry) =>
           val running = active.has(entry.ref.id)
 
-          memo.row(entry, running):
+          memo.row(line, running):
             val idle = entry.completions.nil && entry.benches.nil && entry.strains.nil && entry.hotspots.absent
 
             val mark0: List[Inline] =
