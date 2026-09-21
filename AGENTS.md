@@ -30,13 +30,39 @@ version it declares for its next release. The build reads the file through the `
    `../<name>` (or `$PROPENSIVE_WORK/<name>`).
 3. A snapshot pin is a **debt** the PR description should mention: the upstream has to be
    released, and the pin bumped to that release, before this repository can be released.
-   `make release` runs `deps.py check` and refuses while any pin, transitively, is a snapshot.
+   The release runs `deps.py check` and refuses while any pin, transitively, is a
+   snapshot.
 4. When bumping a pin, bump only `etc/refs`. If the new version breaks the build, the PR that
    fixes the breakage carries the bump; do not split them.
 5. Do not edit `etc/shared` or `etc/github-ref` casually: `etc/github-ref` pins the commit of
    propensive/.github whose scripts (`sync-deps.sh`, `snapshot.sh`, `deps.py`,
-   `release-launcher.sh`, …) run here, and a bump is a deliberate one-line change. Set
+   `release.sh`, …) run here, and a bump is a deliberate one-line change. Set
    `PROPENSIVE_GITHUB=/path/to/a/.github/checkout` to test a change to the scripts themselves.
+
+### Releasing
+
+A release is cut by tagging, and by nothing else:
+
+```sh
+git tag -s X.Y.Z && git push --tags
+```
+
+Bump `fumeVersion` in `build.mill` and merge that first; the tag then fires
+`.github/workflows/release.yml`, which runs the shared `release.sh` in
+propensive/.github. Never publish by hand, and never create a release or
+upload an asset with `gh`: the script exists so that every release is made the same way.
+
+It gates before it publishes — the tag must be signed and verified, CI must *already* be green
+on that exact commit (the release does not re-run the suite), and every pin must be a published
+release — and if a later step fails it deletes the release **and** the tag from origin,
+so the retry is `git tag -d X.Y.Z && git tag -s X.Y.Z && git push --tags`.
+
+What this repository needs beyond the common path is declared in `etc/release`, one
+`key value` line each. The release notes are generated: the **Changes** section is built from
+the body of every pull request merged since the previous tag, which is what
+`pull_request_template.md` asks each PR for — so a PR whose body is empty or addressed to
+reviewers rather than to users degrades the next release's notes. A hand-written overview can be
+added as `doc/notes/<version>.md`, which is optional and ungated.
 
 ### Tools are not dependencies
 

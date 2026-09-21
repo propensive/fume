@@ -1,0 +1,14 @@
+# What this repository's release needs that another's does not. See propensive/.github, which
+# holds the workflow and the script; a release is cut by `git tag -s X.Y.Z && git push --tags`.
+# One `key value` line each; the library list and the version pin are not declared, because
+# release.sh derives them from `release.stage` and from `val fumeVersion` in build.mill.
+
+name       fume
+title      fume
+
+build      fume.client.compile
+launcher   fume.launcher
+
+# The publication homes Burdock matches the classpath against by SHA-256, so that a library on
+# it becomes an on-demand `Burdock-Require` URL rather than being inlined into the executable.
+hints      propensive/fume,propensive/pyrocosm,propensive/soundness,propensive/proscala

@@ -1,15 +1,25 @@
 # Build the invocation-point `launcher` module as a plain (clean, no shell-preamble) assembly JAR.
 # NOTE: `launcher` depends on fume-client as a PUBLISHED coordinate, resolved from ~/.ivy2/local
 # (a `make run`/`make fume` publishes it there) and externalized against the GitHub release
-# during `make release`.
+# when it is released.
 assembly:
 	mill fume.launcher.assembly
 
-# Publish fume to GitHub Releases: the fume-client jar first, then — once its digest is
-# indexed — the repackaged `fume` executable, added to the same release. See release-launcher.sh
-# in propensive/.github (run through etc/shared) for the two-step ordering and its verification.
+# Releases are cut by tagging, not by make. Bump `fumeVersion`, merge it, and then `git tag -s
+# X.Y.Z && git push --tags`: the tag fires .github/workflows/release.yml, which runs the shared
+# release.sh in propensive/.github. That gates on a signed tag, on CI already being green on that
+# very commit, and on every pin being a release; publishes the library jars; repackages the
+# executables against them; and generates the notes. If anything fails, the release and the tag
+# are both deleted, so a retry is `git tag -d X.Y.Z && git tag -s X.Y.Z && git push --tags`. What
+# this repository needs beyond the common path is declared in etc/release. This target survives
+# only to say so.
 release:
-	FUME_RELEASE_VERSION=$(VERSION) ./etc/shared release-launcher.sh fume "fume-client" $(VERSION)
+	@echo "Releases are triggered by tags, not by make. Bump fumeVersion, merge it, then:" >&2
+	@echo "" >&2
+	@echo "    git tag -s X.Y.Z && git push --tags" >&2
+	@echo "" >&2
+	@echo "See propensive/.github." >&2
+	@exit 1
 
 # Publish the library to the local ~/.ivy2 (config sanity check only — local bytes differ from
 # Central, so burdock will NOT externalize a locally-published copy).
