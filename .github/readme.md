@@ -115,13 +115,17 @@ make test   # run fume's own test suite
 make dev    # recompile fume.client on every source change
 ```
 
-To cut a release and build the self-fetching native launcher:
+To build the self-fetching native launcher locally:
 ```sh
-make release VERSION=0.2.0   # signed publish of fume-client to Maven Central
-# …wait for Central and deps.dev to index the jar…
 make fume                    # assemble, repackage with Burdock, emit the `fume` executable
 make install                 # copy it to ~/.local/bin
 ```
+
+A release is cut by tagging, not by make. Bump `fumeVersion` in `build.mill`, merge it, wait for
+CI to go green on that commit, and then `git tag -s X.Y.Z && git push --tags`: the tag fires
+`.github/workflows/release.yml`, which publishes the `fume-client` jar and the repackaged
+executables through the shared `release.sh` in
+[propensive/.github](https://github.com/propensive/.github).
 
 ## Native launcher (Burdock)
 

@@ -38,15 +38,15 @@ object settings:
   // module resolves them at. Kept as a single value so the released coordinates and the launcher's
   // dependency coordinates cannot drift apart: burdock externalizes a module only when the exact
   // released jar bytes are on the launcher's classpath, so a mismatch would silently fall back to
-  // inlining. Bump (and commit) per release; release-launcher.sh (in propensive/.github) refuses to
-  // release when this pin disagrees with its VERSION argument. Snapshots override it through
+  // inlining. Bump (and commit) per release; release.sh (in propensive/.github) refuses to
+  // release when this pin disagrees with the tag being released. Snapshots override it through
   // `publishVersion` (below), never here.
   val fumeVersion = "0.4.0"
 
   // What a build of fume identifies itself as, written into the client jar as
   // `META-INF/pyrocosm/fume/version` for `pyrocosm-cli` to read (`fume about`,
   // `fume --version`): the version a release or snapshot is published as, when
-  // `FUME_RELEASE_VERSION` names it (`make snapshot` and `make release` both set it);
+  // `FUME_RELEASE_VERSION` names it (`make snapshot` and the release both set it);
   // otherwise the pinned version with the filtered tree hash of HEAD — the identity
   // `make snapshot` would give this commit — and `-dirty` if the working tree has changes
   // that no commit records. Called from a `Task.Input`, so that HEAD is consulted on every
@@ -371,7 +371,7 @@ trait Publishing extends Toolchain, SonatypeCentralPublishModule:
   // A `Task.Input` reading `Task.env`, not a plain value: `FUME_RELEASE_VERSION` is how
   // `make snapshot` (snapshot.sh in propensive/.github) drives the snapshot version through a
   // Mill daemon that is already running — the daemon freezes `sys.env` at its own start, while
-  // `Task.env` is the environment of each `./mill` invocation. `make release` sets it too, to
+  // `Task.env` is the environment of each `./mill` invocation. A release sets it too, to
   // the version it releases, which the release script insists equals `settings.fumeVersion` —
   // so a release's `publishVersion` is unchanged, and the `META-INF/pyrocosm/fume/version`
   // resource (`buildVersion`) records the release version rather than a tree hash.
