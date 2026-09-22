@@ -1,0 +1,16 @@
+tel 1.0
+
+# Flame's configuration for fume, so that `flame` started anywhere in this repository opens a
+# REPL with the project already on its classpath, and needs no arguments.
+#
+# A RELATIVE classpath entry resolves against the project root — the directory holding
+# `.pyrocosm` — not the invocation directory, so this works from any subdirectory. (fume's own
+# config resolves relative entries against the invocation directory instead; the two tools
+# differ here.) The jar is the one `make test` builds, `./mill fume.test.assembly`: the widest
+# classpath the project has, its own classes and its dependencies together. Before it has been
+# built the REPL simply starts without it.
+classpath out/fume/test/assembly.dest/out.jar
+
+# The presence of this directory is what opts the project into persistent prompt history, kept
+# in `.pyrocosm/flame/history` (gitignored). This raises the limit from the default of 100.
+history 1000
