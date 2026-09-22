@@ -41,7 +41,7 @@ object settings:
   // inlining. Bump (and commit) per release; release.sh (in propensive/.github) refuses to
   // release when this pin disagrees with the tag being released. Snapshots override it through
   // `publishVersion` (below), never here.
-  val fumeVersion = "0.4.0"
+  val fumeVersion = "0.4.1"
 
   // What a build of fume identifies itself as, written into the client jar as
   // `META-INF/pyrocosm/fume/version` for `pyrocosm-cli` to read (`fume about`,
