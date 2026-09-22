@@ -1,0 +1,10 @@
+tel 1.0
+
+# The test assembly (`./mill fume.test.assembly`), whose suites fume discovers from the jar's
+# META-INF/services/probably.Suite index (written by the beneficence compiler plugin, which the
+# `test` module enables for exactly this). Relative entries resolve against the invocation
+# directory, so run fume from the repository root (`make test`).
+#
+# fume testing fume is the tool rule at work: the suites are run by the RELEASED fume pinned in
+# etc/tools, never by the build under test.
+classpath out/fume/test/assembly.dest/out.jar
