@@ -116,12 +116,51 @@ object EventStream:
   def queued(loader: Classloader): Boolean =
     safely(loader.on(t"probably.Streamer$$")).let { streamer => safely(streamer.getMethod("queued")) }.present
 
+  // A consumer of a suite's frames: shown the first (fingerprint) frame, which it may reject,
+  // and then every event frame. The decoding sink is the local run's; a worker relaying a run
+  // to another fume forwards every frame, the fingerprint included, and rejects nothing, so
+  // the controller makes the compatibility decision against its OWN Probably.
+  trait Sink:
+    def fingerprint(theirs: Data): Boolean
+    def frame(frame: Data): Unit
+
+  object Sink:
+    // Decodes each frame with fume's own Probably, once the fingerprints agree.
+    def decoding(handle: probably.TestEvent => Unit): Sink^{handle} = new Sink:
+      def fingerprint(theirs: Data): Boolean =
+        theirs.readable.sameElements(probably.Streamer.fingerprint.readable)
+
+      def frame(frame: Data): Unit = handle(probably.Streamer.read(frame))
+
+    // Forwards every frame, the fingerprint first, and rejects nothing.
+    def forwarding(forward: Data => Unit): Sink^{forward} = new Sink:
+      def fingerprint(theirs: Data): Boolean =
+        forward(theirs)
+        true
+
+      def frame(frame: Data): Unit = forward(frame)
+
   def stream
     ( classpath: LocalClasspath,
       suite:     Text,
       args:      List[Text],
       shared:    Optional[Classloader] = Unset )
     ( handle:   probably.TestEvent => Unit,
+      abort:    () => Boolean,
+      captured: (Text, Text) => Unit )
+    ( using monitor: Monitor )
+  :   Optional[Outcome] =
+
+    frames(classpath, suite, args, shared)(Sink.decoding(handle), abort, captured)
+
+  // As `stream`, but the frames go to `sink` undecoded: the general form both the local run
+  // and a relaying worker are built on.
+  def frames
+    ( classpath: LocalClasspath,
+      suite:     Text,
+      args:      List[Text],
+      shared:    Optional[Classloader] = Unset )
+    ( sink:     Sink^,
       abort:    () => Boolean,
       captured: (Text, Text) => Unit )
     ( using monitor: Monitor )
@@ -146,15 +185,13 @@ object EventStream:
           val task = async:
             loader.use(instance.asInstanceOf[Streamable].stream(suite, arguments, output))
 
-          def matches(left: Data, right: Data): Boolean = left.readable.sameElements(right.readable)
-
           // The task is single-owner and awaited exactly once after the frame chain is
           // exhausted; the separation checker cannot see that through the capture-polymorphic
           // `await`, hence the (sanctioned, narrow) `unsafeAssumeSeparate`.
           def exit(): Int = scala.caps.unsafe.unsafeAssumeSeparate(unsafely(task.await()))
 
-          frames(output.stream) match
-            case first #:: _ if !matches(first, probably.Streamer.fingerprint) =>
+          EventStream.frames(output.stream) match
+            case first #:: _ if !sink.fingerprint(first) =>
               def hex(data: Data): Text = data.serialize[Hex]
               Outcome.Incompatible(hex(first), hex(probably.Streamer.fingerprint))
 
@@ -168,7 +205,7 @@ object EventStream:
               val failure: Atomic[Optional[Throwable]] = Atomic.Ref.vacant[Throwable]
 
               val consumer = async:
-                try rest.each { (frame: Data) => handle(probably.Streamer.read(frame)) }
+                try rest.each { (frame: Data) => sink.frame(frame) }
                 catch case error: Throwable =>
                   failure() = error
                   throw error
