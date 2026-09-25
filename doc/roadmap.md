@@ -87,6 +87,11 @@ otherwise.
   `gpu`, `32-core`, `quiet`; defaulting to the hostname) identifies the host a run executes
   on. The identity is recorded in the run record, so notes and trends (3.1) compare like
   with like, and it is the basis of machine gating (3.4) and remote execution (5.4).
+  *Landed (first cut):* `pyrocosm.Machine` declarations (`host`, `port`, `identity`, `token`,
+  `capability`) read from fume's configuration and the shared
+  `~/.config/pyrocosm/machines.tel`; every `Journal.Run` records the machine it ran on (the
+  `--on` name, or the local hostname). Still to do: the local machine's own `capability`
+  words in the run record, and the hostname default for a machine block's name.
 
 ## Phase 1: Output modes and static reports
 
@@ -195,14 +200,19 @@ otherwise.
   MCP receiving each rerun as a new job.
 - **5.3 Change-driven selection.** `--changed` selects suites whose inputs differ from the
   last attested tree (uses 0.3 and 3.1).
-- **5.4 Remote execution.** Generalise sedentary's `BenchmarkDevice`/`NetworkDevice` (an
-  SSH ControlMaster session with deploy, invoke and undeploy of a staged tree) into a
-  fume-level device for whole runs. Machines are declared in configuration with their
-  identity from 0.5; `--on <machine>` runs the selection there. The classpath is shipped
-  content-addressed using the digests from 0.1, so only jars the remote lacks are
-  transferred, and the remote suite's BinTEL event stream is relayed back over the SSH
-  channel. The local journal, TUI, web UI and notes then see a remote run exactly as a local
-  one. Sharding (below) and machine-gated routing (3.4) build on this.
+- **5.4 Remote execution.** *Landed (first cut):* `--on <machine>` sends the selection to a
+  fume daemon listening on another machine (`fume listen`, or `listen` in its config), over
+  TLS with the worker's self-signed certificate pinned by fingerprint and a shared token. The
+  classpath is shipped content-addressed (a directory bundled into a jar first) to the
+  worker's blob store under `$XDG_CACHE_HOME/pyrocosm/blobs`, so only entries it lacks
+  travel; the worker runs each suite through `EventStream.frames` with a forwarding sink and
+  relays the raw Probably frames, which the controller checks against its own fingerprint and
+  folds into the same model, board, journal and dashboard as a local run. The machines, TLS
+  identity, handshake, framed channel and blob store live in Pyrocosm (`pyrocosm-remote`), so
+  Fury shares them. Still to do: shipping fixture files (`input`, 0.3), more than one run at a
+  time per worker, `list --on` and `watch --on`, caching directory digests by mtime,
+  retention for the blob store, and TEL acceptance so the relay schema can evolve compatibly.
+  Sharding (below) and machine-gated routing (3.4) build on this.
 - **5.5 Notifications.** Desktop first: native notifiers on macOS and Linux, plus the
   terminal OSC 9/777 escape so a notification reaches the user's desktop even when fume
   runs over SSH. Then phone and watch, as an experiment: Web Push from `fume serve` to the
@@ -229,8 +239,9 @@ otherwise.
   `DetailBreakdown` event; a generator typeclass, shrinking and seed events; emergent-axis
   coordinates for property cases; `requires` declarations for machine gating; coverage hooks
   reachable from a host; optional `TestEvent` additions (timeouts, flakiness, environment).
-- Sedentary: factor `BenchmarkDevice`/`NetworkDevice` so fume can reuse the SSH session,
-  staging and relay for whole-run remote execution.
+- Sedentary: `NetworkDevice`, `NetworkDevice.Session` and `NetworkDeviceSessional` are
+  superseded by `fume --on` (a suite declaring `LocalhostDevice` stages and measures on the
+  worker); deprecate them, and make `LocalhostDevice` the default `given`.
 - `octogenarian`: tree hashing of a filtered path set (`ls-files`/`mktree` equivalents).
 - `synesthesia`, `perihelion`, `savagery`: confirm the APIs fume needs are published in the
   local release bundles.

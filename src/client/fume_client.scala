@@ -32,14 +32,17 @@
                                                                                                   */
 package fume
 
-import soundness.*
+// `Relay` is fume's own message enum, not turbulence's `Relay`.
+import soundness.{Relay as _, *}
 
 import probably.TestEvent
+import pyrocosm.{Blobs, Channel, Machine, Peer}
 
 // Explicit, so that it outranks the `Tool` the `soundness.*` wildcard exports (anthology's);
 // `standard` is a package-level extension on it.
 import pyrocosm.Tool
 
+import alphabets.hexLowerCase
 import backstops.silentBackstop
 import executives.completionsExecutive
 import interpreters.posixInterpreter
@@ -58,7 +61,8 @@ val Fume: Tool =
       prose = t"Fume is the test runner for the Soundness ecosystem: it runs Probably tests "
             + t"and Sedentary benchmarks from a prebuilt classpath, discovering suites "
             + t"through the META-INF/services/probably.Suite index.",
-      web   = fume.Dashboard.web )
+      web   = fume.Dashboard.web,
+      services = List(fume.Worker.service) )
 
 // The exit statuses fume can terminate with, declared as objects (a `Status` must be an
 // `object`, not a `val` — soundness#1811) so that the precise union of an `execute` block's
@@ -70,6 +74,8 @@ object UsageError extends Status(2, t"the command line was not understood")
 object NoClasspath extends Status(3, t"no --classpath was specified, or an entry was unreadable")
 object NoSuites extends Status(4, t"no test suites were found on the classpath")
 object Unimplemented extends Status(10, t"this subcommand is not yet implemented")
+object NoMachine extends Status(11, t"the machine named by --on is not configured")
+object RemoteFailed extends Status(12, t"the remote machine could not run the selection")
 
 // Fume's user interface, in one namespace: its subcommands, flags and settings. The object
 // exists so each can carry its NATURAL name — `ui.Test`, `ui.Suite`, `ui.Classpath`,
@@ -83,6 +89,8 @@ object ui:
   val List = Subcommand("list", "list the tests and benchmarks on the classpath")
   val Watch = Subcommand("watch", "watch the classpath jars and rerun tests on change")
   val Serve = Subcommand("serve", "serve the dashboard of runs on the web until Ctrl+C")
+  val Listen = Subcommand("listen", "run selections sent by fume on other machines until Ctrl+C")
+  val Identity = Subcommand("identity", "show this machine's certificate fingerprint and token")
 
   // The classpath holding compiled test suites. Suites on it are discovered ONLY through the
   // `META-INF/services/probably.Suite` index which the beneficence compiler plugin writes;
@@ -176,6 +184,15 @@ object ui:
   // dashboard it serves from the daemon when a config says `serve`.
   val Port = Setting[Text](t"port", t"the port on which `fume serve` serves the dashboard")
 
+  // Remote execution: `--on <machine>` sends the selection to a machine declared in a `machine`
+  // block of the configuration (fume's, or the shared `~/.config/pyrocosm/machines.tel`), whose
+  // fume daemon is listening. `listen-port` is the port `fume listen` accepts controllers on,
+  // and the port the daemon listens on when a config says `listen`.
+  val On = Setting[Text](t"on", t"run the selection on this configured machine")
+
+  val ListenPort =
+    Setting[Text](t"listenPort", t"the port on which `fume listen` accepts other machines' runs")
+
   // The load gate: hold the run back until the system's 1-minute load average has fallen
   // below this value. A `Setting`, so a benchmarking workspace can fix a house threshold in
   // `.pyrocosm/fume/config.tel` (`maxLoad 0.5`) and still override it per invocation;
@@ -266,12 +283,20 @@ def runClient(): Unit =
         val target: Optional[Text] = ui.Target()
         val fork: Boolean = ui.Fork().present
         val terms: List[Text] = selectionTerms(rest)
+        val known: List[Machine] = machines()
+        val on: Optional[Text] = onSetting(known)
 
         completeTerms(classpath, rest)
 
         execute:
           given Stdio = summon[Invocation].stdio
+          val machine: Optional[Machine] = on.let { name => known.seek(_.name == name) }
+
           classpath match
+            case _ if on.present && machine.absent =>
+              Render.announce(t"no machine named ${on.or(t"")} is configured")
+              NoMachine
+
             case classpath: LocalClasspath =>
               val suites: List[Text] = selectSuites(classpath, suite())
 
@@ -305,7 +330,7 @@ def runClient(): Unit =
 
                 val width: Int = terminalWidth()
                 val terse: Boolean = fume.GithubActions.terse
-                val tty: Boolean = summon[DaemonService[?]].cliInput == ethereal.Stdin.Terminal
+                val tty: Boolean = summon[DaemonService[?]].cliInput == ethereal.Terminus.Terminal
 
                 import probates.cancelProbate
                 import denominative.dysasymptotics.linearSize
@@ -321,7 +346,7 @@ def runClient(): Unit =
                 val aborted: Atomic[Boolean] = Atomic(false)
 
                 trap:
-                  case Interrupt.Int =>
+                  case profanity.Signal(Interrupt.Int, _, _, _) =>
                     aborted() = true
                     SignalResponse.Accept
 
@@ -335,6 +360,9 @@ def runClient(): Unit =
                 // invocation (the launcher reports whether the client is on a terminal), which
                 // renders once at the end instead. It is built whenever someone can see it: on
                 // this terminal, or through the dashboard `fume serve` is serving.
+                if fork && machine.present
+                then Render.announce(t"--fork does not apply to a remote run; ignoring it")
+
                 val model = Model()
                 val shown: Boolean = !terse && tty && !fork
 
@@ -466,7 +494,8 @@ def runClient(): Unit =
                       Invoker.detect,
                       classpath(),
                       args,
-                      suites )
+                      suites,
+                      machine.let(_.name).or(Machine.Identity.local.hostname) )
 
                 board.let { board => Server.attach(journalId, board) }
 
@@ -620,11 +649,206 @@ def runClient(): Unit =
                     case _ =>
                       (failures, ran, Nil: List[Text])
 
+                // The REMOTE loop: the whole selection goes to the machine's worker, which runs
+                // the suites and relays each one's event frames back; they fold into the same
+                // model, board and journal as a local suite's, the schema fingerprint checked
+                // here against fume's own Probably exactly as `EventStream` checks a local
+                // suite's. Yields as `eventRun` does, with nothing left for the legacy loop.
+                def remoteRun(machine: Machine): (Int, Int, List[Text]) =
+                  Render.announce(t"connecting to ${machine.name} (${machine.host})")
+
+                  // Each entry's digest and bytes: a directory is bundled into a jar first.
+                  val prepared: List[(Blobs.Entry, Data)] =
+                    classpath.entries.bind:
+                      case Classpath.Entry.Jar(path)       => List(unsafely(Blobs.prepare(path.as[Path on Linux], path)))
+                      case Classpath.Entry.Directory(path) => List(unsafely(Blobs.prepare(path.as[Path on Linux], path)))
+                      case _                               => Nil
+
+                  // Per-suite state as the frames arrive, in one object so the consumer task
+                  // captures a single reference rather than a set of mutable locals.
+                  val state: RemoteState = RemoteState(Documenting.totals(model.state()))
+
+                  def began(suite: Text): Unit =
+                    if board.absent then Render.announce(t"running $suite on ${machine.name}")
+                    Journal.began(journalId, suite)
+                    progress.begin(suite)
+                    state.suiteStarted = now()
+                    val before: Model.State = model.state()
+                    state.beforeTotals = Documenting.totals(before)
+                    state.beforeFatals = before.fatals.size
+                    model.enter(suite)
+                    state.current = suite
+                    state.expectingFingerprint = true
+                    state.incompatible = false
+
+                  def frame(suite: Text, data: Data): Unit =
+                    if state.expectingFingerprint then
+                      state.expectingFingerprint = false
+                      if !data.readable.sameElements(probably.Streamer.fingerprint.readable) then
+                        state.incompatible = true
+                        Render.announce(t"$suite was built against an incompatible Soundness; its events cannot be read")
+                        Render.announce(t"  the suite's event schema is ${data.serialize[Hex]}")
+                        Render.announce(t"  fume's is                   ${probably.Streamer.fingerprint.serialize[Hex]}")
+                    else if !state.incompatible then
+                      model.handle(probably.Streamer.read(data))
+                      board.let(_.refresh())
+
+                  def ended(suite: Text, outcome: Text, exit: Int, detail: Text): Unit =
+                    val after: Model.State = model.state()
+                    val suiteTotals: Doc.Totals = Documenting.totals(after) - state.beforeTotals
+                    val suiteFatal: Boolean = after.fatals.size > state.beforeFatals
+                    val emptySelection: Boolean = exit == 1 && suiteTotals.total == 0 && !suiteFatal
+
+                    val passed: Boolean = outcome match
+                      case Relay.completed => !state.incompatible && (exit == 0 || emptySelection)
+                      case Relay.failed =>
+                        Render.announce(t"the worker's event consumer failed while $suite was running")
+                        detail.cut(t"\n").each { (line: Text) => Render.announce(t"  $line") }
+                        false
+                      case _ =>
+                        Render.announce(t"$suite cannot stream events, so the worker did not run it")
+                        false
+
+                    Journal.record(journalId, suite, passed, suiteTotals, state.suiteStarted)
+                    progress.end(suite)
+                    state.current = Unset
+                    state.ran += 1
+                    if !passed then state.failures += 1
+                    if !passed && failFast then state.stop = true
+
+                  val outcome: scala.Either[Peer.Error.Reason, Unit] =
+                    Peer.exchange[Relay, Unit](machine, t"fume", Fume.version, Relay.codec, Relay.port): session =>
+                        val identity = session.peer.identity
+
+                        Render.announce:
+                          t"running on ${machine.name}: ${identity.os} ${identity.arch}, ${identity.cores} cores, fume ${session.peer.version}"
+
+                        session.send(Relay.Plan(prepared.map(_(0)), suites, args, maxLoad))
+
+                        session.receive() match
+                          case Channel.Frame.Message(Relay.Need(digests)) =>
+                            val shipping: List[(Blobs.Entry, Data)] =
+                              prepared.filter { (entry, _) => digests.has(entry.digest) }
+
+                            if !shipping.nil then
+                              val bytes: Long = shipping.fold(0L) { (sum, entry) => sum + entry(1).length }
+                              Render.announce(t"shipping ${shipping.size} of ${prepared.size} classpath entries (${bytes/1024} KiB)")
+
+                            shipping.each: (entry, data) =>
+                              Blobs.chunks(data).each: (offset, chunk) =>
+                                session.send(Relay.Blob(entry.digest, offset, offset + chunk.length >= data.length), chunk)
+
+                            session.send(Relay.Start)
+
+                            // Frames are consumed on their own task, so this thread can notice
+                            // an abort and forward it while a receive blocks.
+                            val consumer = async:
+                              def recur(): Unit = session.receive() match
+                                case Channel.Frame.Message(Relay.Began(suite)) =>
+                                  began(suite)
+                                  recur()
+
+                                case Channel.Frame.Message(Relay.Frame(suite)) =>
+                                  session.receive() match
+                                    case Channel.Frame.Raw(data) =>
+                                      frame(suite, data)
+                                      recur()
+
+                                    case _ =>
+                                      Render.announce(t"the connection to ${machine.name} was lost")
+
+                                case Channel.Frame.Message(Relay.Captured(suite, out, err)) =>
+                                  captures.append(Captures.Captured(suite, out, err))
+                                  recur()
+
+                                case Channel.Frame.Message(Relay.Ended(suite, outcome, exit, detail)) =>
+                                  ended(suite, outcome, exit, detail)
+                                  recur()
+
+                                case Channel.Frame.Message(Relay.Rejected(reason)) =>
+                                  Render.announce(t"${machine.name} rejected the run: $reason")
+
+                                case Channel.Frame.Message(Relay.Done) =>
+                                  ()
+
+                                case Channel.Frame.Closed =>
+                                  Render.announce(t"the connection to ${machine.name} was lost")
+
+                                case _ =>
+                                  recur()
+
+                              recur()
+
+                            def drained(): Boolean =
+                              scala.caps.unsafe.unsafeAssumeSeparate(safely(consumer.await(0.05*Second)).present)
+
+                            def spin(): Unit =
+                              if !drained() then
+                                if (aborted() || state.stop) && !state.abortSent then
+                                  state.abortSent = true
+                                  session.send(Relay.Abort)
+
+                                spin()
+
+                            spin()
+
+                          case Channel.Frame.Message(Relay.Rejected(reason)) =>
+                            Render.announce(t"${machine.name} rejected the run: $reason")
+
+                          case _ =>
+                            Render.announce(t"the connection to ${machine.name} was lost")
+
+                  outcome match
+                    case scala.Left(reason) => Render.announce(Peer.explain(reason))
+                    case _                  => ()
+
+                  // A suite left open by a lost connection is recorded as failed.
+                  state.current.let: suite =>
+                    Journal.record(journalId, suite, false, Unset, state.suiteStarted)
+                    progress.end(suite)
+                    state.ran += 1
+                    state.failures += 1
+
+                  (state.failures, state.ran, Nil: List[Text])
+
                 // The streaming decision is made ONCE per classpath: by the listing pass when it
                 // ran, otherwise by the first suite of the run. Whichever way, the event suites'
                 // report renders first and the tail runs legacy.
                 val result: (Int, Int, Optional[Doc.Totals]) =
-                  if fork then
+                  if machine.present then
+                    val (failures, ran, _) = machine.let(remoteRun(_)).or((0, 0, Nil: List[Text]))
+                    model.finish()
+
+                    frontend.let: frontend =>
+                      frontend.stop()
+                      safely(closed.attend())
+
+                    val document = Documenting.document(model.state())
+
+                    board.let: board =>
+                      if Server.serving then
+                        board.refresh(force = true)
+                        val blocks: List[pyrocosm.Block] = Blocks.document(document, board.figures)
+                        Server.detach(journalId, title, blocks + Captures.blocks(captures.to(List)))
+                      else
+                        Server.detach(journalId, title, Nil)
+
+                    captures.each: captured =>
+                      if !captured.empty then
+                        val kept: Text = Captures.record(captured).lay(t"not kept"): path =>
+                          t"kept in ${path.encode}"
+
+                        Render.announce
+                          ( t"${captured.suite} printed ${captured.lines} lines outside its report; $kept" )
+
+                    val totals: Optional[Doc.Totals] =
+                      if ran == 0 then Unset else
+                        if aborted() then Render.announce(t"aborted; the partial report follows")
+                        Render.suite(document, width, terse)
+                        document.totals
+
+                    (failures, ran, totals)
+                  else if fork then
                     val (failures, ran) = legacyRun(suites, 0, 0)
                     (failures, ran, Unset)
                   else if listed == false then
@@ -839,11 +1063,11 @@ def runClient(): Unit =
             import webserverErrorPages.minimalErrorPage
 
             val stdio: Stdio = summon[Stdio]
-            val tty: Boolean = summon[DaemonService[?]].cliInput == ethereal.Stdin.Terminal
+            val tty: Boolean = summon[DaemonService[?]].cliInput == ethereal.Terminus.Terminal
             val aborted: Atomic[Boolean] = Atomic(false)
 
             trap:
-              case Interrupt.Int =>
+              case profanity.Signal(Interrupt.Int, _, _, _) =>
                 aborted() = true
                 SignalResponse.Accept
 
@@ -881,6 +1105,80 @@ def runClient(): Unit =
             frontend.stop()
             Render.announce(t"the dashboard has stopped")
             Exit.Ok
+
+        // `fume listen [--listen-port]` — accept runs from controllers on other machines until
+        // Ctrl+C, as the daemon does for as long as it lives when a config says `listen`. The
+        // machine's identity fingerprint is printed, for the controllers' `machine` blocks.
+        case ui.Listen() :: _ =>
+          val port: Int = ui.ListenPort() match
+            case text: Text => safely(text.as[Int]).or(Relay.port)
+            case _          => Relay.port
+
+          execute:
+            given Stdio = summon[Invocation].stdio
+            import probates.cancelProbate
+
+            val stdio: Stdio = summon[Stdio]
+            val tty: Boolean = summon[DaemonService[?]].cliInput == ethereal.Terminus.Terminal
+            val aborted: Atomic[Boolean] = Atomic(false)
+
+            trap:
+              case profanity.Signal(Interrupt.Int, _, _, _) =>
+                aborted() = true
+                SignalResponse.Accept
+
+            safely(Peer.identity) match
+              case identity: Peer.Identity =>
+                Render.announce(t"this machine's identity is ${Peer.render(identity.fingerprint)}")
+                Render.announce(t"listening for fume controllers on port $port (Ctrl+C to stop)")
+
+                val stopped: Atomic[Boolean] = Atomic(false)
+
+                async:
+                  try Fume.run(fume.Worker.service, port) finally stopped() = true
+
+                val input: Live.Input = Live.Input(aborted)
+
+                def loop(): Unit =
+                  if tty then while stdio.in.available() > 0 do input.offer(stdio.in.read())
+
+                  if !aborted() && !stopped() then
+                    snooze(0.25*Second)
+                    loop()
+
+                loop()
+                fume.Worker.service.stop()
+                Render.announce(t"the listener has stopped")
+                Exit.Ok
+
+              case _ =>
+                Render.announce(t"this machine's identity could not be created; is `keytool` available?")
+                RemoteFailed
+
+        // `fume identity` — this machine's certificate fingerprint, for a controller's
+        // `machine` block, and where its token lives.
+        case ui.Identity() :: _ =>
+          execute:
+            given Stdio = summon[Invocation].stdio
+
+            safely(Peer.identity) match
+              case identity: Peer.Identity =>
+                Out.println(t"identity  ${Peer.render(identity.fingerprint)}")
+                Peer.tokenFile.let { file => Out.println(t"token     ${file.encode}") }
+                Peer.token
+                Out.println(t"")
+                Out.println(t"Declare this machine to a controller as:")
+                Out.println(t"")
+                Out.println(t"  machine ${Machine.Identity.local.hostname}")
+                Out.println(t"    host      ${Machine.Identity.local.hostname}")
+                Out.println(t"    port      ${Relay.port}")
+                Out.println(t"    identity  ${Peer.render(identity.fingerprint)}")
+                Out.println(t"    token     <a file holding the token above>")
+                Exit.Ok
+
+              case _ =>
+                Out.println(t"this machine's identity could not be created; is `keytool` available?")
+                RemoteFailed
 
         case ui.Watch() :: _ =>
           val classpath: Optional[LocalClasspath] = classpathSetting()
@@ -970,6 +1268,19 @@ private def suiteFlag(classpath: Optional[LocalClasspath])(using Cli, Interprete
 
   ui.Suite()
 
+// The machines declared to this invocation: fume's repository configuration, then the user's,
+// then the shared `~/.config/pyrocosm/machines.tel`, a name's first declaration winning. Read
+// eagerly, in the pure section, so `--on` can complete to the names without a lambda having
+// to capture the environment.
+private def machines()(using cli: Cli, environment: Environment): List[Machine] =
+  val directory: Text = cli.workingDirectory.directory()
+  Machine.resolve(List(Fume.repoConfig(directory), Fume.userConfig, Machine.shared))
+
+// Reads `--on`, its operand completing to the configured machines' names.
+private def onSetting(known: List[Machine])(using Cli, Interpreter, Configurator): Optional[Text] =
+  given discoverable: (Text is Discoverable) = (_, _) => known.map { machine => Suggestion(machine.name) }
+  ui.On()
+
 // Reads `--kind`, its operand completing to the kind names, comma-continued.
 private def kindSetting()(using Cli, Interpreter, Configurator): Optional[Text] =
   given discoverable: (Text is Discoverable) = (operand, _) => Suggest.kinds(operand)
@@ -1029,7 +1340,7 @@ private def completeTerms(classpath: Optional[LocalClasspath], rest: List[Argume
 private def selectionArguments(rest: List[Argument]): List[Argument] =
   val valueFlags: List[Flag] =
     List(ui.Classpath.flag, ui.Suite, ui.Kind.flag, ui.Tag, ui.Axis, ui.Exclude, ui.FailFast.flag,
-         ui.MaxLoad.flag, ui.DurationScale.flag, ui.Target.flag)
+         ui.MaxLoad.flag, ui.DurationScale.flag, ui.Target.flag, ui.On.flag, ui.ListenPort.flag)
 
   def recur(args: List[Argument], terms: List[Argument]): List[Argument] = args match
     case head :: tail =>
@@ -1108,7 +1419,36 @@ private def usage()(using invocation: Invocation): UsageError.type =
   Out.println(t"  list     list the tests and benchmarks on the classpath")
   Out.println(t"  watch    watch the classpath jars and rerun tests on change")
   Out.println(t"  serve    serve the dashboard of runs on the web until Ctrl+C")
+  Out.println(t"  listen   run selections sent by fume on other machines until Ctrl+C")
+  Out.println(t"  identity show this machine's certificate fingerprint and token")
   Out.println(t"  about    show fume's version and daemon")
   Out.println(t"  install  install shell tab-completions and the fume manpage")
   Out.println(t"  quit     stop the background daemon")
   UsageError
+
+// The controller's view of a remote run as its frames arrive: which suite is open, what the
+// model held before it, and the tallies. One object, so the consuming task captures a single
+// reference. Its fields are written by the consumer and read by the invocation thread after
+// the consumer has finished (or, for `stop` and `abortSent`, polled), which the `@volatile`s
+// make safe.
+private final class RemoteState(totals: Doc.Totals):
+  @scala.caps.unsafe.untrackedCaptures
+  @volatile var failures: Int = 0
+  @scala.caps.unsafe.untrackedCaptures
+  @volatile var ran: Int = 0
+  @scala.caps.unsafe.untrackedCaptures
+  @volatile var current: Optional[Text] = Unset
+  @scala.caps.unsafe.untrackedCaptures
+  @volatile var suiteStarted: Instant over Unix = now()
+  @scala.caps.unsafe.untrackedCaptures
+  @volatile var beforeTotals: Doc.Totals = totals
+  @scala.caps.unsafe.untrackedCaptures
+  @volatile var beforeFatals: Int = 0
+  @scala.caps.unsafe.untrackedCaptures
+  @volatile var expectingFingerprint: Boolean = true
+  @scala.caps.unsafe.untrackedCaptures
+  @volatile var incompatible: Boolean = false
+  @scala.caps.unsafe.untrackedCaptures
+  @volatile var stop: Boolean = false
+  @scala.caps.unsafe.untrackedCaptures
+  @volatile var abortSent: Boolean = false

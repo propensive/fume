@@ -135,6 +135,9 @@ object settings:
   // transitively.
   def soundnessDeps(soundness: String, pyrocosm: String) = Seq(
     mvn"dev.propensive:aviation-core:$soundness",       // timespec literals (0.2*Second)
+    mvn"dev.propensive:coaxial-jvm:$soundness",         // TLS sockets, through pyrocosm-remote
+    mvn"dev.propensive:gastronomy-core:$soundness",     // classpath digests, through pyrocosm-remote
+    mvn"dev.propensive:zeppelin-core:$soundness",       // bundling class directories into jars
     mvn"dev.propensive:burdock-core:$soundness",        // externalize + the repackager
     mvn"dev.propensive:digression-ansi:$soundness",     // stack-trace diagnostics
     mvn"dev.propensive:escapade-io:$soundness",         // Teletype ↔ Stdio writables
@@ -157,7 +160,8 @@ object settings:
     mvn"dev.propensive:pyrocosm-model:$pyrocosm",       // the board's semantic model
     mvn"dev.propensive:pyrocosm-terminal:$pyrocosm",    // its terminal frontend,
     mvn"dev.propensive:pyrocosm-web:$pyrocosm",         // and its web frontend
-    mvn"dev.propensive:pyrocosm-cli:$pyrocosm")         // the standard command line (Tool)
+    mvn"dev.propensive:pyrocosm-cli:$pyrocosm",         // the standard command line (Tool)
+    mvn"dev.propensive:pyrocosm-remote:$pyrocosm")      // machines, the TLS peer, the channel, blobs
 
 // Exposes the fork compiler's `release/lib` jars (from a local build via `settings.scalaHome`, or
 // downloaded from the `settings.scalaRelease` GitHub release) as a Maven-layout repository,
@@ -394,9 +398,21 @@ trait Publishing extends Toolchain, SonatypeCentralPublishModule:
     PathRef(jar)
 
 object fume extends Project:
+  // The messages a controller and a worker exchange (`fume.Relay`) and their derived BinTEL
+  // codec, ALONE in a module compiled without capture checking, as Probably keeps its event
+  // codec in `probably-events`: stratiform's derived codecs expand to instances the capture
+  // checker sees as fresh where a pure instance is required, so their derivation site cannot be
+  // a checked module. Published as `dev.propensive:fume-relay`.
+  object relay extends Component(), Publishing:
+    def mvnDeps = Task(settings.soundnessDeps(deps.soundness(), deps.pyrocosm()))
+
+    override def scalacOptions =
+      (settings.scalaOptions ++ settings.predef).filterNot: option =>
+        option == "-Ycc-new" || option.contains("captureChecking") || option.contains("separationChecking")
+
   // All of fume's logic — subcommands, flags, dispatch and (later) the test-running machinery.
   // Published to Maven Central as `dev.propensive:fume-client`.
-  object client extends Component(), Publishing:
+  object client extends Component(relay), Publishing:
     def mvnDeps = Task(settings.soundnessDeps(deps.soundness(), deps.pyrocosm()))
 
     // Fume's own version, as `fume about` and `fume --version` report it: see
@@ -449,7 +465,7 @@ object fume extends Project:
 // sync script (propensive/.github) reconstructs the ivy2 layout coursier resolves from, which is
 // how `make snapshot` publishes an unreleased build for a dependent repository to pin.
 object release extends Module:
-  def modules: Seq[PublishModule] = Seq(fume.client)
+  def modules: Seq[PublishModule] = Seq(fume.relay, fume.client)
 
   private def withDescriptors(source: os.Path, target: os.Path, entries: Seq[(String, os.Path)])
   :   Unit =

@@ -68,6 +68,9 @@ object Journal:
 
     def duration: Duration = finished - started
 
+  // `machine` is where the suites ran: the configured name of the machine a run was sent to
+  // with `--on`, or the local hostname; a worker records the controller's hostname instead, so
+  // its own dashboard shows who asked.
   case class Run
     ( id:        Int,
       client:    Text,
@@ -80,7 +83,8 @@ object Journal:
       current:   Optional[Text],
       finished:  Optional[Instant over Unix],
       outcome:   Optional[Outcome],
-      totals:    Optional[Doc.Totals] ):
+      totals:    Optional[Doc.Totals],
+      machine:   Text ):
 
     def running: Boolean = finished.absent
     def duration: Optional[Duration] = finished.let(_ - started)
@@ -109,7 +113,8 @@ object Journal:
       invoker:   Invoker,
       classpath: Text,
       selection: List[Text],
-      scheduled: List[Text] )
+      scheduled: List[Text],
+      machine:   Text )
   :   Int =
 
     mutex:
@@ -118,7 +123,7 @@ object Journal:
       val run =
         Run
           ( next, client, invoker, now(), classpath, selection, scheduled,
-            Nil, Unset, Unset, Unset, Unset )
+            Nil, Unset, Unset, Unset, Unset, machine )
 
       active0 = run :: active0
       next
