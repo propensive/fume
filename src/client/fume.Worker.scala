@@ -226,13 +226,22 @@ object Worker:
       case _ =>
         failures
 
-    val failures: Int = recur(suites, 0)
+    // The journal entry is completed however the run ends — including a controller that
+    // vanished mid-suite, whose next `send` throws — so no run is left active in this
+    // daemon's own dashboard for as long as it lives. The closing `done` and the watcher's
+    // cancellation are best-effort for the same reason: the connection may already be gone.
+    try
+      val failures: Int = recur(suites, 0)
 
-    val outcome: Journal.Outcome =
-      if aborted() then Journal.Outcome.Aborted
-      else if failures == 0 then Journal.Outcome.Passed
-      else Journal.Outcome.Failed
+      val outcome: Journal.Outcome =
+        if aborted() then Journal.Outcome.Aborted
+        else if failures == 0 then Journal.Outcome.Passed
+        else Journal.Outcome.Failed
 
-    Journal.finish(journalId, outcome, Unset)
-    session.send(Relay.Done)
-    watcher.cancel()
+      Journal.finish(journalId, outcome, Unset)
+      safely(session.send(Relay.Done))
+
+    catch case error: Throwable =>
+      Journal.finish(journalId, Journal.Outcome.Aborted, Unset)
+
+    finally watcher.cancel()

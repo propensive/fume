@@ -55,6 +55,21 @@ import systems.javaBaseSystem
 import temporaryDirectories.systemTemporaryDirectory
 
 object Tests extends Suite(m"Fume tests"):
+  // A `Suite` has no `main` of its own, but a host that cannot read this jar's event schema
+  // falls back to forking `java -cp <classpath> fume.Tests <terms…>`, so one is provided here;
+  // the terms arrive newline-separated, as `Suite#invoke` expects them.
+  // `scala.Array`, not proscenium's: this is the JVM's own `main` signature.
+  def main(args: scala.Array[String]): Unit =
+    val builder = StringBuilder()
+    var index = 0
+
+    while index < args.length do
+      if index > 0 then builder.append("\n")
+      builder.append(args(index))
+      index += 1
+
+    runSuite(builder.toString.tt)
+
   private def ref(id: Text, moniker: Optional[Text], path: List[Text]): TestEvent.Ref =
     TestEvent.Ref(id, path.last.or(t""), moniker, path, t"", 0)
 
