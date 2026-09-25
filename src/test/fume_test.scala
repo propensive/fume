@@ -32,7 +32,8 @@
                                                                                                   */
 package fume
 
-import soundness.*
+// `Relay` is fume's own message enum, not turbulence's `Relay`.
+import soundness.{Relay as _, *}
 
 // A wildcard import brings no givens: the `n"…"` tag literal's plane inference needs the
 // moniker and tag planes' `Nominative`s in lexical scope, by name. The compiler reports both
@@ -738,6 +739,71 @@ object Tests extends Suite(m"Fume tests"):
       test(m"budgets of an hour or more show hours and minutes"):
         Budget.show(3_720_000_000_000L)
       . assert(_ == t"1h02m")
+
+    suite(m"Relay"):
+      // The wire format between a controller and a worker: every message shape must survive
+      // the round trip through the derived BinTEL codec, since a worker built from a different
+      // fume decodes exactly these bytes.
+      def roundTrip(message: Relay): Relay = Relay.codec.decode(Relay.codec.encode(message))
+
+      test(m"a plan round-trips with its entries, suites and selection"):
+        val entries = List(pyrocosm.Blobs.Entry(t"ab"*32, true, t"out/classes"),
+                           pyrocosm.Blobs.Entry(t"cd"*32, false, t"lib.jar"))
+
+        roundTrip(Relay.Plan(entries, List(t"a.Tests"), List(t"kind:bench"), t"0.5"))
+      . assert(_ == Relay.Plan(List(pyrocosm.Blobs.Entry(t"ab"*32, true, t"out/classes"),
+                                    pyrocosm.Blobs.Entry(t"cd"*32, false, t"lib.jar")),
+                               List(t"a.Tests"), List(t"kind:bench"), t"0.5"))
+
+      test(m"a plan with no max-load and no selection round-trips"):
+        roundTrip(Relay.Plan(Nil, List(t"a.Tests"), Nil, Unset))
+      . assert(_ == Relay.Plan(Nil, List(t"a.Tests"), Nil, Unset))
+
+      test(m"the digests a worker needs round-trip"):
+        roundTrip(Relay.Need(List(t"ab"*32, t"cd"*32)))
+      . assert(_ == Relay.Need(List(t"ab"*32, t"cd"*32)))
+
+      test(m"an empty need round-trips as empty"):
+        roundTrip(Relay.Need(Nil))
+      . assert(_ == Relay.Need(Nil))
+
+      test(m"a blob's digest, offset and last flag round-trip"):
+        roundTrip(Relay.Blob(t"ef"*32, 1048576, true))
+      . assert(_ == Relay.Blob(t"ef"*32, 1048576, true))
+
+      test(m"the messages carrying no payload round-trip"):
+        List(roundTrip(Relay.Start), roundTrip(Relay.Abort), roundTrip(Relay.Done))
+      . assert(_ == List(Relay.Start, Relay.Abort, Relay.Done))
+
+      test(m"a suite's beginning and its frame announcement round-trip"):
+        (roundTrip(Relay.Began(t"a.Tests")), roundTrip(Relay.Frame(t"a.Tests")))
+      . assert(_ == (Relay.Began(t"a.Tests"), Relay.Frame(t"a.Tests")))
+
+      test(m"captured output round-trips, newlines and all"):
+        roundTrip(Relay.Captured(t"a.Tests", t"one\ntwo\n", t""))
+      . assert(_ == Relay.Captured(t"a.Tests", t"one\ntwo\n", t""))
+
+      test(m"each way a suite can end round-trips"):
+        List(roundTrip(Relay.Ended(t"a.Tests", Relay.completed, 0, t"")),
+             roundTrip(Relay.Ended(t"a.Tests", Relay.failed, 2, t"a trace")),
+             roundTrip(Relay.Ended(t"a.Tests", Relay.legacy, 2, t"")))
+      . assert(_ == List(Relay.Ended(t"a.Tests", Relay.completed, 0, t""),
+                         Relay.Ended(t"a.Tests", Relay.failed, 2, t"a trace"),
+                         Relay.Ended(t"a.Tests", Relay.legacy, 2, t"")))
+
+      test(m"a rejection round-trips with its reason"):
+        roundTrip(Relay.Rejected(t"the worker has no blob store"))
+      . assert(_ == Relay.Rejected(t"the worker has no blob store"))
+
+      // The fingerprint names the protocol in the handshake, so a worker whose `Relay` differs
+      // in any field, order or case refuses the connection rather than misreading it.
+      test(m"the protocol fingerprint is 32 bytes, and stable across summonings"):
+        (Relay.codec.fingerprint.length, Relay.codec.protocol == Relay.codec.protocol)
+      . assert(_ == (32, true))
+
+      test(m"the worker's default port is not the dashboard's"):
+        Relay.port != fume.Dashboard.web.port
+      . assert(_ == true)
 
     // A tagged, axial test of fume's own, so that `fume list --axes`, `tag:selection` and
     // `scale=` completion can be exercised against this very suite.
