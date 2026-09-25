@@ -215,12 +215,12 @@ object Tests extends Suite(m"Fume tests"):
     . assert(_ == (t"out/old.jar", t"out/renewed.jar"))
 
     test(m"a started run is entered in the active ledger"):
-      val id = Journal.start(t"1", Invoker.Human, t"out.jar", List(t"kind:bench"), List(t"a.Tests"))
+      val id = Journal.start(t"1", Invoker.Human, t"out.jar", List(t"kind:bench"), List(t"a.Tests"), t"here")
       Journal.active.seek(_.id == id).let { run => (run.running, run.scheduled) }
     . assert(_ == (true, List(t"a.Tests")))
 
     test(m"a finished run moves to the completed ledger"):
-      val id = Journal.start(t"1", Invoker.Human, t"out.jar", List(), List(t"b.Tests"))
+      val id = Journal.start(t"1", Invoker.Human, t"out.jar", List(), List(t"b.Tests"), t"here")
       Journal.finish(id, Journal.Outcome.Passed, Unset)
 
       ( Journal.active.exists(_.id == id),
@@ -229,7 +229,7 @@ object Tests extends Suite(m"Fume tests"):
     . assert(_ == (false, Journal.Outcome.Passed))
 
     test(m"each suite's verdict is recorded against its run"):
-      val id = Journal.start(t"1", Invoker.Human, t"out.jar", List(), List(t"c.Tests", t"d.Tests"))
+      val id = Journal.start(t"1", Invoker.Human, t"out.jar", List(), List(t"c.Tests", t"d.Tests"), t"here")
       Journal.record(id, t"c.Tests", true, Unset, at(0L))
       Journal.record(id, t"d.Tests", false, Unset, at(0L))
       Journal.finish(id, Journal.Outcome.Failed, Unset)
@@ -240,7 +240,7 @@ object Tests extends Suite(m"Fume tests"):
     . assert(_ == (List(t"c.Tests", t"d.Tests"), 1))
 
     test(m"a run in flight names the suite it is running"):
-      val id = Journal.start(t"1", Invoker.Human, t"out.jar", List(), List(t"e.Tests"))
+      val id = Journal.start(t"1", Invoker.Human, t"out.jar", List(), List(t"e.Tests"), t"here")
       Journal.began(id, t"e.Tests")
       val during = Journal.active.seek(_.id == id).let(_.current)
       Journal.record(id, t"e.Tests", true, Unset, at(0L))

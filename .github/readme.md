@@ -20,6 +20,9 @@ fume run -c out.jar json/* 'N<=64'      # a path glob and an axis constraint
 fume list -c out.jar                    # enumerate tests without running them
 fume watch -c out.jar                   # rerun whenever the jar changes
 fume serve                              # serve the dashboard of runs until Ctrl+C
+fume run -c out.jar --on linux-box      # run the selection on another machine's fume
+fume listen                             # accept runs sent from other machines until Ctrl+C
+fume identity                           # this machine's certificate fingerprint, for controllers
 fume install                            # install tab-completions and the manpage
 fume about                              # fume's version, and the daemon serving it
 fume --version                          # the version alone
@@ -74,6 +77,48 @@ dashboard serves on (8090 by default), and a bare `serve` asks the daemon to ser
 from the moment it starts, for as long as it lives, without a `fume serve` ever being run — so
 `serve` in `~/.config/fume/config.tel` keeps a dashboard at `http://localhost:8090/` whenever fume
 is in use. `fume quit` stops both.
+
+## Running tests on another machine
+
+A selection can be sent to another machine whose fume daemon is listening, with `--on <machine>`.
+The local fume (the *controller*) ships the classpath content-addressed — only the jars the
+other machine (the *worker*) has not seen travel, and a directory of classes is bundled into a
+jar first — and the worker runs the suites exactly as a local `fume run` would, relaying each
+suite's event frames back verbatim. The controller's terminal board, report, journal and
+dashboard then show the run as if it were local, labelled with the machine's name. Benchmark
+suites need no change: Sedentary stages and measures on the worker, in a fresh measurement JVM
+per cell, as it does locally. Tests that read fixture files by path will not find them on the
+worker in this first version.
+
+The worker listens on TCP with TLS. Its identity is a self-signed certificate generated on the
+first `fume listen` (or the first daemon start with `listen` in a config), shared by every
+Pyrocosm tool on that machine and kept under `$XDG_STATE_HOME/pyrocosm/remote/`; `fume identity`
+prints its fingerprint. A controller pins that fingerprint and presents a shared token — the
+SSH known-hosts model, expressed in TLS. Machines are declared once, for every Pyrocosm tool, in
+`~/.config/pyrocosm/machines.tel`, or in fume's own configuration files:
+
+```
+tel 1.0
+
+machine linux-box
+  host      build.example.org
+  port      8091
+  identity  sha256:3f9a…                     # from `fume identity` on that machine
+  token     ~/.config/pyrocosm/tokens/linux-box   # a file holding the worker's token
+  capability linux x86-64 quiet
+```
+
+On the worker, `listen` in a config file starts the listener with the daemon, `listen-port` sets
+its port (8091 by default), and `listen-token` names the token it expects (a file, or the token
+itself); without one, the machine's own token at `~/.config/pyrocosm/token` is generated and
+used. `capability` words are reported to controllers. A worker runs one selection at a time and
+refuses a second controller as busy; Ctrl+C at the controller aborts the run on the worker, as
+does a lost connection.
+
+The two fumes need not be the same version: the worker never decodes a suite's events, so only
+the layout of fume's own relay messages must agree, which the handshake checks by fingerprint
+before anything is sent. The suite's Probably must match the controller's fume, as for a local
+run.
 
 ## Status
 

@@ -34,34 +34,64 @@ package fume
 
 import soundness.*
 
-object Invoker:
-  val all: List[Invoker] = List(Human, Claude, Codex, Remote)
+import pyrocosm.{Blobs, Channel}
 
-  // The invoker of the current invocation. Each variable must be set to exactly `1`; Codex's is
-  // checked first, so an environment carrying both reads as Codex.
-  def detect(using Environment): Invoker =
-    if safely(Environment.codexSandbox[Text]) == t"1" then Codex
-    else if safely(Environment.claudecode[Text]) == t"1" then Claude
-    else Human
+// Fume's own messages over a Pyrocosm `Channel`: what a controller (the fume the user invoked)
+// and a worker (the fume daemon on another machine) say to each other once Pyrocosm's handshake
+// has welcomed the connection. Bulk payloads — a classpath entry being shipped, a suite's test
+// event frame — travel as the RAW frame that follows the message announcing them, never through
+// this codec; and a worker never decodes a suite's event frames at all: they are Probably's
+// `Streamer` frames, forwarded byte for byte, so the controller checks their schema
+// fingerprint against its own exactly as it does for a local suite. Only this enum's layout
+// must agree between the two fumes.
+//
+//   controller → worker   plan      the classpath (by digest), the suites, the selection
+//   worker → controller   need      the digests the worker's blob store lacks
+//   controller → worker   blob …    one chunk of one entry, followed by its bytes
+//   controller → worker   start     everything is there; run
+//   worker → controller   began     a suite is starting
+//   worker → controller   frame …   one of the suite's event frames follows
+//   worker → controller   captured  what the suite printed outside its report
+//   worker → controller   ended     how the suite ended
+//   controller → worker   abort     Ctrl+C at the controller
+//   worker → controller   done      the run is over
+//   worker → controller   rejected  the plan could not be run at all
+enum Relay:
+  case Plan
+    ( entries:   List[Blobs.Entry],
+      suites:    List[Text],
+      arguments: List[Text],
+      maxLoad:   Optional[Text] )
 
-// Who or what ran the `fume` command: an agent, when its environment says so — Codex sets
-// `CODEX_SANDBOX=1` and Claude Code `CLAUDECODE=1` — or otherwise a human; or another fume,
-// when this daemon is a worker running a selection sent to it by a controller. Recorded on
-// every run in the journal, so the dashboard can mark the runs an agent launched.
-enum Invoker:
-  case Human, Claude, Codex, Remote
+  case Need(digests: List[Text])
+  case Blob(digest: Text, offset: Int, last: Boolean)
+  case Start
+  case Began(suite: Text)
+  case Frame(suite: Text)
+  case Captured(suite: Text, out: Text, err: Text)
 
-  // The invoker named in words, where its icon cannot be shown.
-  def name: Text = this match
-    case Human  => t"a human"
-    case Claude => t"Claude"
-    case Codex  => t"Codex"
-    case Remote => t"another fume"
+  // `outcome` is one of `completed` (with the suite's `exit` status), `failed` (the worker's
+  // consumer threw; `detail` is the trace), or `legacy` (the suite's Probably cannot stream
+  // events, which a worker does not run). An incompatible schema is the CONTROLLER's finding,
+  // made from the fingerprint frame, so it is not an outcome here.
+  case Ended(suite: Text, outcome: Text, exit: Int, detail: Text)
+  case Abort
+  case Done
+  case Rejected(reason: Text)
 
-  // The basename of the invoker's icon among the client's `fume/` resources; a human has none,
-  // and a remote controller is named in words.
-  def icon: Optional[Text] = this match
-    case Human  => Unset
-    case Claude => t"claude"
-    case Codex  => t"codex"
-    case Remote => Unset
+object Relay:
+  // Derived once: the schema, its fingerprint (the protocol the handshake names) and the codec.
+  lazy val codec: Channel.Codec[Relay] =
+    import Channel.derivation.throwing
+    val schema: Tels = Tels.tels[Relay](t"fume-relay")
+
+    Channel.Codec
+      ( t"fume-relay", schema, message => Channel.encode(message, schema),
+        data => Channel.decode[Relay](data) )
+
+  val completed: Text = t"completed"
+  val failed: Text = t"failed"
+  val legacy: Text = t"legacy"
+
+  // The port a fume worker listens on by default; the dashboard is 8090.
+  val port: Int = 8091
