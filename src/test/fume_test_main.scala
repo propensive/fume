@@ -43,11 +43,17 @@ import termcapDefinitions.basicTermcap
 // printing one line per completed test and exiting with the suite's status (0 = passed,
 // 1 = failures, 2 = the suite threw). `fume run -c <test jar>` remains the full experience.
 @main
-def runTests(): Unit =
+def runTests(): Unit = runSuite(t"")
+
+// The same, for a given selection: `Tests.main` calls this when a HOST falls back to forking
+// `java -cp <classpath> fume.Tests <terms…>`, which is what a fume too old to read this jar's
+// event schema does — the case whenever this repository pins a Soundness newer than the
+// released fume that tests it.
+def runSuite(arguments: Text): Unit =
   val passes: Atomic[Int] = Atomic(0)
   val failures: Atomic[Int] = Atomic(0)
 
-  val status = Tests.invoke(t"", event => event match
+  val status = Tests.invoke(arguments, event => event match
     case TestEvent.TestCompleted(test, _, _, outcome, _, _) =>
       if outcome.outcome == t"pass" || outcome.outcome == t"aspire-pass" then passes.since(_ + 1)
       else failures.since(_ + 1)
