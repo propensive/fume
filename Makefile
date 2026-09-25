@@ -24,7 +24,8 @@ release:
 # Publish the library to the local ~/.ivy2 (config sanity check only — local bytes differ from
 # Central, so burdock will NOT externalize a locally-published copy).
 publishLocal:
-	mill fume.relay.publishLocal fume.client.publishLocal
+	mill fume.relay.publishLocal
+	mill fume.client.publishLocal
 
 # Repackage the launcher assembly into a self-fetching launcher with Burdock. The
 # `burdock.externalize` macro wrapping `fume.fume` (in src/launcher/fume_launcher.scala) has
