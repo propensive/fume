@@ -103,7 +103,7 @@ object Suites:
     // enclosing `safely` block (a hellenism/CC interop wart worth fixing upstream).
     val content: Optional[Text] = entry match
       case entry: (Classpath.Entry.Directory | Classpath.Entry.Jar) =>
-        safely(LocalClasspath(List(entry)*).classloader().java).let: loader =>
+        safely(LocalClasspath(List(entry)*).classloader(Classloader.Delegation.Preferential).java).let: loader =>
           Optional(loader.getResourceAsStream(index.s)).let: stream =>
             String(stream.readAllBytes(), "UTF-8").tt
 
@@ -143,7 +143,7 @@ object Suites:
   def invoke(classpath: LocalClasspath, suite: Text, args: List[Text]): Optional[Exit] =
     import scala.reflect.Selectable.reflectiveSelectable
 
-    val loader: Classloader = classpath.classloader()
+    val loader: Classloader = classpath.classloader(Classloader.Delegation.Preferential)
     val arguments: Text = args.join(t"\n")
 
     // `safely` absorbs every `Exception` the reflective machinery can produce — a missing

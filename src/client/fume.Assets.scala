@@ -34,8 +34,8 @@ package fume
 
 import soundness.*
 
-import charDecoders.utf8Decoder
-import charEncoders.utf8Encoder
+import charsets.utf8Charset
+import codepages.utf8Codepage
 import denominative.dysasymptotics.linearAccess
 import logging.silentLogging
 import textSanitizers.skipSanitizer

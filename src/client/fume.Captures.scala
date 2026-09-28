@@ -35,7 +35,7 @@ package fume
 import soundness.*
 
 import calendars.gregorianCalendar
-import charEncoders.utf8Encoder
+import codepages.utf8Codepage
 import filesystemBackends.javaBaseFilesystem
 import logging.silentLogging
 import pyrocosm.{Block, Inline}

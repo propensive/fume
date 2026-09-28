@@ -35,8 +35,8 @@ package fume
 import soundness.*
 
 import alphabets.hexLowerCase
-import charDecoders.utf8Decoder
-import charEncoders.utf8Encoder
+import charsets.utf8Charset
+import codepages.utf8Codepage
 import filesystemBackends.javaBaseFilesystem
 import logging.silentLogging
 import providers.javaBaseProvider
