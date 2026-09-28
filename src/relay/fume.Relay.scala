@@ -34,43 +34,64 @@ package fume
 
 import soundness.*
 
-import probably.TestEvent
-import stdios.fileDescriptorStdio
-import termcapDefinitions.basicTermcap
+import pyrocosm.{Blobs, Channel}
 
-// Fume's own suite, run WITHOUT fume: a `Suite` has no `main` (the host — normally fume —
-// drives it through `invoke`), so this is the plain-`java` entry point `make test` and CI use,
-// printing one line per completed test and exiting with the suite's status (0 = passed,
-// 1 = failures, 2 = the suite threw). `fume run -c <test jar>` remains the full experience.
-@main
-def runTests(): Unit = runSuite(t"")
+// Fume's own messages over a Pyrocosm `Channel`: what a controller (the fume the user invoked)
+// and a worker (the fume daemon on another machine) say to each other once Pyrocosm's handshake
+// has welcomed the connection. Bulk payloads — a classpath entry being shipped, a suite's test
+// event frame — travel as the RAW frame that follows the message announcing them, never through
+// this codec; and a worker never decodes a suite's event frames at all: they are Probably's
+// `Streamer` frames, forwarded byte for byte, so the controller checks their schema
+// fingerprint against its own exactly as it does for a local suite. Only this enum's layout
+// must agree between the two fumes.
+//
+//   controller → worker   plan      the classpath (by digest), the suites, the selection
+//   worker → controller   need      the digests the worker's blob store lacks
+//   controller → worker   blob …    one chunk of one entry, followed by its bytes
+//   controller → worker   start     everything is there; run
+//   worker → controller   began     a suite is starting
+//   worker → controller   frame …   one of the suite's event frames follows
+//   worker → controller   captured  what the suite printed outside its report
+//   worker → controller   ended     how the suite ended
+//   controller → worker   abort     Ctrl+C at the controller
+//   worker → controller   done      the run is over
+//   worker → controller   rejected  the plan could not be run at all
+enum Relay:
+  case Plan
+    ( entries:   List[Blobs.Entry],
+      suites:    List[Text],
+      arguments: List[Text],
+      maxLoad:   Optional[Text] )
 
-// The same, for a given selection: `Tests.main` calls this when a HOST falls back to forking
-// `java -cp <classpath> fume.Tests <terms…>`, which is what a fume too old to read this jar's
-// event schema does — the case whenever this repository pins a Soundness newer than the
-// released fume that tests it.
-def runSuite(arguments: Text): Unit =
-  val passes: Atomic[Int] = Atomic(0)
-  val failures: Atomic[Int] = Atomic(0)
+  case Need(digests: List[Text])
+  case Blob(digest: Text, offset: Int, last: Boolean)
+  case Start
+  case Began(suite: Text)
+  case Frame(suite: Text)
+  case Captured(suite: Text, out: Text, err: Text)
 
-  val status = Tests.invoke(arguments, event => event match
-    case TestEvent.TestCompleted(test, _, _, outcome, _, _) =>
-      if outcome.outcome == t"pass" || outcome.outcome == t"aspire-pass" then passes.since(_ + 1)
-      else failures.since(_ + 1)
+  // `outcome` is one of `completed` (with the suite's `exit` status), `failed` (the worker's
+  // consumer threw; `detail` is the trace), or `legacy` (the suite's Probably cannot stream
+  // events, which a worker does not run). An incompatible schema is the CONTROLLER's finding,
+  // made from the fingerprint frame, so it is not an outcome here.
+  case Ended(suite: Text, outcome: Text, exit: Int, detail: Text)
+  case Abort
+  case Done
+  case Rejected(reason: Text)
 
-      Out.println(t"[${outcome.outcome}] ${test.path.join(t" / ")}")
+object Relay:
+  // Derived once: the schema, its fingerprint (the protocol the handshake names) and the codec.
+  lazy val codec: Channel.Codec[Relay] =
+    import Channel.derivation.throwing
+    val schema: Tels = Tels.tels[Relay](t"fume-relay")
 
-    case TestEvent.DetailMessage(_, message) =>
-      Out.println(t"    $message")
+    Channel.Codec
+      ( t"fume-relay", schema, message => Channel.encode(message, schema),
+        data => Channel.decode[Relay](data) )
 
-    case TestEvent.DetailCompare(_, expected, found, _) =>
-      Out.println(t"    expected: $expected")
-      Out.println(t"    found:    $found")
+  val completed: Text = t"completed"
+  val failed: Text = t"failed"
+  val legacy: Text = t"legacy"
 
-    case TestEvent.RunTerminated(error, _, _) =>
-      Out.println(t"suite threw: ${error.components.map(_.message).join(t"; ")}")
-
-    case _ => ())
-
-  Out.println(t"${passes()} passed, ${failures()} failed")
-  Exit(status).terminate()
+  // The port a fume worker listens on by default; the dashboard is 8090.
+  val port: Int = 8091

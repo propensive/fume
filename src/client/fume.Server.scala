@@ -197,7 +197,7 @@ final class Dashboard():
 
     val detail: List[Inline] =
       List(Inline.Emphasis(Inline.text(name)), Inline.Textual(t" "),
-          Inline.Toned(Tone.Muted, Inline.text(t"${when(run.started)} · ${run.client}")))
+          Inline.Toned(Tone.Muted, Inline.text(t"${when(run.started)} · ${run.client} · ${run.machine}")))
 
     val label: List[Inline] = List(standing, Inline.Textual(t" ")) + agent + detail
 

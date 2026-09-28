@@ -5,9 +5,10 @@ agent must follow when working in this repository.
 
 ## Dependencies are pinned in `etc/refs`
 
-Fume compiles against Soundness and Pyrocosm, both pinned in `etc/refs`. Its own library
-(`fume-client`) is versioned by `fumeVersion` in `build.mill`, which the launcher resolves as a
-published coordinate; that value is not a pin and stays where it is.
+Fume compiles against Soundness and Pyrocosm, both pinned in `etc/refs`. Its own libraries
+(`fume-client`, and `fume-relay`, the relay messages and their codec in a module compiled
+without capture checking) are versioned by `fumeVersion` in `build.mill`, which the launcher
+resolves as a published coordinate; that value is not a pin and stays where it is.
 
 `etc/refs` is tab-separated, one upstream per line: `repository`, `version`, and for a snapshot
 the `commit` it was built from. A version `X.Y.Z` is a GitHub Release. A version

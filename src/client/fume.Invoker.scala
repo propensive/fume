@@ -35,7 +35,7 @@ package fume
 import soundness.*
 
 object Invoker:
-  val all: List[Invoker] = List(Human, Claude, Codex)
+  val all: List[Invoker] = List(Human, Claude, Codex, Remote)
 
   // The invoker of the current invocation. Each variable must be set to exactly `1`; Codex's is
   // checked first, so an environment carrying both reads as Codex.
@@ -45,19 +45,23 @@ object Invoker:
     else Human
 
 // Who or what ran the `fume` command: an agent, when its environment says so — Codex sets
-// `CODEX_SANDBOX=1` and Claude Code `CLAUDECODE=1` — or otherwise a human. Recorded on every
-// run in the journal, so the dashboard can mark the runs an agent launched.
+// `CODEX_SANDBOX=1` and Claude Code `CLAUDECODE=1` — or otherwise a human; or another fume,
+// when this daemon is a worker running a selection sent to it by a controller. Recorded on
+// every run in the journal, so the dashboard can mark the runs an agent launched.
 enum Invoker:
-  case Human, Claude, Codex
+  case Human, Claude, Codex, Remote
 
   // The invoker named in words, where its icon cannot be shown.
   def name: Text = this match
     case Human  => t"a human"
     case Claude => t"Claude"
     case Codex  => t"Codex"
+    case Remote => t"another fume"
 
-  // The basename of the invoker's icon among the client's `fume/` resources; a human has none.
+  // The basename of the invoker's icon among the client's `fume/` resources; a human has none,
+  // and a remote controller is named in words.
   def icon: Optional[Text] = this match
     case Human  => Unset
     case Claude => t"claude"
     case Codex  => t"codex"
+    case Remote => Unset

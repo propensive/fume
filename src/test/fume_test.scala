@@ -32,7 +32,8 @@
                                                                                                   */
 package fume
 
-import soundness.*
+// `Relay` is fume's own message enum, not turbulence's `Relay`.
+import soundness.{Relay as _, *}
 
 // A wildcard import brings no givens: the `n"…"` tag literal's plane inference needs the
 // moniker and tag planes' `Nominative`s in lexical scope, by name. The compiler reports both
@@ -54,6 +55,21 @@ import systems.javaBaseSystem
 import temporaryDirectories.systemTemporaryDirectory
 
 object Tests extends Suite(m"Fume tests"):
+  // A `Suite` has no `main` of its own, but a host that cannot read this jar's event schema
+  // falls back to forking `java -cp <classpath> fume.Tests <terms…>`, so one is provided here;
+  // the terms arrive newline-separated, as `Suite#invoke` expects them.
+  // `scala.Array`, not proscenium's: this is the JVM's own `main` signature.
+  def main(args: scala.Array[String]): Unit =
+    val builder = StringBuilder()
+    var index = 0
+
+    while index < args.length do
+      if index > 0 then builder.append("\n")
+      builder.append(args(index))
+      index += 1
+
+    runSuite(builder.toString.tt)
+
   private def ref(id: Text, moniker: Optional[Text], path: List[Text]): TestEvent.Ref =
     TestEvent.Ref(id, path.last.or(t""), moniker, path, t"", 0)
 
@@ -215,12 +231,12 @@ object Tests extends Suite(m"Fume tests"):
     . assert(_ == (t"out/old.jar", t"out/renewed.jar"))
 
     test(m"a started run is entered in the active ledger"):
-      val id = Journal.start(t"1", Invoker.Human, t"out.jar", List(t"kind:bench"), List(t"a.Tests"))
+      val id = Journal.start(t"1", Invoker.Human, t"out.jar", List(t"kind:bench"), List(t"a.Tests"), t"here")
       Journal.active.seek(_.id == id).let { run => (run.running, run.scheduled) }
     . assert(_ == (true, List(t"a.Tests")))
 
     test(m"a finished run moves to the completed ledger"):
-      val id = Journal.start(t"1", Invoker.Human, t"out.jar", List(), List(t"b.Tests"))
+      val id = Journal.start(t"1", Invoker.Human, t"out.jar", List(), List(t"b.Tests"), t"here")
       Journal.finish(id, Journal.Outcome.Passed, Unset)
 
       ( Journal.active.exists(_.id == id),
@@ -229,7 +245,7 @@ object Tests extends Suite(m"Fume tests"):
     . assert(_ == (false, Journal.Outcome.Passed))
 
     test(m"each suite's verdict is recorded against its run"):
-      val id = Journal.start(t"1", Invoker.Human, t"out.jar", List(), List(t"c.Tests", t"d.Tests"))
+      val id = Journal.start(t"1", Invoker.Human, t"out.jar", List(), List(t"c.Tests", t"d.Tests"), t"here")
       Journal.record(id, t"c.Tests", true, Unset, at(0L))
       Journal.record(id, t"d.Tests", false, Unset, at(0L))
       Journal.finish(id, Journal.Outcome.Failed, Unset)
@@ -240,7 +256,7 @@ object Tests extends Suite(m"Fume tests"):
     . assert(_ == (List(t"c.Tests", t"d.Tests"), 1))
 
     test(m"a run in flight names the suite it is running"):
-      val id = Journal.start(t"1", Invoker.Human, t"out.jar", List(), List(t"e.Tests"))
+      val id = Journal.start(t"1", Invoker.Human, t"out.jar", List(), List(t"e.Tests"), t"here")
       Journal.began(id, t"e.Tests")
       val during = Journal.active.seek(_.id == id).let(_.current)
       Journal.record(id, t"e.Tests", true, Unset, at(0L))
@@ -738,6 +754,71 @@ object Tests extends Suite(m"Fume tests"):
       test(m"budgets of an hour or more show hours and minutes"):
         Budget.show(3_720_000_000_000L)
       . assert(_ == t"1h02m")
+
+    suite(m"Relay"):
+      // The wire format between a controller and a worker: every message shape must survive
+      // the round trip through the derived BinTEL codec, since a worker built from a different
+      // fume decodes exactly these bytes.
+      def roundTrip(message: Relay): Relay = Relay.codec.decode(Relay.codec.encode(message))
+
+      test(m"a plan round-trips with its entries, suites and selection"):
+        val entries = List(pyrocosm.Blobs.Entry(t"ab"*32, true, t"out/classes"),
+                           pyrocosm.Blobs.Entry(t"cd"*32, false, t"lib.jar"))
+
+        roundTrip(Relay.Plan(entries, List(t"a.Tests"), List(t"kind:bench"), t"0.5"))
+      . assert(_ == Relay.Plan(List(pyrocosm.Blobs.Entry(t"ab"*32, true, t"out/classes"),
+                                    pyrocosm.Blobs.Entry(t"cd"*32, false, t"lib.jar")),
+                               List(t"a.Tests"), List(t"kind:bench"), t"0.5"))
+
+      test(m"a plan with no max-load and no selection round-trips"):
+        roundTrip(Relay.Plan(Nil, List(t"a.Tests"), Nil, Unset))
+      . assert(_ == Relay.Plan(Nil, List(t"a.Tests"), Nil, Unset))
+
+      test(m"the digests a worker needs round-trip"):
+        roundTrip(Relay.Need(List(t"ab"*32, t"cd"*32)))
+      . assert(_ == Relay.Need(List(t"ab"*32, t"cd"*32)))
+
+      test(m"an empty need round-trips as empty"):
+        roundTrip(Relay.Need(Nil))
+      . assert(_ == Relay.Need(Nil))
+
+      test(m"a blob's digest, offset and last flag round-trip"):
+        roundTrip(Relay.Blob(t"ef"*32, 1048576, true))
+      . assert(_ == Relay.Blob(t"ef"*32, 1048576, true))
+
+      test(m"the messages carrying no payload round-trip"):
+        List(roundTrip(Relay.Start), roundTrip(Relay.Abort), roundTrip(Relay.Done))
+      . assert(_ == List(Relay.Start, Relay.Abort, Relay.Done))
+
+      test(m"a suite's beginning and its frame announcement round-trip"):
+        (roundTrip(Relay.Began(t"a.Tests")), roundTrip(Relay.Frame(t"a.Tests")))
+      . assert(_ == (Relay.Began(t"a.Tests"), Relay.Frame(t"a.Tests")))
+
+      test(m"captured output round-trips, newlines and all"):
+        roundTrip(Relay.Captured(t"a.Tests", t"one\ntwo\n", t""))
+      . assert(_ == Relay.Captured(t"a.Tests", t"one\ntwo\n", t""))
+
+      test(m"each way a suite can end round-trips"):
+        List(roundTrip(Relay.Ended(t"a.Tests", Relay.completed, 0, t"")),
+             roundTrip(Relay.Ended(t"a.Tests", Relay.failed, 2, t"a trace")),
+             roundTrip(Relay.Ended(t"a.Tests", Relay.legacy, 2, t"")))
+      . assert(_ == List(Relay.Ended(t"a.Tests", Relay.completed, 0, t""),
+                         Relay.Ended(t"a.Tests", Relay.failed, 2, t"a trace"),
+                         Relay.Ended(t"a.Tests", Relay.legacy, 2, t"")))
+
+      test(m"a rejection round-trips with its reason"):
+        roundTrip(Relay.Rejected(t"the worker has no blob store"))
+      . assert(_ == Relay.Rejected(t"the worker has no blob store"))
+
+      // The fingerprint names the protocol in the handshake, so a worker whose `Relay` differs
+      // in any field, order or case refuses the connection rather than misreading it.
+      test(m"the protocol fingerprint is 32 bytes, and stable across summonings"):
+        (Relay.codec.fingerprint.length, Relay.codec.protocol == Relay.codec.protocol)
+      . assert(_ == (32, true))
+
+      test(m"the worker's default port is not the dashboard's"):
+        Relay.port != fume.Dashboard.web.port
+      . assert(_ == true)
 
     // A tagged, axial test of fume's own, so that `fume list --axes`, `tag:selection` and
     // `scale=` completion can be exercised against this very suite.
