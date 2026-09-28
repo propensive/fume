@@ -394,7 +394,7 @@ def runClient(): Unit =
                 // suite guarded against, and older suites still get one.
                 val wantsBudget: Boolean = target.present && scaleTerm.absent
 
-                val loader: Classloader = classpath.classloader()
+                val loader: Classloader = classpath.classloader(Classloader.Delegation.Preferential)
 
                 val shared: Optional[Classloader] =
                   if EventStream.reentrant(loader) then loader else Unset
@@ -889,7 +889,7 @@ def runClient(): Unit =
                     consumerFailures.each: (suite, error) =>
                       // Written to a file first: the terminal may be mid-repaint, and a trace
                       // on stderr inside the alternate buffer is lost when the board closes.
-                      import charEncoders.utf8Encoder
+                      import codepages.utf8Codepage
                       import filesystemBackends.javaBaseFilesystem
                       import temporaryDirectories.systemTemporaryDirectory
 

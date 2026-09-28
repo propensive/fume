@@ -169,7 +169,7 @@ object EventStream:
     import scala.reflect.Selectable.reflectiveSelectable
 
     // One loader for a whole run, when the suites allow it; otherwise a fresh, isolating one.
-    val loader: Classloader = shared.or(classpath.classloader())
+    val loader: Classloader = shared.or(classpath.classloader(Classloader.Delegation.Preferential))
 
     // `Classloader#on` THROWS `ClassNotFoundException` (rather than yielding `Unset`) when the
     // class is absent; `safely` maps that to `Unset` — the signal that this suite's Probably

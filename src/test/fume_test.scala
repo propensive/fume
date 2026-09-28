@@ -47,7 +47,7 @@ import probably.TestEvent
 
 import pyrocosm.Block
 
-import charEncoders.utf8Encoder
+import codepages.utf8Codepage
 import filesystemBackends.javaBaseFilesystem
 import logging.silentLogging
 import strategies.throwUnsafely

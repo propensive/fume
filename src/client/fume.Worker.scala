@@ -180,7 +180,7 @@ object Worker:
         ( session.peer.identity.hostname, Invoker.Remote, classpath(), arguments, suites,
           session.peer.identity.hostname )
 
-    val loader: Classloader = classpath.classloader()
+    val loader: Classloader = classpath.classloader(Classloader.Delegation.Preferential)
     val shared: Optional[Classloader] = if EventStream.reentrant(loader) then loader else Unset
 
     def recur(remaining: List[Text], failures: Int): Int = remaining match
