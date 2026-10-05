@@ -229,12 +229,25 @@ object Suites:
 
     streamed.or(listing(classpath, suite, args))
 
-  // Every test on the classpath, from every suite's FULL schedule (no terms), cached in the
-  // daemon so completion is instant after the first keystroke. Keyed by the classpath entries'
-  // paths, modification times and sizes, as `pyrocosm.Tool` caches configurations: a rebuilt jar
-  // is rescheduled on the next keystroke, and an unbuilt one costs an empty schedule until it
-  // appears.
-  private val cache: scala.collection.concurrent.TrieMap[Text, List[Scheduled]] =
+  // Every test on the classpath, cached in the daemon so completion is instant after the first
+  // keystroke: from the STATIC index of tests where the classpath has one (`Index`), which is
+  // read as text and runs nothing, and otherwise from every suite's full schedule, which runs
+  // each suite's body. Keyed by the classpath entries' paths, modification times and sizes, as
+  // `pyrocosm.Tool` caches configurations: a rebuilt jar is read again on the next keystroke,
+  // and an unbuilt one costs an empty schedule until it appears.
+  //
+  // A suite the index does not cover (its jar was built by a Probably which writes none) is
+  // still scheduled by running it, so a mixed classpath loses nothing. Tests whose names are
+  // only known at runtime are left out: there is nothing of theirs to complete.
+  case class Catalogue(index: Index, suites: List[(Text, List[Scheduled])]):
+    def schedule: List[Scheduled] =
+      suites.bind[List[Scheduled], Scheduled, List[Scheduled]] { suite => suite(1) }
+
+  private val cache: scala.collection.concurrent.TrieMap[Text, Catalogue] =
+    scala.collection.concurrent.TrieMap()
+
+  // The schedules of single suites made by running them, for `axial`, by fingerprint and suite.
+  private val scanned: scala.collection.concurrent.TrieMap[Text, List[Scheduled]] =
     scala.collection.concurrent.TrieMap()
 
   private def fingerprint(classpath: LocalClasspath): Text =
@@ -257,15 +270,63 @@ object Suites:
 
     . join(t"\n")
 
-  def cached(classpath: LocalClasspath): List[Scheduled] =
-    val key: Text = fingerprint(classpath)
+  // The classpath's static index of tests, read once per build of its jars.
+  private val indexes: scala.collection.concurrent.TrieMap[Text, Index] =
+    scala.collection.concurrent.TrieMap()
 
-    val cached: Optional[List[Scheduled]] = cache.getOrElse(key, Unset)
+  def index(classpath: LocalClasspath): Index =
+    val key: Text = fingerprint(classpath)
+    val cached: Optional[Index] = indexes.getOrElse(key, Unset)
 
     cached.or:
-      val schedule: List[Scheduled] =
-        discover(classpath).bind[List[Scheduled], Scheduled, List[Scheduled]]: suite =>
-          fetch(classpath, suite, Nil)
+      val index: Index = Index.read(classpath)
+      indexes(key) = index
+      index
 
-      cache(key) = schedule
-      schedule
+  def catalogue(classpath: LocalClasspath): Catalogue =
+    val key: Text = fingerprint(classpath)
+    val cached: Optional[Catalogue] = cache.getOrElse(key, Unset)
+
+    cached.or:
+      val index: Index = this.index(classpath)
+
+      val suites: List[(Text, List[Scheduled])] =
+        discover(classpath).map: suite =>
+          if index.knows(suite)
+          then suite -> index.tests(suite).filter(!_.dynamic).map(_.scheduled)
+          else suite -> fetch(classpath, suite, Nil)
+
+      val catalogue = Catalogue(index, suites)
+      cache(key) = catalogue
+      catalogue
+
+  def cached(classpath: LocalClasspath): List[Scheduled] = catalogue(classpath).schedule
+
+  // The schedule for completing AXES, which no index holds: a test's axes and their values
+  // exist only once its suite has run as far as declaring it. So the suites which declare a
+  // test over axes (or a stress test, whose sweep is one) among those the other arguments
+  // IDENTIFY are scheduled by running them — those suites alone, and only when an axis is what
+  // is being completed — and every other suite keeps its indexed schedule.
+  def axial(classpath: LocalClasspath, others: List[Text]): List[Scheduled] =
+    val catalogue: Catalogue = this.catalogue(classpath)
+
+    if catalogue.index.empty then catalogue.schedule else
+      val identified: List[Text] =
+        Suggest.identified(others, catalogue.schedule).map(_.ref.path.join(t"/"))
+
+      def axes(suite: Text): Boolean =
+        catalogue.index.knows(suite) && catalogue.index.tests(suite).exists: test =>
+          (test.spread || test.kind == t"stress") && identified.has(test.path.join(t"/"))
+
+      def scan(suite: Text): List[Scheduled] =
+        val key: Text = t"${fingerprint(classpath)}\n$suite"
+        val known: Optional[List[Scheduled]] = scanned.getOrElse(key, Unset)
+
+        known.or:
+          val schedule: List[Scheduled] = fetch(classpath, suite, Nil)
+          scanned(key) = schedule
+          schedule
+
+      if identified.nil then catalogue.schedule else
+        catalogue.suites.bind[List[Scheduled], Scheduled, List[Scheduled]]: suite =>
+          if axes(suite(0)) then scan(suite(0)) else suite(1)

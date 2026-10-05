@@ -170,6 +170,13 @@ object ui:
   val Tags =
     Flag[Unit]("tags", false, Nil, "with list: show the distinct tags and how many tests carry each")
 
+  val Scan =
+    Flag[Unit]
+      ( "scan",
+        false,
+        Nil,
+        "with list: run each suite's body to list its tests, rather than read the index of them" )
+
   val Fork = Flag[Unit]("fork", false, Nil, "run each suite in a separate JVM")
 
   // Single-valued options are `Setting`s rather than `Flag`s, so each is also configurable
@@ -372,7 +379,23 @@ def runClient(): Unit =
 
                 // The run's progress, forecast from the last run of this classpath where it can
                 // be: the board's status line, ticking as the suites go by.
-                val progress: Progress = Progress(suites, Forecasts.load(classpath(), Forecasts.directory))
+                //
+                // Where the last run is no guide to how many tests there will be — a suite it
+                // never ran, or any suite once the selection narrows the run — the count is
+                // what the classpath's index of tests declares for the selection, which costs
+                // a read of the index and runs nothing.
+                val forecast: Forecasts.Forecast = Forecasts.load(classpath(), Forecasts.directory)
+                val narrowed: Boolean = !selectionArgs.nil
+                val index: Index = Suites.index(classpath)
+
+                def declares(suite: Text): (Text, Int) =
+                  suite -> index.tests(suite).count(Index.admits(_, selectionArgs))
+
+                val declared: Map[Text, Int] =
+                  suites.filter { suite => index.knows(suite) && (narrowed || !forecast.known(suite)) }
+                  . map(declares).to[Map]
+
+                val progress: Progress = Progress(suites, forecast, declared)
 
                 val board: Optional[fume.Board] =
                   if (shown || Server.serving) && !fork then fume.Board(model, title, progress) else Unset
@@ -989,6 +1012,7 @@ def runClient(): Unit =
           val excludes: Prospective[Repeated] = excludeFlag(classpath, words)
           val showAxes: Boolean = ui.Axes().present
           val showTags: Boolean = ui.Tags().present
+          val scan: Boolean = ui.Scan().present
           val fork: Boolean = ui.Fork().present
           val terms: List[Text] = selectionTerms(rest)
 
@@ -1012,7 +1036,35 @@ def runClient(): Unit =
                         excludes().lay(Nil: List[Text])(_.values),
                         terms )
 
-                  if showAxes || showTags then
+                  // The listing is read from the classpath's index of tests when it covers
+                  // every suite asked for, so that nothing is run to make it: the index has
+                  // every test's place, kind, moniker and tags. A test's axes are not in it,
+                  // nor a test declared only as its suite runs, so `--axes` and `--scan` list
+                  // by running each suite's body, as a classpath with no index always does.
+                  val index: Index = Suites.index(classpath)
+                  val indexed: Boolean = !scan && !showAxes && !fork && suites.all(index.knows(_))
+
+                  if indexed then
+                    val tests: List[Index.Test] =
+                      suites.bind[List[Index.Test], Index.Test, List[Index.Test]]: suite =>
+                        index.tests(suite).filter(Index.admits(_, selectionArgs))
+
+                    if showTags then
+                      tests.flatMap(_.tags).distinct.each: tag =>
+                        Out.println(t"$tag  ${tests.count(_.tags.has(tag))}")
+                    else
+                      val listing: List[Text] = tests.map(_.listing)
+                      listing.each { line => Out.println(t"$line") }
+
+                    val unlisted: Int =
+                      tests.count(_.dynamic) + suites.fold(0) { (count, suite) => count + index.open(suite) }
+
+                    if unlisted > 0 then
+                      Render.announce:
+                        t"$unlisted declarations name their tests only as the suite runs; `fume list --scan` runs the suites to list them"
+
+                    Exit.Ok
+                  else if showAxes || showTags || scan then
                     // A suite that cannot stream its schedule lists as text: ids and paths,
                     // with no tags or axes to show.
                     val schedule: List[Suites.Scheduled] =
@@ -1029,6 +1081,12 @@ def runClient(): Unit =
                         val tags: Text = if test.tags.nil then t"-" else test.tags.join(t",")
                         val path: Text = test.ref.path.join(t"/")
                         Out.println(t"${test.ref.id}  $kind  $path  $tags  ${Suggest.axesText(test.axes)}")
+
+                    // `--scan` alone: the lines an indexed listing prints, from the run.
+                    if !showTags && !showAxes then
+                      schedule.each: test =>
+                        val kind: Text = if test.kind == t"check" then t"test" else test.kind
+                        Out.println(t"${test.ref.id}  $kind  ${test.ref.path.join(t"/")}")
 
                     Exit.Ok
                   else
@@ -1304,7 +1362,7 @@ private def axisFlag(classpath: Optional[LocalClasspath], words: List[Text])
 :   Prospective[Repeated] =
 
   given discoverable: (Repeated is Discoverable) = (operand, _) =>
-    classpath.lay(List()) { cp => Suggest.axes(operand, words, Suites.cached(cp)) }
+    classpath.lay(List()) { cp => Suggest.axes(operand, words, Suites.axial(cp, words)) }
 
   ui.Axis()
 
@@ -1314,7 +1372,7 @@ private def excludeFlag(classpath: Optional[LocalClasspath], words: List[Text])
 :   Prospective[Repeated] =
 
   given discoverable: (Repeated is Discoverable) = (operand, _) =>
-    classpath.lay(List()) { cp => Suggest(operand, words, Suites.cached(cp)) }
+    classpath.lay(List()) { cp => Suggest(operand, words, Suites.axial(cp, words)) }
 
   ui.Exclude()
 
@@ -1332,7 +1390,7 @@ private def completeTerms(classpath: Optional[LocalClasspath], rest: List[Argume
         Selection.words:
           rest.filter(_.position != argument.position).map { (argument: Argument) => argument() }
 
-      summon[Cli].suggest(argument, Suggest(argument(), others, Suites.cached(cp)), t"", t"")
+      summon[Cli].suggest(argument, Suggest(argument(), others, Suites.axial(cp, others)), t"", t"")
 
 // The raw Probably selection terms: every argument after the subcommand that is neither a flag
 // nor the operand of a value-taking flag. This does NOT interpret the terms — they are
