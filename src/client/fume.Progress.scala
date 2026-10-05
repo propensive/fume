@@ -41,11 +41,19 @@ import denominative.dysasymptotics.linearSize
 // of the classpath (`Forecasts`), where it had one. The forecast is scaled by how the suites
 // finished so far compared with their forecasts, so a slower machine or a heavier build is
 // reflected as the run proceeds.
+//
+// `declared` is how many tests a suite DECLARES for this run's selection, from the classpath's
+// static index (`Index`), for the suites where that is the better guide than the last run: a
+// suite the forecast has never seen, or any suite when the selection narrows the run. It is
+// still a forecast — a test over axes completes once per cell, and an `impromptu` block's
+// tests are not declared at all — so a total which uses it is marked approximate.
 object Progress:
   // No time at all, the sum's starting point.
   val none: Duration = 0.0*Second
 
-final class Progress(val suites: List[Text], forecast: Forecasts.Forecast):
+final class Progress
+   ( val suites: List[Text], forecast: Forecasts.Forecast, declared: Map[Text, Int] = Map() ):
+
   private val count: Int = suites.size
 
   @scala.caps.unsafe.untrackedCaptures
@@ -97,12 +105,14 @@ final class Progress(val suites: List[Text], forecast: Forecasts.Forecast):
     if known.nil then Progress.none
     else known.map(_.time).fold(Progress.none)(_ + _)/known.size.toDouble
 
-  // Whether any suite of the run is unknown to the forecast: the total is then approximate.
-  def approximate: Boolean = known.size < count
+  // Whether any suite's tests are counted otherwise than from its own last run: the total is
+  // then approximate.
+  def approximate: Boolean = known.size < count || suites.exists(declared.defines(_))
 
-  // The forecast number of tests over the whole run, or `Unset` with no forecast at all.
+  // The forecast number of tests over the whole run, or `Unset` with nothing to forecast from.
   def forecastTotal: Optional[Int] =
-    if known.nil then Unset else suites.map(forecastTests(_)).fold(0)(_ + _)
+    if known.nil && !suites.exists(declared.defines(_)) then Unset
+    else suites.map(forecastTests(_)).fold(0)(_ + _)
 
   // The observed time so far against the forecast for the same suites, clamped: a wildly
   // different first suite should not swing the whole estimate.
@@ -125,7 +135,8 @@ final class Progress(val suites: List[Text], forecast: Forecasts.Forecast):
     else
       forecast0
 
-  private def forecastTests(suite: Text): Int = forecast(suite).let(_.tests).or(meanTests)
+  private def forecastTests(suite: Text): Int =
+    declared(suite).or(forecast(suite).let(_.tests).or(meanTests))
 
   def remaining(time: Instant over Unix = now()): Optional[Duration] =
     if known.nil then Unset else

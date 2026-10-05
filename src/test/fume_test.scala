@@ -708,6 +708,18 @@ object Tests extends Suite(m"Fume tests"):
         (progress.forecastTotal, progress.approximate)
       . assert(_ == (225, true))
 
+      test(m"a suite the forecast has not seen counts the tests the index declares for it"):
+        val progress =
+          Progress(List(t"a", t"b"), forecastOf(observed(t"a", 100, 1000L)), Map(t"b" -> 7))
+
+        (progress.forecastTotal, progress.approximate)
+      . assert(_ == (107, true))
+
+      test(m"declared counts stand in for the forecast, and suffice with no forecast at all"):
+        ( Progress(List(t"a", t"b"), forecastOf(observed(t"a", 100, 1000L), observed(t"b", 50, 500L)), Map(t"a" -> 3, t"b" -> 0)).forecastTotal,
+          Progress(List(t"a"), Forecasts.Forecast.empty, Map(t"a" -> 12)).forecastTotal )
+      . assert(_ == (3, 12))
+
       test(m"with no forecast at all there is no total and no time left"):
         val progress = Progress(List(t"a", t"b"), Forecasts.Forecast.empty)
         (progress.forecastTotal, progress.remaining(at(0L)))
@@ -819,6 +831,119 @@ object Tests extends Suite(m"Fume tests"):
       test(m"the worker's default port is not the dashboard's"):
         Relay.port != fume.Dashboard.web.port
       . assert(_ == true)
+
+    suite(m"The static index of tests"):
+      // One source file's index, as the beneficence plugin writes it: a suite with a test at
+      // its root, a group with a moniker holding a tagged benchmark over axes and a test whose
+      // name has a runtime part, a call to a method whose tests hang from its parameter, a
+      // nested suite, and an `impromptu` block.
+      val document: Text =
+        List
+         ( t"# probably tests 1",
+           t"# source: /src/jacinta_test.scala",
+           t"suite\tjacinta.Tests\tjson\tJacinta tests\t10",
+           t"test\tjson\t\t\tcheck\tparses a number\t\t\t12\t",
+           t"group\tjson\t\t\tParsing and/or printing\tparsing\t14",
+           t"test\tjson\t\tParsing and\\/or printing\tbench\tparse a document\tparseDocument\tslow,io\t15\tspread",
+           t"test\tjson\t\tParsing and\\/or printing\tcheck\tcase \\* parses\t\t\t17\t",
+           t"call\tjson\t\tParsing and\\/or printing\tjacinta.Tests.shared\t19",
+           t"test\tjson\tjacinta.Tests.shared\t\tcheck\tshared by two groups\t\t\t30\t",
+           t"nest\tjson\t\t\tjacinta.Other\t21",
+           t"open\tjson\t\t\t23",
+           t"suite\tjacinta.Other\tother-tests\tOther tests\t40",
+           t"test\tother-tests\t\t\tcheck\tnested\t\t\t42\t" )
+        . join(t"\n")
+
+      val index: Index = Index.parse(document)
+      val tests: List[Index.Test] = index.tests(t"jacinta.Tests")
+      def nth(count: Int): Optional[Index.Test] = tests.skip(count).prim
+
+      // `probably.Test.Id#id`, from the names alone.
+      def id(above: List[Text], name: Text): Text =
+        val sum: Int = above.fold(0) { (sum, name) => sum + name.s.hashCode }
+        String.format("%06x", Int.box((sum ^ name.s.hashCode) & 0xffffff)).nn.tt
+
+      test(m"a suite's tests are listed in order, each under its groups by moniker"):
+        tests.map(_.path.join(t" / "))
+      . assert(_ == List
+                     ( t"json / parses a number",
+                       t"json / parsing / parseDocument",
+                       t"json / parsing / case * parses",
+                       t"json / parsing / shared by two groups",
+                       t"other-tests / nested" ))
+
+      test(m"a test's id is computed from its name and the names above it"):
+        (tests.prim.let(_.id), nth(1).let(_.id))
+      . assert(_ == ( id(List(t"Jacinta tests"), t"parses a number"),
+                      id(List(t"Jacinta tests", t"Parsing and/or printing"), t"parse a document") ))
+
+      test(m"a test reached through a method call is placed where the call is"):
+        nth(3).let(_.id)
+      . assert(_ == id(List(t"Jacinta tests", t"Parsing and/or printing"), t"shared by two groups"))
+
+      test(m"a suite invoked within another reports under its own name"):
+        tests.last.let(_.id)
+      . assert(_ == id(List(t"Other tests"), t"nested"))
+
+      test(m"a test's kind, tags, declaration site and spread are kept"):
+        nth(1).let { test => (test.kind, test.tags, test.file, test.line, test.spread) }
+      . assert(_ == (t"bench", List(t"slow", t"io"), t"/src/jacinta_test.scala", 15, true))
+
+      test(m"a name with a runtime part is dynamic and has no id"):
+        tests.map { test => (test.dynamic, test.id == t"") }
+      . assert(_ == List((false, false), (false, false), (true, true), (false, false), (false, false)))
+
+      test(m"an impromptu block is counted, and a suite outside the index is unknown"):
+        (index.open(t"jacinta.Tests"), index.knows(t"jacinta.Tests"), index.knows(t"absent.Tests"))
+      . assert(_ == (1, true, false))
+
+      test(m"a schedule row carries the wire ref of the test"):
+        nth(1).let(_.scheduled.ref).let { ref => (ref.name, ref.moniker, ref.path, ref.line) }
+      . assert(_ == ( t"parse a document",
+                      t"parseDocument",
+                      List(t"json", t"parsing", t"parseDocument"),
+                      15 ))
+
+      test(m"a listing line shows the id, the kind and the path, and dots for a missing id"):
+        (nth(1).let(_.listing), nth(2).let(_.listing))
+      . assert(_ == ( t"${id(List(t"Jacinta tests", t"Parsing and/or printing"), t"parse a document")}  bench  json/parsing/parseDocument",
+                      t"······  test  json/parsing/case * parses" ))
+
+      test(m"a suite is selected by its id, given or derived, and its title is its name"):
+        ( admitted(t"json").size,
+          admitted(t"other-tests"),
+          admitted(t"json/parsing/*").size,
+          tests.prim.let(_.links.prim.let { link => (link.name, link.moniker) }) )
+      . assert(_ == (4, List(t"nested"), 3, (t"Jacinta tests", t"json")))
+
+      def admitted(terms: Text*): List[Text] =
+        tests.filter(Index.admits(_, terms.to(List))).map { test => test.links.last.let(_.name).or(t"") }
+
+      test(m"no terms admit everything, and the terms that are not selections are ignored"):
+        (admitted().size, admitted(t"--workers=1", t"--scale=2").size)
+      . assert(_ == (5, 5))
+
+      test(m"a moniker, an id and a glob each identify tests, and they union"):
+        ( admitted(t"parseDocument"),
+          admitted(id(List(t"Jacinta tests"), t"parses a number")),
+          admitted(t"other-tests"),
+          admitted(t"parsing", t"nest*") )
+      . assert(_ == ( List(t"parse a document"),
+                      List(t"parses a number"),
+                      List(t"nested"),
+                      List(t"parse a document", t"case * parses", t"shared by two groups", t"nested") ))
+
+      test(m"kinds and tags narrow, exclusions subtract, and an axis constraint admits"):
+        ( admitted(t"kind:bench"),
+          admitted(t"tag:io,fast"),
+          admitted(t"tag:slow", t"tag:fast"),
+          admitted(t"parsing", t"not:kind:bench", t"not:shared*"),
+          admitted(t"kind:bench", t"N=4..") )
+      . assert(_ == ( List(t"parse a document"),
+                      List(t"parse a document"),
+                      Nil,
+                      List(t"case * parses"),
+                      List(t"parse a document") ))
 
     // A tagged, axial test of fume's own, so that `fume list --axes`, `tag:selection` and
     // `scale=` completion can be exercised against this very suite.

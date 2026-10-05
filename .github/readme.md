@@ -18,6 +18,7 @@ fume run -c out.jar                     # run everything on the classpath
 fume run -c out.jar --bench             # only benchmarks
 fume run -c out.jar json/* 'N<=64'      # a path glob and an axis constraint
 fume list -c out.jar                    # enumerate tests without running them
+fume list -c out.jar --scan             # enumerate them by running each suite's body
 fume watch -c out.jar                   # rerun whenever the jar changes
 fume serve                              # serve the dashboard of runs until Ctrl+C
 fume run -c out.jar --on linux-box      # run the selection on another machine's fume
@@ -45,6 +46,36 @@ configuration file, and finally the user's.
 Each run also records what launched it: `CODEX_SANDBOX=1` in the environment marks a run as
 Codex's and `CLAUDECODE=1` as Claude Code's, and the dashboard shows the agent's icon beside such
 a run in its list of runs; any other invocation is taken to be a human's.
+
+## Listing without running
+
+A classpath built with a recent Probably carries, beside the index of its suites, an index of
+its tests: the beneficence plugin writes `META-INF/probably/tests/<source>` for every source
+file, from the typed trees it compiles, recording which suite each test is declared for, the
+groups it is within, and its kind, moniker, tags and declaration site. A suite is recorded with
+its title and its id — given, as in `Suite("html", m"Honeycomb Tests")`, or derived from the
+title, `honeycomb-tests` — and the id is a selection term like any other: `fume run html` runs
+that suite, and `html/**` is a path within it. Fume reads that index, as text, for `fume
+list` and for tab-completion of test ids, monikers, tags and kinds, so neither runs anything:
+a suite which starts a server or reads a corpus before declaring its tests does not do so
+because a shell asked for completions.
+
+The alternative, which fume used before and still uses for a classpath with no index, is to
+run each suite with every test skipped. That executes every statement *around* the tests, and
+is as slow, and has the same effects, as those statements. It remains the only way to learn
+three things the source does not state, and fume does it exactly when one of them is asked for:
+
+ - a test's axes and their values: `fume list --axes`, and completing an `<axis>=` term, run
+   the suites concerned (for completion, only those declaring a spread or stress test among
+   the tests the other terms identify);
+ - what a `--target` budget prices: each timed test's expected duration;
+ - tests which only exist at runtime — those declared in an `impromptu` block, and the full
+   names of tests whose names are computed, which the index holds with a `*` for each computed
+   part and which `fume list` shows without an id: `fume list --scan` runs the suites to list
+   them, and says so when the index has such places.
+
+Selection terms apply to an indexed listing as they do to a run, with one difference: an axis
+constraint admits every test, since which cells a test has is not in the index.
 
 ## Configuration files
 
