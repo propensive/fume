@@ -144,51 +144,76 @@ object Index:
 
   private def optional(text: Text): Optional[Text] = if text == t"" then Unset else text
 
-  private def parse(file: Text, line: Text): List[Line] = line.cut(t"\t") match
-    case t"suite" :: className :: topic :: title :: _ :: _ =>
-      List(Line.Suite(name(className).text, name(topic).text, name(title).text))
+  // One line, within the document's current suite: a line placed from a suite's root (its
+  // `method` empty) names the suite by its topic in the plugin's first format, and leaves it
+  // empty in its second, where a declaration made lexically within the suite's body is the
+  // suite's own; `within` is that suite's topic, from the `suite` line last seen. A line
+  // placed from a method's parameter keeps its topic as written, which says only whether the
+  // method is generic in it, and is reached through `call` lines by the method's name.
+  private def parse(file: Text, within: Text, line: Text): List[Line] =
+    def topicOf(topic: Text, method: Text): Text =
+      val stated: Text = name(topic).text
+      if stated == t"" && method == t"" then within else stated
 
-    case t"group" :: topic :: method :: groups :: group :: moniker :: _ =>
-      List
-       ( Line.Group
-          ( name(topic).text, name(method).text, path(groups), name(group), optional(moniker) ) )
+    line.cut(t"\t") match
+      case t"suite" :: className :: topic :: title :: _ :: _ =>
+        List(Line.Suite(name(className).text, name(topic).text, name(title).text))
 
-    case t"test" :: topic :: method :: groups :: kind :: test :: moniker :: tags :: number :: rest =>
-      List
-       ( Line.Declaration
-          ( name(topic).text,
-            name(method).text,
-            path(groups),
-            kind,
-            name(test),
-            optional(moniker),
-            tags.cut(t",").filter(_ != t""),
-            file,
-            safely(number.as[Int]).or(0),
-            rest.prim.or(t"") == t"spread" ) )
+      case t"group" :: topic :: method :: groups :: group :: moniker :: _ =>
+        List
+         ( Line.Group
+            ( topicOf(topic, method), name(method).text, path(groups), name(group), optional(moniker) ) )
 
-    case t"nest" :: topic :: method :: groups :: nested :: _ =>
-      List(Line.Nest(name(topic).text, name(method).text, path(groups), name(nested).text))
+      case t"test" :: topic :: method :: groups :: kind :: test :: moniker :: tags :: number :: rest =>
+        List
+         ( Line.Declaration
+            ( topicOf(topic, method),
+              name(method).text,
+              path(groups),
+              kind,
+              name(test),
+              optional(moniker),
+              tags.cut(t",").filter(_ != t""),
+              file,
+              safely(number.as[Int]).or(0),
+              rest.prim.or(t"") == t"spread" ) )
 
-    case t"call" :: topic :: method :: groups :: callee :: _ =>
-      List(Line.Call(name(topic).text, name(method).text, path(groups), name(callee).text))
+      case t"nest" :: topic :: method :: groups :: nested :: _ =>
+        List(Line.Nest(topicOf(topic, method), name(method).text, path(groups), name(nested).text))
 
-    case t"open" :: topic :: method :: groups :: _ =>
-      List(Line.Open(name(topic).text, name(method).text, path(groups)))
+      case t"call" :: topic :: method :: groups :: callee :: _ =>
+        List(Line.Call(topicOf(topic, method), name(method).text, path(groups), name(callee).text))
 
-    case _ =>
-      Nil
+      case t"open" :: topic :: method :: groups :: _ =>
+        List(Line.Open(topicOf(topic, method), name(method).text, path(groups)))
 
-  // The lines of one index file; its `# source:` header names the file its tests are in.
+      case _ =>
+        Nil
+
+  // The lines of one index file; its `# source:` header names the file its tests are in. The
+  // lines come in the order the plugin traversed the source, each suite's `suite` line before
+  // the lines within its body, so the suite a line is within is the last one declared.
   def parse(document: Text): Index =
     val lines: List[Text] = document.cut(t"\n")
 
     val file: Text =
       lines.seek(_.starts(t"# source: ")).lay(t"") { header => header.skip(10).trim }
 
-    Index:
-      lines.filter { line => line != t"" && !line.starts(t"#") }.bind[List[Line], Line, List[Line]]:
-        line => parse(file, line)
+    def recur(todo: List[Text], within: Text, done: List[Line]): List[Line] = todo match
+      case line :: tail =>
+        if line == t"" || line.starts(t"#") then recur(tail, within, done) else
+          val parsed: List[Line] = parse(file, within, line)
+
+          val within2: Text = parsed match
+            case Line.Suite(_, topic, _) :: _ => topic
+            case _                            => within
+
+          recur(tail, within2, parsed.reverse + done)
+
+      case _ =>
+        done.reverse
+
+    Index(recur(lines, t"", Nil))
 
   // The index files of one classpath element, in name order. A jar is read as a zip — which,
   // like the classloader `Suites` reads the suite index through, tolerates the launcher
