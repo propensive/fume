@@ -201,9 +201,9 @@ otherwise.
   `runsIn`, `run`, `results`, `suiteResults`, `test`, `benchmarks`, `failures`, `captured`,
   `processes`, `suites`, `tests` — answer with the `fume.Api` types, whose derived JSON Schema
   `fume://schema` serves; `fume://docs` and `fume://runs/latest` too. No optional parameters
-  until synesthesia supports them (propensive/soundness#2187). Still to do:
-  tools that start runs (`run`, `rerun_failed`), `report`, `golden_accept`, `trend`, and
-  progress notifications while a run is in flight.
+  until synesthesia supports them (propensive/soundness#2187). `launch` starts a run from
+  the daemon, marked with the MCP logo, and `cancel` aborts it. Still to do: `rerun_failed`,
+  `report`, `golden_accept`, `trend`, and progress notifications while a run is in flight.
 - **5.2 `watch`.** Implement the existing stub over the classpath jars, with the web UI and
   MCP receiving each rerun as a new job.
 - **5.3 Change-driven selection.** `--changed` selects suites whose inputs differ from the
