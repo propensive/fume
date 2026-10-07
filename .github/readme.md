@@ -45,8 +45,9 @@ property, a `FUME_`-prefixed environment variable (`FUME_CLASSPATH=…`), the pr
 configuration file, and finally the user's.
 
 Each run also records what launched it: `CODEX_SANDBOX=1` in the environment marks a run as
-Codex's and `CLAUDECODE=1` as Claude Code's, and the dashboard shows the agent's icon beside such
-a run in its list of runs; any other invocation is taken to be a human's.
+Codex's and `CLAUDECODE=1` as Claude Code's, a run launched through the MCP server is an MCP
+client's, and the dashboard shows the agent's or the protocol's icon beside such a run in its
+list of runs; any other invocation is taken to be a human's.
 
 ## Listing without running
 
@@ -144,7 +145,9 @@ profile record; `failures` gives each failing test's message, stack trace, captu
 expected-against-found comparison; `captured` gives what a suite printed; `processes` gives the
 daemon's processes — the services it serves, the runs in flight with the tests they are
 executing, and any run it is working for another machine; and `suites` and `tests` list what a
-classpath declares, from its static index, without running anything. `last` names the newest run
+classpath declares, from its static index, without running anything; and `launch` starts a run
+of a classpath's suites, narrowed by selection terms, which the daemon runs as it would from a
+shell and the other tools follow as it goes, until `cancel` aborts it. `last` names the newest run
 wherever a run id is taken. The resources `fume://schema` (the JSON Schema of every answer),
 `fume://docs` (the server's documentation, also at [doc/mcp.md](/doc/mcp.md)) and
 `fume://runs/latest` describe the rest.

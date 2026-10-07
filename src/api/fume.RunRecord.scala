@@ -46,7 +46,7 @@ import encodables.instantTelEncodable
 // the suites' event frames, stored beside the record, so the record stays small however large
 // the run.
 //
-// Vocabularies: `invoker` is `human`, `claude`, `codex` or `remote`; `outcome` is `passed`,
+// Vocabularies: `invoker` is `human`, `claude`, `codex`, `remote` or `mcp`; `outcome` is `passed`,
 // `failed` or `aborted`, and absent while the run is in flight.
 case class RunRecord
   ( id:        Text,
@@ -98,6 +98,7 @@ object RunRecord:
   val claude: Text = t"claude"
   val codex: Text = t"codex"
   val remote: Text = t"remote"
+  val mcp: Text = t"mcp"
 
   val passed: Text = t"passed"
   val failed: Text = t"failed"
