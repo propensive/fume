@@ -5,7 +5,7 @@
 assembly:
 	mill fume.launcher.assembly
 
-# Releases are cut by tagging, not by make. Bump `fumeVersion`, merge it, and then `git tag -s
+# Releases are cut by tagging, not by make. Tag a commit CI has passed, with `git tag -s
 # X.Y.Z && git push --tags`: the tag fires .github/workflows/release.yml, which runs the shared
 # release.sh in propensive/.github. That gates on a signed tag, on CI already being green on that
 # very commit, and on every pin being a release; publishes the library jars; repackages the
@@ -14,7 +14,7 @@ assembly:
 # this repository needs beyond the common path is declared in etc/release. This target survives
 # only to say so.
 release:
-	@echo "Releases are triggered by tags, not by make. Bump fumeVersion, merge it, then:" >&2
+	@echo "Releases are triggered by tags, not by make. Once CI has passed on the commit:" >&2
 	@echo "" >&2
 	@echo "    git tag -s X.Y.Z && git push --tags" >&2
 	@echo "" >&2
@@ -100,11 +100,11 @@ tools:
 	./etc/shared tools.sh
 
 # Publish HEAD's libraries as a snapshot — a `snapshot-<hex>` pre-release named by the filtered
-# tree of the commit, at version `<fumeVersion>-<hex>` — for a dependent repository to pin in
+# tree of the commit, at version `<next version>-<hex>` — for a dependent repository to pin in
 # its etc/refs before the next release. `LOCAL=1` stages and installs without publishing.
 # The last line printed is the pin. See snapshot.sh in propensive/.github.
 snapshot:
-	./etc/shared snapshot.sh fume "$$(sed -n 's/.*val fumeVersion = "\(.*\)".*/\1/p' build.mill)"
+	./etc/shared snapshot.sh fume "$$(./mill show fume.client.publishVersion | tr -d '"')"
 
 # Delete snapshot pre-releases older than DAYS (default 60) days.
 snapshot-prune:

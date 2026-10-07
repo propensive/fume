@@ -34,24 +34,40 @@ object settings:
   // The Soundness and Pyrocosm versions fume builds against (from `~/.ivy2/local`) are pinned in
   // etc/refs and read by `deps`, below; `soundnessDeps` takes them as parameters.
 
-  // The version fume's OWN library modules are released under, AND the version the `launcher`
-  // module resolves them at. Kept as a single value so the released coordinates and the launcher's
-  // dependency coordinates cannot drift apart: burdock externalizes a module only when the exact
-  // released jar bytes are on the launcher's classpath, so a mismatch would silently fall back to
-  // inlining. Bump (and commit) per release; release.sh (in propensive/.github) refuses to
-  // release when this pin disagrees with the tag being released. Snapshots override it through
-  // `publishVersion` (below), never here.
-  val fumeVersion = "0.7.0"
+  // This build's version. A release's version is declared once, by its tag: the release
+  // (release.sh in propensive/.github) and a snapshot (snapshot.sh) both name it in
+  // `FUME_RELEASE_VERSION`. Any other build is the version after the latest release reachable
+  // from HEAD — its patch version plus one, which sorts after that release and before whichever
+  // follows it — or `0.0.1` where no release tag is reachable, as in CI's shallow checkout.
+  // Called from `Task.Input`s, so the environment and the tags are read on every invocation.
+  def version(env: Map[String, String]): String =
+    env.get("FUME_RELEASE_VERSION").filter(_.nonEmpty).getOrElse(nextVersion)
+
+  def nextVersion: String =
+    val root = mill.api.BuildCtx.workspaceRoot
+
+    val latest: Option[String] =
+      scala.util.Try:
+        os.proc("git", "describe", "--tags", "--abbrev=0", "--match", "[0-9]*.[0-9]*.[0-9]*")
+        . call(cwd = root, stderr = os.Pipe).out.text().trim
+      . toOption
+
+    def numeric(part: String): Boolean = part.nonEmpty && part.forall(_.isDigit)
+
+    latest.collect:
+      case s"$major.$minor.$patch" if Seq(major, minor, patch).forall(numeric) =>
+        s"$major.$minor.${patch.toInt + 1}"
+    . getOrElse("0.0.1")
 
   // What a build of fume identifies itself as, written into the client jar as
   // `META-INF/pyrocosm/fume/version` for `pyrocosm-cli` to read (`fume about`,
   // `fume --version`): the version a release or snapshot is published as, when
   // `FUME_RELEASE_VERSION` names it (`make snapshot` and the release both set it);
-  // otherwise the pinned version with the filtered tree hash of HEAD — the identity
+  // otherwise the next version (`nextVersion`) with the filtered tree hash of HEAD — the identity
   // `make snapshot` would give this commit — and `-dirty` if the working tree has changes
   // that no commit records. Called from a `Task.Input`, so that HEAD is consulted on every
   // invocation.
-  def buildVersion(env: Map[String, String], pinned: String): String =
+  def buildVersion(env: Map[String, String]): String =
     env.get("FUME_RELEASE_VERSION").filter(_.nonEmpty).getOrElse:
       val root = mill.api.BuildCtx.workspaceRoot
 
@@ -62,7 +78,7 @@ object settings:
 
       val dirty: Boolean =
         os.proc("git", "status", "--porcelain").call(cwd = root).out.text().trim.nonEmpty
-      s"$pinned-${tree.take(12)}${if dirty then "-dirty" else ""}"
+      s"$nextVersion-${tree.take(12)}${if dirty then "-dirty" else ""}"
 
   val scalaOptions = Seq(
     // The fork's opt-in behaviours, enabled by name, exactly as the Soundness build enables
@@ -372,15 +388,13 @@ trait Component(dependencies: PublishModule*) extends Toolchain:
 // Central without generating real docs. `SonatypeCentralPublishModule` targets the Central Portal
 // (central.sonatype.com), driven by the standard `MILL_SONATYPE_*`/`MILL_PGP_*` env vars at release.
 trait Publishing extends Toolchain, SonatypeCentralPublishModule:
-  // A `Task.Input` reading `Task.env`, not a plain value: `FUME_RELEASE_VERSION` is how
-  // `make snapshot` (snapshot.sh in propensive/.github) drives the snapshot version through a
-  // Mill daemon that is already running — the daemon freezes `sys.env` at its own start, while
-  // `Task.env` is the environment of each `./mill` invocation. A release sets it too, to
-  // the version it releases, which the release script insists equals `settings.fumeVersion` —
-  // so a release's `publishVersion` is unchanged, and the `META-INF/pyrocosm/fume/version`
-  // resource (`buildVersion`) records the release version rather than a tree hash.
+  // A `Task.Input` reading `Task.env`, not a plain value: `FUME_RELEASE_VERSION` is how a
+  // release and `make snapshot` (release.sh and snapshot.sh in propensive/.github) drive the
+  // version through a Mill daemon that is already running — the daemon freezes `sys.env` at its
+  // own start, while `Task.env` is the environment of each `./mill` invocation. Without it, the
+  // version is `settings.nextVersion`. The launcher resolves this module at this same version.
   def publishVersion = Task.Input:
-    Task.env.get("FUME_RELEASE_VERSION").filter(_.nonEmpty).getOrElse(settings.fumeVersion)
+    settings.version(Task.env)
   def artifactSuffix = Task("")
 
   def pomSettings = Task(PomSettings(
@@ -417,7 +431,7 @@ object fume extends Project:
 
     // Fume's own version, as `fume about` and `fume --version` report it: see
     // `settings.buildVersion`.
-    def buildVersion = Task.Input(settings.buildVersion(Task.env, settings.fumeVersion))
+    def buildVersion = Task.Input(settings.buildVersion(Task.env))
 
     // The static files the dashboard serves (`res/fume/*.svg`, the invokers' icons), as
     // pyrocosm's build maps `res/web`: the directory is the classpath root, so `res/fume/x.svg`
@@ -438,12 +452,12 @@ object fume extends Project:
   // in the `soundness-cli` bundle, and in no other.
   //
   // NOTE: this module can only be built AFTER `fume-client` is on Maven Central at
-  // `settings.fumeVersion`, since coursier must resolve the real Central artifact (a local
+  // the version `client.publishVersion` gives, since coursier must resolve the real Central artifact (a local
   // `publishLocal` copy has different bytes and would be inlined, not externalized). Before the
   // first release, `make run` publishes locally and assembles against that instead.
   object launcher extends Component():
     def mvnDeps = Task:
-      mvn"dev.propensive:fume-client:${settings.fumeVersion}"
+      mvn"dev.propensive:fume-client:${client.publishVersion()}"
         +: settings.soundnessDeps(deps.soundness(), deps.pyrocosm())
     def finalMainClass = "fume.fume"
     // A clean zip (no executable shell preamble) so the Burdock repackager can read and rewrite the

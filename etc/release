@@ -1,7 +1,7 @@
 # What this repository's release needs that another's does not. See propensive/.github, which
 # holds the workflow and the script; a release is cut by `git tag -s X.Y.Z && git push --tags`.
-# One `key value` line each; the library list and the version pin are not declared, because
-# release.sh derives them from `release.stage` and from `val fumeVersion` in build.mill.
+# One `key value` line each; the library list is not declared, because release.sh derives it
+# from `release.stage`, and the version is the tag's alone.
 
 name       fume
 title      fume
