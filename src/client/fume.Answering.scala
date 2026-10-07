@@ -123,6 +123,24 @@ object Answering extends McpServer.Answers:
     case run: Journal.Run => Views.detail(run)
     case _                => Unset
 
+  // A launched run's workspace is the directory of its first classpath entry: the nearest
+  // thing to an invocation directory a run from the daemon has.
+  def launch(classpath: Text, terms: Text): Api.RunSummary =
+    val parsed: LocalClasspath = this.classpath(classpath)
+    val words: List[Text] = terms.cut(t" ").filter(_ != t"")
+
+    val workspace: Text =
+      classpath.cut(t":").filter(_ != t"").prim.lay(t"/") { entry => entry.cut(t"/").skip(1, Rtl).join(t"/") }
+
+    Headless.launch(parsed, words, workspace) match
+      case id: Text =>
+        lookup(id).pipe(Views.summary)
+
+      case _ =>
+        throw Api.Error(t"no test suites were found on the classpath")
+
+  def cancel(run: Text): Boolean = Headless.cancel(lookup(run).id)
+
   // The dashboard's fallback: its assets, then `/mcp`. A method, as `Assets.serve` is, so it
   // holds no capability.
   def fallback(request: Http.Request): Optional[Http.Response] =

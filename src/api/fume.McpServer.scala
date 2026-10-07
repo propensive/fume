@@ -92,6 +92,8 @@ object McpServer extends Mcp.Server():
     def suites(classpath: Text): List[Api.IndexedSuite]
     def tests(classpath: Text, terms: Text): List[Api.IndexedTest]
     def latest: Optional[Api.RunDetail]
+    def launch(classpath: Text, terms: Text): Api.RunSummary
+    def cancel(run: Text): Boolean
 
   @volatile
   private var answers: Optional[Answers] = Unset
@@ -156,6 +158,14 @@ object McpServer extends Mcp.Server():
   @tool
   @about("The tests a classpath declares, from its static index, without running anything, narrowed by space-separated selection terms as `fume list` takes them; empty terms list every test")
   def tests(classpath: Text, terms: Text): List[Api.IndexedTest] = answering.tests(classpath, terms)
+
+  @tool
+  @about("Launch a run of the tests and benchmarks a classpath declares, narrowed by space-separated selection terms as `fume run` takes them (`kind:bench`, a test id, a moniker, `N=4..64`); answers at once with the run's summary, and `run`, `results` and `failures` follow it as it goes")
+  def launch(classpath: Text, terms: Text): Api.RunSummary = answering.launch(classpath, terms)
+
+  @tool
+  @about("Abort a run launched through this server, as Ctrl+C would; `true` if the run was in flight here")
+  def cancel(run: Text): Boolean = answering.cancel(run)
 
   @resource("fume://schema")
   @about("The JSON Schema of every type the tools answer with, by name")

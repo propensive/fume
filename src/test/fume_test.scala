@@ -310,6 +310,10 @@ object Tests extends Suite(m"Fume tests"):
       Assets.asset(Assets.location(t"claude")).let(_.starts(t"<svg"))
     . assert(_ == true)
 
+    test(m"the MCP logo is served from the classpath, for runs launched through the server"):
+      (Assets.asset(Assets.location(t"mcp")).let(_.starts(t"<svg")), Invoker.of(t"mcp").icon)
+    . assert(_ == (true, t"mcp"))
+
     test(m"Codex's icon is served from the classpath"):
       Assets.asset(Assets.location(t"codex")).let(_.starts(t"<svg"))
     . assert(_ == true)
@@ -1139,7 +1143,7 @@ object Tests extends Suite(m"Fume tests"):
         val tools: List[Json] = rpc(t"tools/list", t"{}").result.tools.as[List[Json]]
         tools.map(_.name.as[Text]).to[Set]
       . assert(_ == Set(t"runs", t"runsIn", t"run", t"results", t"suiteResults", t"failures", t"test",
-                        t"benchmarks", t"captured", t"processes", t"suites", t"tests"))
+                        t"benchmarks", t"captured", t"processes", t"suites", t"tests", t"launch", t"cancel"))
 
       test(m"every tool parameter is required, and documented"):
         val tools: List[Json] = rpc(t"tools/list", t"{}").result.tools.as[List[Json]]
