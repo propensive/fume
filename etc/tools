@@ -3,6 +3,6 @@
 # it appears in no POM — and does not gate a release; that is what keeps the release graph free
 # of cycles. `make tools` installs each command through its release's installer.
 # See propensive/.github.
-propensive/fume	0.6.0
-propensive/flair	0.5.0
-propensive/flame	0.5.0
+propensive/fume	0.7.0
+propensive/flair	0.6.0
+propensive/flame	0.6.0
