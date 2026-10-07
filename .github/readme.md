@@ -205,13 +205,24 @@ The daemon, completions, manpage, configuration file, and the `run` and `list` s
 working: suites are discovered from the classpath's `META-INF/services/probably.Suite` index
 (and offered as tab-completions for `--suite`), and each selected suite is invoked IN-PROCESS
 by default: it is loaded in a fresh child-first classloader (platform parent, so the suite's
-own Soundness version never meets fume's) and its non-exiting `Suite#invoke` is called
-reflectively — the erased `invoke(String[]): int` crosses the classloader boundary with JDK
-types alone. `--fork` runs each suite in a separate JVM instead, and a suite built against a
-Probably too old to have `Suite#invoke` falls back to a forked JVM automatically. `watch` is
+own Soundness version never meets fume's) and Probably's `Streamer.stream` is called
+reflectively — its erased `stream(String, String, OutputStream): int` crosses the classloader
+boundary with JDK types alone. `--fork` runs each suite in a JVM of its own instead, through
+Probably's `probably.Standalone` entry point, and its events reach the same board and report;
+a suite built against a Probably too old for the event stream falls back to a forked JVM
+automatically. `watch` is
 not yet implemented and exits with status 10. Reporting is currently whatever each suite prints
 (a pass/fail count per suite) plus a one-line suite-count summary; richer aggregated output is
 planned.
+
+A suite run in-process runs in the daemon's JVM, and so in the daemon's process state rather
+than the invocation's: the daemon starts in `/`, with a sanitized environment, whichever
+invocation happened to start it. A suite which resolves a relative path through the JVM's working
+directory (`user.dir`, `javaBaseWorkingDirectory`, a relative `java.io.File`), or reads a
+variable from the JVM's environment (`System.getenv`, `javaBaseEnvironment`), sees `/` and that
+sanitized environment. Such a suite should be given what it needs explicitly — an absolute path
+recorded at build time, say — or be run with `--fork`, which starts each suite's JVM in the
+directory and with the environment `fume run` was invoked with.
 
 Whatever a suite prints through the JVM's own streams while it runs in-process — a stray
 `println`, a stack trace, a library's diagnostic — is captured rather than shown, since the

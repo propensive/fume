@@ -39,6 +39,7 @@ import soundness.*
 import alphabets.hexLowerCase
 
 import probates.cancelProbate
+import systems.javaBaseSystem
 
 // Consumes a suite's `TestEvent` stream: fume calls `probably.Streamer.stream` in the SUITE'S
 // classloader world through a structural type (JDK-typed signature only), hands it a
@@ -140,6 +141,99 @@ object EventStream:
 
       def frame(frame: Data): Unit = forward(frame)
 
+  // The producer of a run's frames, as `consume` controls it: `exit` awaits its exit status,
+  // and `stop` stops it. One handle rather than two thunks, since both close over the same
+  // task or job, which separation checking would otherwise see as overlapping arguments.
+  private trait Producer:
+    def exit(): Int
+    def stop(): Unit
+
+  // What is made of a run's frames, wherever they come from: the first is the producer's
+  // schema fingerprint, which the sink may reject, and every later one goes to the sink.
+  private def consume
+    ( chunks:   Chain[Data],
+      sink:     Sink^,
+      abort:    () => Boolean,
+      producer: Producer^ )
+    ( using monitor: Monitor )
+  :   Outcome =
+
+    EventStream.split(chunks) match
+      case first #:: _ if !sink.fingerprint(first) =>
+        def hex(data: Data): Text = data.serialize[Hex]
+        Outcome.Incompatible(hex(first), hex(probably.Streamer.fingerprint))
+
+      case first #:: rest =>
+        // Frames are consumed on their own task, so the invocation thread stays free to notice
+        // an abort (a trapped Ctrl+C) even while the chain is blocked mid-benchmark waiting for
+        // the next event. Cancelling the tasks interrupts the blocked take. A failure in a
+        // handler (the model or the live board) must end the run with its cause on stderr, not
+        // leave the invocation polling a dead task for ever while the suite runs on unobserved.
+        val failure: Atomic[Optional[Throwable]] = Atomic.Ref.vacant[Throwable]
+
+        val consumer = async:
+          try rest.each { (frame: Data) => sink.frame(frame) }
+          catch case error: Throwable =>
+            failure() = error
+            throw error
+
+        // A short wait, so a finished suite is noticed at once: the slack compounds over a
+        // classpath of hundreds of suites.
+        def drained(): Boolean =
+          scala.caps.unsafe.unsafeAssumeSeparate(safely(consumer.await(0.01*Second)).present)
+
+        def spin(): Outcome = failure() match
+          case failed: Throwable =>
+            producer.stop()
+            Outcome.Failed(failed)
+
+          case _ =>
+            if drained() then Outcome.Completed(producer.exit())
+            else if abort() then
+              consumer.cancel()
+              producer.stop()
+              Outcome.Completed(abortExit)
+            else
+              spin()
+
+        spin()
+
+      case _ =>
+        Outcome.Completed(producer.exit())
+
+  // Whether a suite on the classpath `loader` sees can be run in a JVM of its own, through
+  // Probably's `probably.Standalone` entry point; an older Probably has none, and a suite of its
+  // vintage is forked the legacy way, if at all.
+  def forkable(loader: Classloader): Boolean = safely(loader.on(t"probably.Standalone$$")).present
+
+  // As `frames`, but the suite runs in a JVM of its own, launched through `probably.Standalone`
+  // in the given working directory and environment, which for `fume run --fork` are the
+  // invocation's: a suite then sees the directory and the variables `fume` was run with, where
+  // in-process it sees the daemon's, which belong to no invocation. The frames arrive on the
+  // process's standard output, and everything the suite prints on its standard error, which is
+  // captured.
+  def forked
+    ( classpath: LocalClasspath, suite: Text, args: List[Text] )
+    ( sink:     Sink^,
+      abort:    () => Boolean,
+      captured: (Text, Text) => Unit )
+    ( using Monitor, WorkingDirectory, Environment )
+  :   Optional[Outcome] =
+
+    val java: Text =
+      safely(System.properties.java.home[Text]()).lay(t"java") { home => t"$home/bin/java" }
+
+    safely:
+      val job = sh"$java -cp ${classpath()} probably.Standalone $suite $args".fork[Unit]()
+      val errors = async(job.errorText())
+      val producer: Producer^{job} = new Producer:
+        def exit(): Int = job.status()
+        def stop(): Unit = job.abort()
+
+      val outcome = consume(job.stdout().chain, sink, abort, producer)
+      captured(t"", scala.caps.unsafe.unsafeAssumeSeparate(safely(errors.await()).or(t"")))
+      outcome
+
   def stream
     ( classpath: LocalClasspath,
       suite:     Text,
@@ -187,52 +281,15 @@ object EventStream:
 
           // The task is single-owner and awaited exactly once after the frame chain is
           // exhausted; the separation checker cannot see that through the capture-polymorphic
-          // `await`, hence the (sanctioned, narrow) `unsafeAssumeSeparate`.
-          def exit(): Int = scala.caps.unsafe.unsafeAssumeSeparate(unsafely(task.await()))
+          // `await`, nor that the handle's hold on the monitor is the one `consume` is given,
+          // hence the (sanctioned, narrow) `unsafeAssumeSeparate` and `unsafeAssumePure`.
+          val producer: Producer =
+            scala.caps.unsafe.unsafeAssumePure:
+              new Producer:
+                def exit(): Int = scala.caps.unsafe.unsafeAssumeSeparate(unsafely(task.await()))
+                def stop(): Unit = task.cancel()
 
-          EventStream.split(output.stream) match
-            case first #:: _ if !sink.fingerprint(first) =>
-              def hex(data: Data): Text = data.serialize[Hex]
-              Outcome.Incompatible(hex(first), hex(probably.Streamer.fingerprint))
-
-            case first #:: rest =>
-              // Frames are consumed on their own task, so the invocation thread stays free to
-              // notice an abort (a trapped Ctrl+C) even while the chain is blocked mid-benchmark
-              // waiting for the next event. Cancelling the tasks interrupts the blocked take.
-              // A failure in a handler (the model or the live board) must end the run with its
-              // cause on stderr, not leave the invocation polling a dead task for ever while the
-              // suite runs on unobserved.
-              val failure: Atomic[Optional[Throwable]] = Atomic.Ref.vacant[Throwable]
-
-              val consumer = async:
-                try rest.each { (frame: Data) => sink.frame(frame) }
-                catch case error: Throwable =>
-                  failure() = error
-                  throw error
-
-              // A short wait, so a finished suite is noticed at once: the slack compounds
-              // over a classpath of hundreds of suites.
-              def drained(): Boolean =
-                scala.caps.unsafe.unsafeAssumeSeparate(safely(consumer.await(0.01*Second)).present)
-
-              def spin(): Outcome = failure() match
-                case failed: Throwable =>
-                  task.cancel()
-                  Outcome.Failed(failed)
-
-                case _ =>
-                  if drained() then Outcome.Completed(exit())
-                  else if abort() then
-                    consumer.cancel()
-                    task.cancel()
-                    Outcome.Completed(abortExit)
-                  else
-                    spin()
-
-              spin()
-
-            case _ =>
-              Outcome.Completed(exit())
+          consume(output.stream, sink, abort, producer)
 
         captured(capture.out, capture.err)
         capture.result
