@@ -44,9 +44,9 @@ fume.jar: assembly
 	java -cp fume.jar soundness.repackage --github propensive/fume,propensive/pyrocosm,propensive/soundness,propensive/proscala
 
 # Package the repackaged JAR as a native executable for this machine with the pinned `xek` builder
-# (fetched into dist/xek and verified against etc/xek.tsv).
+# (fetched into dist/xek and verified against etc/xek.tsv), requiring Java 25 as releases do.
 fume: fume.jar xek-fetch
-	dist/xek build fume.jar fume
+	dist/xek build --java-min 25 --java 25 fume.jar fume
 
 # Fetch the pinned `xek` builder into dist/xek.
 xek-fetch:
