@@ -47,29 +47,54 @@ object Server:
 
   private val serving0: Atomic[Boolean] = Atomic(false)
 
+  // The services this daemon is serving, by name — `dashboard`, `listener`, `mcp` — and port,
+  // for the MCP server's `processes`.
+  @scala.caps.unsafe.untrackedCaptures
+  private var services0: Map[Text, Int] = Map()
+
   // Both registries are amended by the runs' threads and read by the dashboard's, so every
   // access is mutex-guarded, as the journal's are.
   private val mutex: Mutex = Mutex()
 
   @scala.caps.unsafe.untrackedCaptures
-  private var boards: Map[Int, fume.Board] = Map()
+  private var boards: Map[Text, fume.Board] = Map()
 
   @scala.caps.unsafe.untrackedCaptures
-  private var finished: Map[Int, List[Finished]] = Map()
+  private var finished: Map[Text, List[Finished]] = Map()
+
+  // Every run in flight registers its model, whether or not anyone is watching a board, so
+  // the MCP server can answer for it live; and the pid of the JVM a forked suite runs in.
+  @scala.caps.unsafe.untrackedCaptures
+  private var models: Map[Text, Model] = Map()
+
+  @scala.caps.unsafe.untrackedCaptures
+  private var forks: Map[Text, Long] = Map()
 
   def serving: Boolean = serving0()
   def serving_=(value: Boolean): Unit = serving0() = value
 
-  def attach(run: Int, board: fume.Board): Unit = mutex { boards = boards.define(run, board) }
+  def announce(service: Text, port: Int): Unit = mutex { services0 = services0.define(service, port) }
+  def withdraw(service: Text): Unit = mutex { services0 = services0.omit(service) }
+  def services: List[(Text, Int)] = mutex(services0.to[List])
 
-  def detach(run: Int, suite: Text, blocks: List[Block]): Unit = mutex:
+  def attach(run: Text, board: fume.Board): Unit = mutex { boards = boards.define(run, board) }
+
+  def detach(run: Text, suite: Text, blocks: List[Block]): Unit = mutex:
     boards = boards.omit(run)
     finished = finished.define(run, finished(run).or(Nil) + List(Finished(suite, blocks)))
 
-  def board(run: Int): Optional[fume.Board] = mutex(boards(run))
-  def done(run: Int): List[Finished] = mutex(finished(run).or(Nil))
+  def board(run: Text): Optional[fume.Board] = mutex(boards(run))
+  def done(run: Text): List[Finished] = mutex(finished(run).or(Nil))
 
-  def forget(run: Int): Unit = mutex:
+  def open(run: Text, model: Model): Unit = mutex { models = models.define(run, model) }
+  def close(run: Text): Unit = mutex { models = models.omit(run); forks = forks.omit(run) }
+  def model(run: Text): Optional[Model] = mutex(models(run))
+
+  def fork(run: Text, pid: Long): Unit = mutex { forks = forks.define(run, pid) }
+  def unfork(run: Text): Unit = mutex { forks = forks.omit(run) }
+  def forked(run: Text): Optional[Long] = mutex(forks(run))
+
+  def forget(run: Text): Unit = mutex:
     boards = boards.omit(run)
     finished = finished.omit(run)
 
@@ -98,11 +123,16 @@ object Dashboard:
 
       val dashboard = Dashboard()
 
+      // The MCP server answers `/mcp` on the dashboard's port too, so one address serves both.
       val running: pyrocosm.WebFrontend =
-        scala.caps.unsafe.unsafeAssumePure(pyrocosm.WebFrontend(port, fallback = Assets.serve))
+        scala.caps.unsafe.unsafeAssumePure:
+          pyrocosm.WebFrontend
+            ( port,
+              fallback = Answering.fallback )
 
       frontend = running
       Server.serving = true
+      Server.announce(t"dashboard", port)
 
       try
         async:
@@ -111,7 +141,9 @@ object Dashboard:
             snooze(0.25*Second)
 
         running.run(dashboard.interface)(dashboard.handle)
-      finally Server.serving = false
+      finally
+        Server.serving = false
+        Server.withdraw(t"dashboard")
 
     def stop(): Unit = frontend.let(_.stop())
 
@@ -123,11 +155,11 @@ final class Dashboard():
 
   // The action selecting each run, by run id, made as the run first appears.
   @scala.caps.unsafe.untrackedCaptures
-  private var actions: Map[Int, Action] = Map()
+  private var actions: Map[Text, Action] = Map()
 
   @scala.caps.unsafe.untrackedCaptures
   @volatile
-  private var selected: Optional[Int] = Unset
+  private var selected: Optional[Text] = Unset
 
   @scala.caps.unsafe.untrackedCaptures
   private var lastRuns: List[Block] = Nil
@@ -139,7 +171,7 @@ final class Dashboard():
   private var lastFinished: Int = -1
 
   @scala.caps.unsafe.untrackedCaptures
-  private var lastRun: Optional[Int] = Unset
+  private var lastRun: Optional[Text] = Unset
 
   val runs: pyrocosm.Live[List[Block]] = pyrocosm.Live(List(Block.paragraph(t"No runs yet.")))
   val content: pyrocosm.Live[List[Block]] = pyrocosm.Live(List(Block.paragraph(t"Select a run.")))
@@ -150,7 +182,7 @@ final class Dashboard():
   val transpose: pyrocosm.Toggle = pyrocosm.Toggle(t"transpose")
   val transposeControl: pyrocosm.Control = pyrocosm.Control.Toggle(transpose, Inline.text(t"Transpose axes"))
 
-  private def action(run: Int): Action = mutex:
+  private def action(run: Text): Action = mutex:
     actions(run).or:
       val action = Action(t"run-$run")
       actions = actions.define(run, action)
@@ -163,7 +195,7 @@ final class Dashboard():
       refresh()
 
     case Event.Pressed(action) =>
-      val found: Optional[Int] = mutex(actions.to[List]).seek(_(1) == action).let(_(0))
+      val found: Optional[Text] = mutex(actions.to[List]).seek(_(1) == action).let(_(0))
       found.let { run => selected = run; refresh() }
 
     case _ =>
@@ -184,20 +216,25 @@ final class Dashboard():
       (started in Dashboard.timezone).time.show
 
   private def runItem(run: Journal.Run): Block.Item =
-    val standing: Inline = run.outcome.lay(Inline.Toned(Tone.Accent, List(Inline.Symbol(pyrocosm.Glyph.Running)))):
-      case Journal.Outcome.Passed  => Inline.Toned(Tone.Success, List(Inline.Symbol(pyrocosm.Glyph.Check)))
-      case Journal.Outcome.Failed  => Inline.Toned(Tone.Failure, List(Inline.Symbol(pyrocosm.Glyph.Cross)))
-      case Journal.Outcome.Aborted => Inline.Toned(Tone.Warning, List(Inline.Symbol(pyrocosm.Glyph.Warning)))
+    val record: RunRecord = run.record
+
+    val standing: Inline = record.outcome.lay(Inline.Toned(Tone.Accent, List(Inline.Symbol(pyrocosm.Glyph.Running)))):
+      case RunRecord.passed => Inline.Toned(Tone.Success, List(Inline.Symbol(pyrocosm.Glyph.Check)))
+      case RunRecord.failed => Inline.Toned(Tone.Failure, List(Inline.Symbol(pyrocosm.Glyph.Cross)))
+      case _             => Inline.Toned(Tone.Warning, List(Inline.Symbol(pyrocosm.Glyph.Warning)))
 
     // An agent's run carries the agent's icon, served by `Assets`; a human's carries nothing.
-    val agent: List[Inline] = run.invoker.icon.lay(Nil: List[Inline]): icon =>
-      List(Inline.Icon(Assets.location(icon), run.invoker.name), Inline.Textual(t" "))
+    val invoker: Invoker = Invoker.of(record.invoker)
 
-    val name: Text = run.current.or(run.suites.last.let(_.suite).or(run.scheduled.prim.or(t"run ${run.id}")))
+    val agent: List[Inline] = invoker.icon.lay(Nil: List[Inline]): icon =>
+      List(Inline.Icon(Assets.location(icon), invoker.name), Inline.Textual(t" "))
+
+    val name: Text =
+      run.current.or(record.suites.last.let(_.suite).or(record.scheduled.prim.or(t"run ${run.id}")))
 
     val detail: List[Inline] =
       List(Inline.Emphasis(Inline.text(name)), Inline.Textual(t" "),
-          Inline.Toned(Tone.Muted, Inline.text(t"${when(run.started)} · ${run.client} · ${run.machine}")))
+          Inline.Toned(Tone.Muted, Inline.text(t"${when(record.started)} · ${record.client} · ${record.machine}")))
 
     val label: List[Inline] = List(standing, Inline.Textual(t" ")) + agent + detail
 
@@ -238,12 +275,12 @@ final class Dashboard():
         // A run in flight shows its progress; a finished one, its outcome and totals.
         progress() = board.let(_.progress()).or:
           (active + completed).seek(_.id == run).lay(Nil: List[Block]): entry =>
-            val outcome: Inline = entry.outcome.lay(Inline.Toned(Tone.Accent, Inline.text(t"running"))):
-              case Journal.Outcome.Passed  => Inline.Toned(Tone.Success, Inline.text(t"passed"))
-              case Journal.Outcome.Failed  => Inline.Toned(Tone.Failure, Inline.text(t"failed"))
-              case Journal.Outcome.Aborted => Inline.Toned(Tone.Warning, Inline.text(t"aborted"))
+            val outcome: Inline = entry.record.outcome.lay(Inline.Toned(Tone.Accent, Inline.text(t"running"))):
+              case RunRecord.passed => Inline.Toned(Tone.Success, Inline.text(t"passed"))
+              case RunRecord.failed => Inline.Toned(Tone.Failure, Inline.text(t"failed"))
+              case _             => Inline.Toned(Tone.Warning, Inline.text(t"aborted"))
 
-            val totals: List[Inline] = entry.totals.lay(Nil: List[Inline]): totals =>
+            val totals: List[Inline] = entry.record.totals.lay(Nil: List[Inline]): totals =>
               List(Inline.Textual(t"  "), Inline.Figure(totals.passed.toDouble, 0), Inline.Textual(t" passed, "),
                   Inline.Figure(totals.failed.toDouble, 0), Inline.Textual(t" failed"))
 

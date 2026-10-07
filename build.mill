@@ -166,10 +166,15 @@ object settings:
     mvn"dev.propensive:guillotine-core:$soundness",     // sh"…" for forked suites
     mvn"dev.propensive:hellenism-jvm:$soundness",       // LocalClasspath, classloaders
     mvn"dev.propensive:iridescence-core:$soundness",    // the palette
+    mvn"dev.propensive:jacinta-schema:$soundness",      // JSON codecs and schemas for the API
+    mvn"dev.propensive:jacinta-time:$soundness",        // (with aviation's instants)
     mvn"dev.propensive:probably-cli:$soundness",        // Suite and its runner
     mvn"dev.propensive:probably-events:$soundness",     // the BinTEL event stream
     mvn"dev.propensive:sedentary-core:$soundness",      // benchmarks and stress tests
     mvn"dev.propensive:stratiform-core:$soundness",     // .pyrocosm/fume/config.tel
+    mvn"dev.propensive:stratiform-time:$soundness",     // run.tel's timestamps
+    mvn"dev.propensive:synesthesia-core:$soundness",    // the MCP server
+    mvn"dev.propensive:scintillate-server:$soundness",  // which serves over HTTP
     mvn"dev.propensive:tasseomancy-core:$soundness",    // the dashboard's charts
     mvn"dev.propensive:tessellate-core:$soundness",     // Flow.wrap for report text
     mvn"dev.propensive:ultimatum-core:$soundness",      // the scrolling viewport
@@ -424,9 +429,22 @@ object fume extends Project:
       (settings.scalaOptions ++ settings.predef).filterNot: option =>
         option == "-Ycc-new" || option.contains("captureChecking") || option.contains("separationChecking")
 
+  // The run record every run is persisted as (`fume.RunRecord`), the JSON types the MCP server
+  // serves (`fume.Api`) with their derived TEL and JSON codecs and JSON schemas, and the MCP
+  // server itself (`fume.McpServer`), whose tools delegate to the client. Without capture
+  // checking for the same reason as `relay`, twice over: the TEL codec of `run.tel` is derived
+  // here, and so is the server's specification, whose generated code is not capture-clean
+  // either. Published as `dev.propensive:fume-api`.
+  object api extends Component(), Publishing:
+    def mvnDeps = Task(settings.soundnessDeps(deps.soundness(), deps.pyrocosm()))
+
+    override def scalacOptions =
+      (settings.scalaOptions ++ settings.predef).filterNot: option =>
+        option == "-Ycc-new" || option.contains("captureChecking") || option.contains("separationChecking")
+
   // All of fume's logic — subcommands, flags, dispatch and (later) the test-running machinery.
   // Published to Maven Central as `dev.propensive:fume-client`.
-  object client extends Component(relay), Publishing:
+  object client extends Component(relay, api), Publishing:
     def mvnDeps = Task(settings.soundnessDeps(deps.soundness(), deps.pyrocosm()))
 
     // Fume's own version, as `fume about` and `fume --version` report it: see
@@ -438,9 +456,14 @@ object fume extends Project:
     // is the resource `fume/x.svg`.
     def assets = Task.Sources(mill.api.BuildCtx.workspaceRoot / "res")
 
+    // The MCP server's documentation, `doc/mcp.md`, travels in the jar as `fume/mcp.md`, which
+    // the server serves as the `fume://docs` resource.
+    def documentation = Task.Source(mill.api.BuildCtx.workspaceRoot / "doc" / "mcp.md")
+
     override def resources = Task:
       val file = Task.dest / "META-INF" / "pyrocosm" / "fume" / "version"
       os.write.over(file, buildVersion() + "\n", createFolders = true)
+      os.copy.over(documentation().path, Task.dest / "fume" / "mcp.md", createFolders = true)
       super.resources() ++ assets() ++ Seq(PathRef(Task.dest))
 
   // The invocation point, ALONE in its own module (`src/launcher/fume_launcher.scala` — just the
@@ -479,7 +502,7 @@ object fume extends Project:
 // sync script (propensive/.github) reconstructs the ivy2 layout coursier resolves from, which is
 // how `make snapshot` publishes an unreleased build for a dependent repository to pin.
 object release extends Module:
-  def modules: Seq[PublishModule] = Seq(fume.relay, fume.client)
+  def modules: Seq[PublishModule] = Seq(fume.relay, fume.api, fume.client)
 
   private def withDescriptors(source: os.Path, target: os.Path, entries: Seq[(String, os.Path)])
   :   Unit =

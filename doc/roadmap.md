@@ -57,10 +57,13 @@ otherwise.
   outcome, selection terms, *effective* settings with their sources, classpath entries with
   content digests, environment capture (JVM, OS, cores, load at start), per-suite
   `Doc.Document`s and totals. Derive TEL and JSON codecs; BinTEL for the event log.
-- **0.2 Persist the journal.** `.pyrocosm/fume/runs/<id>/` holding `run.tel` plus `events.bintel`
-  per suite; the daemon's `Journal` becomes a cache over disk, surviving restarts. Add a
-  `retention` setting, `fume runs` (list), `fume show <id|last>` (re-render a stored run)
-  and `fume cancel <id>`. Run ids must be stable across daemons (timestamp plus counter).
+- **0.2 Persist the journal.** *Landed (first cut):* `$XDG_STATE_HOME/fume/runs/<id>/`
+  holding `run.tel`, `events/<n>.bintel` per suite and `captured/<n>.txt`; the daemon's
+  `Journal` is a cache over the directory, surviving restarts; the `retention` setting; ids
+  are the start time plus four hex digits. User-level rather than `.pyrocosm/fume/runs/`, so
+  the daemon's MCP server, serving outside any invocation, finds every project's runs. Still
+  to do: `fume runs` (list), `fume show <id|last>` (re-render a stored run) and
+  `fume cancel <id>`.
 - **0.3 Input sources and tree hash.** `input` entries in `config.tel` (globs, like
   `classpath`). Fume computes the git tree hash of exactly those paths (the filtered-tree
   scheme from `attest.sh`, via `octogenarian`), and records HEAD, a dirty flag and the tree
@@ -192,10 +195,15 @@ otherwise.
 
 ## Phase 5: Integration surfaces
 
-- **5.1 MCP server.** `fume mcp` (stdio transport, synesthesia): tools `run`, `list`,
-  `rerun_failed`, `report`, `golden_accept`, `trend`; resources for runs, the latest report
-  and coverage; progress notifications while a run is in flight. Reuses the LLM renderer
-  from 1.3 for tool results.
+- **5.1 MCP server.** *Landed (first cut):* `fume mcp` and the `mcp` keyword serve
+  synesthesia's streamable HTTP transport (synesthesia has no stdio transport) on
+  `mcp-port`, and the dashboard mounts the same server at `/mcp`. Query tools — `runs`,
+  `runsIn`, `run`, `results`, `suiteResults`, `test`, `benchmarks`, `failures`, `captured`,
+  `processes`, `suites`, `tests` — answer with the `fume.Api` types, whose derived JSON Schema
+  `fume://schema` serves; `fume://docs` and `fume://runs/latest` too. No optional parameters
+  until synesthesia supports them (propensive/soundness#2187). Still to do:
+  tools that start runs (`run`, `rerun_failed`), `report`, `golden_accept`, `trend`, and
+  progress notifications while a run is in flight.
 - **5.2 `watch`.** Implement the existing stub over the classpath jars, with the web UI and
   MCP receiving each rerun as a new job.
 - **5.3 Change-driven selection.** `--changed` selects suites whose inputs differ from the

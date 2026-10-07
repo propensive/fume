@@ -39,9 +39,7 @@ import pyrocosm.{Blobs, Channel, Machine, Peer, Tool}
 
 import denominative.dysasymptotics.linearSize
 import environments.javaBaseEnvironment
-import logging.silentLogging
 import probates.cancelProbate
-import systems.javaBaseSystem
 
 // This daemon as a WORKER: a `Tool.Service` that listens (on `listen-port`, 8091 by default)
 // for a controller — a fume on another machine, invoked with `--on <this machine>` — and runs
@@ -89,7 +87,8 @@ object Worker:
               session => Worker.run(session)
 
           listener = made
-          made.serve(port)
+          Server.announce(t"listener", port)
+          try made.serve(port) finally Server.withdraw(t"listener")
 
     def stop(): Unit = listener.let(_.stop())
 
@@ -175,10 +174,13 @@ object Worker:
 
     maxLoad.let { text => safely(text.as[Double]).let(settle(_, aborted)) }
 
-    val journalId: Int =
+    val journalId: Text =
       Journal.start
-        ( session.peer.identity.hostname, Invoker.Remote, classpath(), arguments, suites,
+        ( t"", session.peer.identity.hostname, Invoker.Remote, jars.map(_.path), arguments, suites,
           session.peer.identity.hostname )
+
+    val numbers: Map[Text, Int] =
+      suites.indexed.map { (suite, ordinal) => suite -> (ordinal.n0 + 1) }.to[Map]
 
     val loader: Classloader = classpath.classloader(Classloader.Delegation.Preferential)
     val shared: Optional[Classloader] = if EventStream.reentrant(loader) then loader else Unset
@@ -192,14 +194,21 @@ object Worker:
         Journal.began(journalId, suite)
         val started: Instant over Unix = now()
 
+        // The frames go to the controller, and into this daemon's own run directory too, so
+        // its MCP server can answer for the run as the controller's can.
+        val number: Int = numbers(suite).or(0)
+        val writer: Optional[Runs.Writer] = Runs.writer(journalId, number)
+
         val sink: EventStream.Sink =
-          EventStream.Sink.forwarding { frame => session.send(Relay.Frame(suite), frame) }
+          Runs.tee(writer, EventStream.Sink.forwarding { frame => session.send(Relay.Frame(suite), frame) })
 
         val outcome: Optional[EventStream.Outcome] =
-          EventStream.frames(classpath, suite, arguments, shared)
-            ( sink,
-              () => aborted(),
-              (out, err) => session.send(Relay.Captured(suite, out, err)) )
+          try
+            EventStream.frames(classpath, suite, arguments, shared)
+              ( sink,
+                () => aborted(),
+                (out, err) => session.send(Relay.Captured(suite, out, err)) )
+          finally writer.let(_.close())
 
         val passed: Boolean = outcome match
           case EventStream.Outcome.Completed(exit) =>
@@ -220,7 +229,11 @@ object Worker:
             session.send(Relay.Ended(suite, Relay.legacy, 2, t""))
             false
 
-        Journal.record(journalId, suite, passed, Unset, started)
+        val events: Optional[Text] = writer match
+          case _: Runs.Writer => Runs.eventsFile(number)
+          case _              => Unset
+
+        Journal.record(journalId, suite, passed, Unset, started, events, false)
         recur(tail, if passed then failures else failures + 1)
 
       case _ =>

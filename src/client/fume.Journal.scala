@@ -42,124 +42,164 @@ import denominative.dysasymptotics.linearSize
 // served — several may be in flight at once (one per client), so every operation is
 // mutex-guarded and keyed by run id.
 //
+// Every run is a `RunRecord`, persisted under the runs directory (`Runs`) as it changes: the
+// journal is a cache over that directory, loaded from it when the daemon first needs its
+// history, so a run survives the daemon that made it, and ids are stable across daemons.
+//
 // Named `Journal`, not `Ledger`: `Ledger` is a Soundness type (fume's own `Model` keys its
 // entries with one), and a package-level `fume.Ledger` would shadow it throughout `fume`.
-//
-// Everything stored here is pure data — no capabilities, nothing holding a client's stdio —
-// so a snapshot can be rendered long after the run that produced it has gone.
 object Journal:
   // How a run ended. A run still in flight has no outcome.
   enum Outcome:
     case Passed, Failed, Aborted
 
     def show: Text = this match
-      case Passed  => t"passed"
-      case Failed  => t"failed"
-      case Aborted => t"aborted"
+      case Passed  => RunRecord.passed
+      case Failed  => RunRecord.failed
+      case Aborted => RunRecord.aborted
 
-  // One suite's contribution to a run: whether it passed, and its totals when it ran by the
-  // event protocol (a legacy or forked suite reports only its exit status).
-  case class SuiteRun
-    ( suite:    Text,
-      passed:   Boolean,
-      totals:   Optional[Doc.Totals],
-      started:  Instant over Unix,
-      finished: Instant over Unix ):
-
-    def duration: Duration = finished - started
-
-  // `machine` is where the suites ran: the configured name of the machine a run was sent to
-  // with `--on`, or the local hostname; a worker records the controller's hostname instead, so
-  // its own dashboard shows who asked.
-  case class Run
-    ( id:        Int,
-      client:    Text,
-      invoker:   Invoker,
-      started:   Instant over Unix,
-      classpath: Text,
-      selection: List[Text],
-      scheduled: List[Text],
-      suites:    List[SuiteRun],
-      current:   Optional[Text],
-      finished:  Optional[Instant over Unix],
-      outcome:   Optional[Outcome],
-      totals:    Optional[Doc.Totals],
-      machine:   Text ):
-
-    def running: Boolean = finished.absent
-    def duration: Optional[Duration] = finished.let(_ - started)
-    def failures: Int = suites.count(!_.passed)
+  // A run as the journal holds it: its record, and — for a run in flight — the suite it is
+  // executing, which is the daemon's knowledge alone and not persisted.
+  case class Run(record: RunRecord, current: Optional[Text]):
+    def id: Text = record.id
+    def running: Boolean = record.running
 
   // The completed runs kept in memory. Old enough runs fall off the end: the daemon is
-  // long-lived, and an unbounded history would grow without limit.
+  // long-lived, and an unbounded history would grow without limit; the directory keeps the
+  // rest, up to the retention setting.
   private val history: Int = 64
 
   private val mutex: Mutex = Mutex()
 
-  @scala.caps.unsafe.untrackedCaptures
-  private var next: Int = 0
   // Both lists are newest-first.
   @scala.caps.unsafe.untrackedCaptures
   private var active0: List[Run] = Nil
   @scala.caps.unsafe.untrackedCaptures
-  private var completed0: List[Run] = Nil
+  private var completed0: Optional[List[Run]] = Unset
 
-  private def amend(id: Int)(lambda: Run => Run): Unit =
+  private def restore(record: RunRecord): Run =
+    if record.running then
+      val corrected: RunRecord = record.copy(finished = record.started, outcome = RunRecord.aborted)
+      Runs.write(corrected)
+      Run(corrected, Unset)
+    else Run(record, Unset)
+
+  // The history, loaded from the runs directory on first use. A run this daemon has in flight
+  // is already on disk, and is not history; a run the directory holds with no end — its
+  // daemon died mid-run — is ended as aborted, and the record corrected.
+  private def completedRuns(): List[Run] = completed0.or:
+    def inFlight(record: RunRecord): Boolean = active0.exists(_.id == record.id)
+    val loaded: List[Run] = Runs.load(history).filter(!inFlight(_)).map(restore)
+    completed0 = loaded
+    loaded
+
+  private def amend(id: Text)(lambda: Run => Run): Unit =
     active0 = active0.map { run => if run.id == id then lambda(run) else run }
+
+  private def persist(id: Text): Unit = active0.seek(_.id == id) match
+    case run: Run => Runs.write(run.record)
+    case _        => ()
+
+  private def totals(totals: Optional[Doc.Totals]): Optional[RunRecord.Totals] = totals match
+    case totals: Doc.Totals =>
+      RunRecord.Totals(totals.passed, totals.failed, totals.aspirePassed, totals.aspireFailed)
+
+    case _ =>
+      Unset
 
   // Enters a starting run, returning the id by which it is later amended and completed.
   def start
-    ( client:    Text,
+    ( workspace: Text,
+      client:    Text,
       invoker:   Invoker,
-      classpath: Text,
+      classpath: List[Text],
       selection: List[Text],
       scheduled: List[Text],
       machine:   Text )
-  :   Int =
+    ( using Environment )
+  :   Text =
 
     mutex:
-      next += 1
+      Runs.locate()
+      val started: Instant over Unix = now()
 
-      val run =
-        Run
-          ( next, client, invoker, now(), classpath, selection, scheduled,
-            Nil, Unset, Unset, Unset, Unset, machine )
+      val id: Text = Runs.id(started)
 
-      active0 = run :: active0
-      next
+      val record: RunRecord =
+        RunRecord
+          ( id, Fume.version, workspace, invoker.word, client, machine, started, Unset, Unset,
+            classpath, selection, scheduled, Nil, Unset )
+
+      active0 = Run(record, Unset) :: active0
+      Runs.write(record)
+      record.id
 
   // Marks the suite a run is currently executing.
-  def began(id: Int, suite: Text): Unit = mutex:
+  def began(id: Text, suite: Text): Unit = mutex:
     amend(id) { run => run.copy(current = suite) }
 
   def record
-    ( id:      Int,
-      suite:   Text,
-      passed:  Boolean,
-      totals:  Optional[Doc.Totals],
-      started: Instant over Unix )
+    ( id:       Text,
+      suite:    Text,
+      passed:   Boolean,
+      totals:   Optional[Doc.Totals],
+      started:  Instant over Unix,
+      events:   Optional[Text],
+      captured: Boolean )
   :   Unit =
 
     mutex:
       amend(id): run =>
-        val entry = SuiteRun(suite, passed, totals, started, now())
-        run.copy(suites = run.suites + List(entry), current = Unset)
+        val entry = RunRecord.Suite(suite, passed, started, now(), this.totals(totals), events, captured)
+        run.copy(record = run.record.copy(suites = run.record.suites + List(entry)), current = Unset)
+
+      persist(id)
 
   // Completes a run, moving it out of the active list.
-  def finish(id: Int, outcome: Outcome, totals: Optional[Doc.Totals]): Unit = mutex:
-    active0.seek(_.id == id).let: run =>
-      val done =
-        run.copy
-          ( current = Unset,
-            finished = now(),
-            outcome = outcome,
-            totals = totals )
+  def finish(id: Text, outcome: Outcome, totals: Optional[Doc.Totals]): Unit = mutex:
+    val found: Optional[Run] = active0.seek(_.id == id)
 
-      active0 = active0.filter(_.id != id)
-      // Typed first: the cons result's element type is otherwise still being inferred when
-      // `keep` is resolved.
-      val extended: List[Run] = done :: completed0
-      completed0 = extended.keep(history)
+    found match
+      case run: Run =>
+        val finished: Optional[Instant over Unix] = now()
+        val word: Optional[Text] = outcome.show
+        val counts: Optional[RunRecord.Totals] = this.totals(totals)
+        val record: RunRecord = run.record.copy(finished = finished, outcome = word, totals = counts)
+        val done: Run = Run(record, Unset)
+
+        active0 = active0.filter(_.id != id)
+        Runs.write(record)
+        // Typed first: the cons result's element type is otherwise still being inferred when
+        // `keep` is resolved. The history may have been loaded from disk while this run was in
+        // flight, and so hold its record already.
+        val extended: List[Run] = done :: completedRuns().filter(_.id != id)
+        completed0 = extended.keep(history)
+
+      case _ =>
+        ()
 
   def active: List[Run] = mutex(active0)
-  def completed: List[Run] = mutex(completed0)
+  def completed: List[Run] = mutex(completedRuns())
+
+  // A run by id — `last` for the newest — from memory, or from the directory beyond the
+  // history the journal keeps.
+  def find(id: Text): Optional[Run] = mutex:
+    val known: List[Run] = active0 + completedRuns()
+
+    if id == t"last" then known.prim else
+      val found: Optional[Run] = known.seek(_.id == id)
+
+      found match
+        case run: Run => run
+        case _        => Runs.read(id) match
+          case record: RunRecord => Run(record, Unset)
+          case _                 => Unset
+
+  // Every run, newest first, the active ones first: the journal's, then the directory's.
+  def all(limit: Int): List[Run] = mutex:
+    val known: List[Run] = active0 + completedRuns()
+
+    if known.size >= limit then known.keep(limit) else
+      val ids: Set[Text] = known.map(_.id).to[Set]
+      val more: List[Run] = Runs.load(limit).filter { record => !ids.has(record.id) }.map(Run(_, Unset))
+      (known + more).keep(limit)

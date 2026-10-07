@@ -21,6 +21,7 @@ fume list -c out.jar                    # enumerate tests without running them
 fume list -c out.jar --scan             # enumerate them by running each suite's body
 fume watch -c out.jar                   # rerun whenever the jar changes
 fume serve                              # serve the dashboard of runs until Ctrl+C
+fume mcp                                # serve the MCP server agents query about runs until Ctrl+C
 fume run -c out.jar --on linux-box      # run the selection on another machine's fume
 fume listen                             # accept runs sent from other machines until Ctrl+C
 fume identity                           # this machine's certificate fingerprint, for controllers
@@ -103,11 +104,55 @@ fail-fast
 A missing file is fine (fume needs no configuration), and a file that fails to parse is treated
 as absent rather than aborting the command.
 
-Two keywords are read by the daemon itself rather than by a subcommand: `port` is the port the
+Some keywords are read by the daemon itself rather than by a subcommand: `port` is the port the
 dashboard serves on (8090 by default), and a bare `serve` asks the daemon to serve the dashboard
 from the moment it starts, for as long as it lives, without a `fume serve` ever being run — so
 `serve` in `~/.config/fume/config.tel` keeps a dashboard at `http://localhost:8090/` whenever fume
-is in use. `fume quit` stops both.
+is in use. Likewise a bare `mcp` serves the MCP server from the daemon's start, on `mcp-port`
+(8092 by default). `fume quit` stops them all.
+
+## Runs are kept
+
+Every run is persisted as it happens, under `$XDG_STATE_HOME/fume/runs/<id>/`
+(`~/.local/state/fume/runs/`): `run.tel` records who ran what, where and when, and how each
+suite fared, rewritten as the run progresses; `events/<n>.bintel` holds each suite's event
+frames verbatim, exactly as the suite streamed them; and `captured/<n>.txt` holds whatever a
+suite printed outside its report. A run's id is the UTC time it started and four hex digits of
+entropy — `20261007-143512-3f9a` — so ids sort by time and survive the daemon that made them:
+the daemon's journal is loaded from the directory, and a run the daemon died in the middle of is
+recorded as aborted. The `retention` setting (200 by default) is how many runs are kept; the
+oldest beyond it are deleted as a new run starts.
+
+The frames are the source of truth: a run's results are never stored as such, but replayed from
+them through the same model a live run folds into, whenever they are asked for.
+
+## Querying runs from an agent
+
+The daemon is an [MCP](https://modelcontextprotocol.io/) server, built on Soundness's
+synesthesia, which an agent queries about runs: `fume mcp` serves it at
+`http://localhost:8092/mcp` until Ctrl+C, `mcp` in a configuration file serves it from the
+daemon's start, and it is also mounted at `/mcp` on the dashboard's port whenever the dashboard
+serves. Claude Code connects with:
+
+```sh
+claude mcp add --transport http fume http://localhost:8092/mcp
+```
+
+Its tools answer in JSON: `runs` and `runsIn` list runs; `run` describes one; `results`,
+`suiteResults`, `test` and `benchmarks` give per-test results with every benchmark, stress and
+profile record; `failures` gives each failing test's message, stack trace, captured values and
+expected-against-found comparison; `captured` gives what a suite printed; `processes` gives the
+daemon's processes — the services it serves, the runs in flight with the tests they are
+executing, and any run it is working for another machine; and `suites` and `tests` list what a
+classpath declares, from its static index, without running anything. `last` names the newest run
+wherever a run id is taken. The resources `fume://schema` (the JSON Schema of every answer),
+`fume://docs` (the server's documentation, also at [doc/mcp.md](/doc/mcp.md)) and
+`fume://runs/latest` describe the rest.
+
+No tool takes an optional parameter, because synesthesia lists every parameter as required and
+cannot decode an absent one; its tool errors, resource MIME types and capture checking have
+similar gaps, which [propensive/soundness#2187](https://github.com/propensive/soundness/issues/2187)
+records, and fume designs around until they are addressed.
 
 ## Running tests on another machine
 
@@ -173,10 +218,14 @@ output in the dashboard's report.
 
 ## Modules
 
-Fume is structured as three build modules:
+Fume is structured as five build modules:
 
- - `client`: all of fume's logic — the subcommands, flags, dispatch and (in time) the
-   test-running machinery; published to Maven Central as `dev.propensive:fume-client`
+ - `relay`: the messages a controller and a worker exchange, and their codec; published as
+   `dev.propensive:fume-relay`
+ - `api`: the run record every run is persisted as, the JSON types the MCP server answers with
+   and their schema, and the MCP server itself; published as `dev.propensive:fume-api`
+ - `client`: all of fume's logic — the subcommands, flags, dispatch and the test-running
+   machinery; published to Maven Central as `dev.propensive:fume-client`
  - `launcher`: the invocation point alone — `@main def fume() = externalize(runClient())` —
    depending on `fume-client` as a published Maven Central coordinate, so that Burdock can
    externalize it (unpublished; only buildable after a release)

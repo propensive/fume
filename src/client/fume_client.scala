@@ -56,13 +56,16 @@ import threading.platformThreading
 // project's `.pyrocosm/fume/config.tel` and the user's `~/.config/fume/config.tel` — and the
 // dashboard the daemon serves when a config says `serve`.
 val Fume: Tool =
+  // The MCP server, which lives outside this module, learns what the daemon knows here.
+  McpServer.register(Answering)
+
   Tool
     ( t"fume",
       prose = t"Fume is the test runner for the Soundness ecosystem: it runs Probably tests "
             + t"and Sedentary benchmarks from a prebuilt classpath, discovering suites "
             + t"through the META-INF/services/probably.Suite index.",
       web   = fume.Dashboard.web,
-      services = List(fume.Worker.service) )
+      services = List(fume.Worker.service, fume.McpServer.service) )
 
 // The exit statuses fume can terminate with, declared as objects (a `Status` must be an
 // `object`, not a `val` — soundness#1811) so that the precise union of an `execute` block's
@@ -91,6 +94,7 @@ object ui:
   val Serve = Subcommand("serve", "serve the dashboard of runs on the web until Ctrl+C")
   val Listen = Subcommand("listen", "run selections sent by fume on other machines until Ctrl+C")
   val Identity = Subcommand("identity", "show this machine's certificate fingerprint and token")
+  val Mcp = Subcommand("mcp", "serve the MCP server agents query about runs until Ctrl+C")
 
   // The classpath holding compiled test suites. Suites on it are discovered ONLY through the
   // `META-INF/services/probably.Suite` index which the beneficence compiler plugin writes;
@@ -200,6 +204,13 @@ object ui:
   val ListenPort =
     Setting[Text](t"listenPort", t"the port on which `fume listen` accepts other machines' runs")
 
+  // The MCP server: `mcp-port` is the port `fume mcp` serves on, and the port the daemon serves
+  // on when a config says `mcp`. `retention` is how many runs the runs directory keeps.
+  val McpPort = Setting[Text](t"mcpPort", t"the port on which `fume mcp` serves the MCP server")
+
+  val Retention =
+    Setting[Text](t"retention", t"how many runs to keep in the runs directory; 200 by default")
+
   // The load gate: hold the run back until the system's 1-minute load average has fallen
   // below this value. A `Setting`, so a benchmarking workspace can fix a house threshold in
   // `.pyrocosm/fume/config.tel` (`maxLoad 0.5`) and still override it per invocation;
@@ -292,6 +303,10 @@ def runClient(): Unit =
         val terms: List[Text] = selectionTerms(rest)
         val known: List[Machine] = machines()
         val on: Optional[Text] = onSetting(known)
+        val retention: Int = ui.Retention() match
+          case text: Text => safely(text.as[Int]).or(200)
+          case _          => 200
+        val workspace: Text = summon[Cli].workingDirectory.directory()
 
         completeTerms(classpath, rest)
 
@@ -510,17 +525,27 @@ def runClient(): Unit =
                 threshold.let(Load.settle(_, width, tty, aborted)).unit
 
                 // The run is entered in the daemon's journal for its whole duration: it moves
-                // to the completed list at the end, whichever way it ends.
-                val journalId: Int =
+                // to the completed list at the end, whichever way it ends — and persisted in
+                // the runs directory from this moment, with each suite's frames beside it.
+                val journalId: Text =
                   Journal.start
-                    ( summon[Resident].pid.value.show,
+                    ( workspace,
+                      summon[Resident].pid.value.show,
                       Invoker.detect,
-                      classpath(),
+                      classpath().cut(t":"),
                       args,
                       suites,
                       machine.let(_.name).or(Machine.Identity.local.hostname) )
 
+                Runs.prune(retention)
+                Server.open(journalId, model)
                 board.let { board => Server.attach(journalId, board) }
+
+                // Each suite's number in the run, which names its files in the run directory.
+                val numbers: Map[Text, Int] =
+                  suites.indexed.map { (suite, ordinal) => suite -> (ordinal.n0 + 1) }.to[Map]
+
+                def number(suite: Text): Int = numbers(suite).or(0)
 
                 // The frontend holds the run's monitor and its terminal-error tactic, which
                 // outlive it; it is vouched pure so it can be held and stopped from here. The
@@ -573,6 +598,18 @@ def runClient(): Unit =
                 val captures: scala.collection.mutable.ListBuffer[Captures.Captured] =
                   scala.collection.mutable.ListBuffer()
 
+                // What a suite printed outside its report, stored in the run directory as the
+                // suite ends; whether it printed anything is recorded with the suite.
+                def captureOf(suite: Text): Boolean =
+                  captures.find(_.suite == suite) match
+                    case scala.Some(captured) => Runs.capture(journalId, number(suite), captured)
+                    case _                    => false
+
+                // The name of a suite's frame file, once its writer was opened.
+                def eventsOf(suite: Text, writer: Optional[Runs.Writer]): Optional[Text] = writer match
+                  case _: Runs.Writer => Runs.eventsFile(number(suite))
+                  case _              => Unset
+
                 // The LEGACY loop: each suite runs through `Suite#invoke` in-process (or, with
                 // `--fork`, in its own JVM) and renders its own report, so only the verdict —
                 // its exit status — reaches fume. Also the tail of an event run whose classpath
@@ -587,8 +624,8 @@ def runClient(): Unit =
                       Journal.began(journalId, head)
                       progress.begin(head)
                       val suiteStarted: Instant over Unix = now()
-                      val passed: Boolean = invokeSuite(classpath, head, args, fork) == Exit.Ok
-                      Journal.record(journalId, head, passed, Unset, suiteStarted)
+                      val passed: Boolean = invokeSuite(classpath, head, args, fork, journalId) == Exit.Ok
+                      Journal.record(journalId, head, passed, Unset, suiteStarted, Unset, false)
                       progress.end(head)
                       Render.announce(if passed then t"$head: passed" else t"$head: FAILED")
                       val failures2 = if passed then failures else failures + 1
@@ -623,16 +660,28 @@ def runClient(): Unit =
                       val beforeTotals: Doc.Totals = Documenting.totals(before)
                       model.enter(head)
 
+                      // The frames are teed into the run directory as they arrive.
+                      val writer: Optional[Runs.Writer] = Runs.writer(journalId, number(head))
+
+                      val sink: EventStream.Sink =
+                        Runs.tee
+                          ( writer,
+                            EventStream.Sink.decoding: event =>
+                              model.handle(event)
+                              board.let(_.refresh()) )
+
                       val outcome: Optional[EventStream.Outcome] =
-                        EventStream.stream(classpath, head, args, shared)
-                          ( { event =>
-                                model.handle(event)
-                                board.let(_.refresh()) },
-                            () => aborted(),
-                            (out, err) => captures.append(Captures.Captured(head, out, err)) )
+                        try
+                          EventStream.frames(classpath, head, args, shared)
+                            ( sink,
+                              () => aborted(),
+                              (out, err) => captures.append(Captures.Captured(head, out, err)) )
+                        finally writer.let(_.close())
 
                       def next(passed: Boolean, totals: Optional[Doc.Totals]): (Int, Int, List[Text]) =
-                        Journal.record(journalId, head, passed, totals, suiteStarted)
+                        Journal.record
+                          ( journalId, head, passed, totals, suiteStarted, eventsOf(head, writer),
+                            captureOf(head) )
                         progress.end(head)
                         val failures2 = if passed then failures else failures + 1
 
@@ -703,8 +752,11 @@ def runClient(): Unit =
                     state.current = suite
                     state.expectingFingerprint = true
                     state.incompatible = false
+                    state.writer = Runs.writer(journalId, number(suite))
 
                   def frame(suite: Text, data: Data): Unit =
+                    state.writer.let(_.frame(data))
+
                     if state.expectingFingerprint then
                       state.expectingFingerprint = false
                       if !data.readable.sameElements(probably.Streamer.fingerprint.readable) then
@@ -732,7 +784,13 @@ def runClient(): Unit =
                         Render.announce(t"$suite cannot stream events, so the worker did not run it")
                         false
 
-                    Journal.record(journalId, suite, passed, suiteTotals, state.suiteStarted)
+                    state.writer.let(_.close())
+
+                    Journal.record
+                      ( journalId, suite, passed, suiteTotals, state.suiteStarted,
+                        eventsOf(suite, state.writer), captureOf(suite) )
+
+                    state.writer = Unset
                     progress.end(suite)
                     state.current = Unset
                     state.ran += 1
@@ -827,7 +885,8 @@ def runClient(): Unit =
 
                   // A suite left open by a lost connection is recorded as failed.
                   state.current.let: suite =>
-                    Journal.record(journalId, suite, false, Unset, state.suiteStarted)
+                    state.writer.let(_.close())
+                    Journal.record(journalId, suite, false, Unset, state.suiteStarted, Unset, false)
                     progress.end(suite)
                     state.ran += 1
                     state.failures += 1
@@ -949,10 +1008,11 @@ def runClient(): Unit =
                   else Journal.Outcome.Failed
 
                 Journal.finish(journalId, outcome, totals)
+                Server.close(journalId)
 
                 // What this run taught about its suites, for the next run's forecast.
                 Journal.completed.seek(_.id == journalId).let: run =>
-                  Forecasts.save(classpath(), run.suites, Forecasts.directory)
+                  Forecasts.save(classpath(), run.record.suites, Forecasts.directory)
 
                 // The banner renders over the aggregate of every event-run suite; when every
                 // suite ran legacy (each rendered its own report already), only the summary
@@ -1135,9 +1195,13 @@ def runClient(): Unit =
             // The frontend holds the monitor and the error page, which outlive it; vouched pure so
             // it can be stopped from here.
             val frontend: pyrocosm.WebFrontend =
-              scala.caps.unsafe.unsafeAssumePure(pyrocosm.WebFrontend(port, fallback = Assets.serve))
+              scala.caps.unsafe.unsafeAssumePure:
+                pyrocosm.WebFrontend
+                  ( port,
+                    fallback = Answering.fallback )
 
             Server.serving = true
+            Server.announce(t"dashboard", port)
 
             async:
               try frontend.run(dashboard.interface)(dashboard.handle)
@@ -1160,8 +1224,54 @@ def runClient(): Unit =
 
             loop()
             Server.serving = false
+            Server.withdraw(t"dashboard")
             frontend.stop()
             Render.announce(t"the dashboard has stopped")
+            Exit.Ok
+
+        // `fume mcp [--mcp-port]` — serve the MCP server until Ctrl+C, as the daemon does for as
+        // long as it lives when a config says `mcp`. An agent connects to it over HTTP:
+        // `claude mcp add --transport http fume http://localhost:8092/mcp`.
+        case ui.Mcp() :: _ =>
+          val port: Int = ui.McpPort() match
+            case text: Text => safely(text.as[Int]).or(fume.McpServer.service.port)
+            case _          => fume.McpServer.service.port
+
+          execute:
+            given Stdio = summon[Invocation].stdio
+            import probates.cancelProbate
+
+            val stdio: Stdio = summon[Stdio]
+            val tty: Boolean = summon[Resident].cliInput == ethereal.Terminus.Terminal
+            val aborted: Atomic[Boolean] = Atomic(false)
+
+            trap:
+              case profanity.Signal(Interrupt.Int, _, _, _) =>
+                aborted() = true
+                SignalResponse.Accept
+
+            // The runs directory is located from this invocation's environment, for the
+            // server's sake: it serves outside any invocation.
+            Runs.locate()
+            Render.announce(t"serving MCP at http://localhost:$port/mcp (Ctrl+C to stop)")
+
+            val stopped: Atomic[Boolean] = Atomic(false)
+
+            async:
+              try Fume.run(fume.McpServer.service, port) finally stopped() = true
+
+            val input: Live.Input = Live.Input(aborted)
+
+            def loop(): Unit =
+              if tty then while stdio.in.available() > 0 do input.offer(stdio.in.read())
+
+              if !aborted() && !stopped() then
+                snooze(0.25*Second)
+                loop()
+
+            loop()
+            fume.McpServer.service.stop()
+            Render.announce(t"the MCP server has stopped")
             Exit.Ok
 
         // `fume listen [--listen-port]` — accept runs from controllers on other machines until
@@ -1189,6 +1299,7 @@ def runClient(): Unit =
               case identity: Peer.Identity =>
                 Render.announce(t"this machine's identity is ${Peer.render(identity.fingerprint)}")
                 Render.announce(t"listening for fume controllers on port $port (Ctrl+C to stop)")
+                Runs.locate()
 
                 val stopped: Atomic[Boolean] = Atomic(false)
 
@@ -1398,7 +1509,8 @@ private def completeTerms(classpath: Optional[LocalClasspath], rest: List[Argume
 private def selectionArguments(rest: List[Argument]): List[Argument] =
   val valueFlags: List[Flag] =
     List(ui.Classpath.flag, ui.Suite, ui.Kind.flag, ui.Tag, ui.Axis, ui.Exclude, ui.FailFast.flag,
-         ui.MaxLoad.flag, ui.DurationScale.flag, ui.Target.flag, ui.On.flag, ui.ListenPort.flag)
+         ui.MaxLoad.flag, ui.DurationScale.flag, ui.Target.flag, ui.On.flag, ui.ListenPort.flag,
+         ui.McpPort.flag, ui.Retention.flag)
 
   def recur(args: List[Argument], terms: List[Argument]): List[Argument] = args match
     case head :: tail =>
@@ -1429,7 +1541,7 @@ private def selectSuites(classpath: LocalClasspath, suite: Optional[Text]): List
 // Runs one suite in a fresh JVM — `java -cp <classpath> <suite> <terms…>` — forwarding its
 // output and yielding its exit status. The `java` executable is the daemon's own
 // (`java.home`), so no PATH lookup is involved.
-private def forkSuite(classpath: LocalClasspath, suite: Text, args: List[Text])
+private def forkSuite(classpath: LocalClasspath, suite: Text, args: List[Text], run: Text)
    (using Stdio, WorkingDirectory, Environment)
 :   Exit =
 
@@ -1440,7 +1552,9 @@ private def forkSuite(classpath: LocalClasspath, suite: Text, args: List[Text])
 
   safely:
     val job = command.fork[Text]()
-    val output: Text = job.await()
+    // The suite's own JVM is a process of the run, for as long as it lives.
+    Server.fork(run, job.pid.value)
+    val output: Text = try job.await() finally Server.unfork(run)
     Out.print(output)
     job.exitStatus()
 
@@ -1452,16 +1566,17 @@ private def forkSuite(classpath: LocalClasspath, suite: Text, args: List[Text])
 // own report), falling back to a forked JVM when even that is unavailable. This remains the
 // whole story for `--fork` and for `--list`, whose selection the event protocol deliberately
 // rejects (the stable text output belongs to the legacy path).
-private def invokeSuite(classpath: LocalClasspath, suite: Text, args: List[Text], fork: Boolean)
+private def invokeSuite
+   (classpath: LocalClasspath, suite: Text, args: List[Text], fork: Boolean, run: Text = t"")
    (using Stdio, WorkingDirectory, Monitor, Environment)
 :   Exit =
 
-  if fork then forkSuite(classpath, suite, args)
+  if fork then forkSuite(classpath, suite, args, run)
   else
     // The suite renders its own report through the JVM's streams; here they are the terminal's.
     Stdio.divert(summon[Stdio])(Suites.invoke(classpath, suite, args)).or:
       Render.announce(t"$suite could not be run in-process; running it in a separate JVM")
-      forkSuite(classpath, suite, args)
+      forkSuite(classpath, suite, args, run)
 
 // The terminal's width from the invocation's `COLUMNS`, or 120. A method of its own, outside
 // the inlined dispatch: read there, the `safely` region's tactic and the inlined `Environment`
@@ -1479,6 +1594,7 @@ private def usage()(using invocation: Invocation): UsageError.type =
   Out.println(t"  serve    serve the dashboard of runs on the web until Ctrl+C")
   Out.println(t"  listen   run selections sent by fume on other machines until Ctrl+C")
   Out.println(t"  identity show this machine's certificate fingerprint and token")
+  Out.println(t"  mcp      serve the MCP server agents query about runs until Ctrl+C")
   Out.println(t"  about    show fume's version and daemon")
   Out.println(t"  install  install shell tab-completions and the fume manpage")
   Out.println(t"  quit     stop the background daemon")
@@ -1510,3 +1626,6 @@ private final class RemoteState(totals: Doc.Totals):
   @volatile var stop: Boolean = false
   @scala.caps.unsafe.untrackedCaptures
   @volatile var abortSent: Boolean = false
+  // The open suite's frame file in the run directory.
+  @scala.caps.unsafe.untrackedCaptures
+  @volatile var writer: Optional[Runs.Writer] = Unset
