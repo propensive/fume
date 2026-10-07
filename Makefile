@@ -46,7 +46,7 @@ fume.jar: assembly
 # Package the repackaged JAR as a native executable for this machine with the pinned `xek` builder
 # (fetched into dist/xek and verified against etc/xek.tsv).
 fume: fume.jar xek-fetch
-	dist/xek fume.jar fume
+	dist/xek build fume.jar fume
 
 # Fetch the pinned `xek` builder into dist/xek.
 xek-fetch:

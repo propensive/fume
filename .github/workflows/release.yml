@@ -25,3 +25,7 @@ jobs:
     permissions:
       contents: write
     uses: propensive/.github/.github/workflows/scala-release.yml@main
+    # The environment holding UPGRADE_SIGNING_SEED, which signs the executables; it admits only
+    # tags of the form X.Y.Z, and each release waits for a reviewer's approval.
+    with:
+      environment: release
