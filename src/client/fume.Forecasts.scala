@@ -98,7 +98,7 @@ object Forecasts:
   private def line(entry: (Text, Observation)): Text =
     t"${entry(0)}\t${entry(1).tests}\t${millis(entry(1).time)}"
 
-  private def learn(entries: Map[Text, Observation], run: Journal.SuiteRun)
+  private def learn(entries: Map[Text, Observation], run: RunRecord.Suite)
   :   Map[Text, Observation] =
 
     run.totals.lay(entries): totals =>
@@ -106,7 +106,7 @@ object Forecasts:
 
   // Records a run's suites over the existing forecast; a suite without totals (a legacy or
   // forked run) teaches nothing, and a directory that could not be written is left as it is.
-  def save(classpath: Text, suites: List[Journal.SuiteRun], directory: Optional[Path on Linux])
+  def save(classpath: Text, suites: List[RunRecord.Suite], directory: Optional[Path on Linux])
   :   Unit =
 
     directory.let: directory =>

@@ -6,10 +6,12 @@ agent must follow when working in this repository.
 ## Dependencies are pinned in `etc/refs`
 
 Fume compiles against Soundness and Pyrocosm, both pinned in `etc/refs`. Its own libraries
-(`fume-client`, and `fume-relay`, the relay messages and their codec in a module compiled
-without capture checking) are versioned by the release tag alone: a release builds them at the
-tag's version, and the launcher resolves them at that same version; any other build is the patch
-after the latest release (`settings.nextVersion` in `build.mill`).
+(`fume-client`; `fume-relay`, the relay messages and their codec; and `fume-api`, the run
+record, the MCP server and the JSON types it answers with — the latter two in modules compiled
+without capture checking, where the derived codecs and the server's specification expand) are
+versioned by the release tag alone: a release builds them at the tag's version, and the launcher
+resolves them at that same version; any other build is the patch after the latest release
+(`settings.nextVersion` in `build.mill`).
 
 `etc/refs` is tab-separated, one upstream per line: `repository`, `version`, and for a snapshot
 the `commit` it was built from. A version `X.Y.Z` is a GitHub Release. A version

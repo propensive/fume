@@ -230,38 +230,65 @@ object Tests extends Suite(m"Fume tests"):
       (first, read(directory, t"classpath"))
     . assert(_ == (t"out/old.jar", t"out/renewed.jar"))
 
+    // The journal persists every run under the runs directory, located from the environment:
+    // these tests give it a scratch state home of their own.
+    val stateHome: Path on Linux = scratch()
+    given Environment = name => if name == t"XDG_STATE_HOME" then stateHome.encode else Unset
+
+    def start(scheduled: List[Text], selection: List[Text] = Nil): Text =
+      Journal.start(t"/work/project", t"1", Invoker.Human, List(t"out.jar"), selection, scheduled, t"here")
+
     test(m"a started run is entered in the active ledger"):
-      val id = Journal.start(t"1", Invoker.Human, t"out.jar", List(t"kind:bench"), List(t"a.Tests"), t"here")
-      Journal.active.seek(_.id == id).let { run => (run.running, run.scheduled) }
+      val id = start(List(t"a.Tests"), List(t"kind:bench"))
+      Journal.active.seek(_.id == id).let { run => (run.running, run.record.scheduled) }
     . assert(_ == (true, List(t"a.Tests")))
 
     test(m"a finished run moves to the completed ledger"):
-      val id = Journal.start(t"1", Invoker.Human, t"out.jar", List(), List(t"b.Tests"), t"here")
+      val id = start(List(t"b.Tests"))
       Journal.finish(id, Journal.Outcome.Passed, Unset)
 
       ( Journal.active.exists(_.id == id),
-        Journal.completed.seek(_.id == id).let(_.outcome) )
+        Journal.completed.seek(_.id == id).let(_.record.outcome) )
 
-    . assert(_ == (false, Journal.Outcome.Passed))
+    . assert(_ == (false, t"passed"))
 
     test(m"each suite's verdict is recorded against its run"):
-      val id = Journal.start(t"1", Invoker.Human, t"out.jar", List(), List(t"c.Tests", t"d.Tests"), t"here")
-      Journal.record(id, t"c.Tests", true, Unset, at(0L))
-      Journal.record(id, t"d.Tests", false, Unset, at(0L))
+      val id = start(List(t"c.Tests", t"d.Tests"))
+      Journal.record(id, t"c.Tests", true, Unset, at(0L), Unset, false)
+      Journal.record(id, t"d.Tests", false, Unset, at(0L), Unset, false)
       Journal.finish(id, Journal.Outcome.Failed, Unset)
 
       Journal.completed.seek(_.id == id).let: run =>
-        (run.suites.map(_.suite), run.failures)
+        (run.record.suites.map(_.suite), run.record.failures)
 
     . assert(_ == (List(t"c.Tests", t"d.Tests"), 1))
 
     test(m"a run in flight names the suite it is running"):
-      val id = Journal.start(t"1", Invoker.Human, t"out.jar", List(), List(t"e.Tests"), t"here")
+      val id = start(List(t"e.Tests"))
       Journal.began(id, t"e.Tests")
       val during = Journal.active.seek(_.id == id).let(_.current)
-      Journal.record(id, t"e.Tests", true, Unset, at(0L))
+      Journal.record(id, t"e.Tests", true, Unset, at(0L), Unset, false)
       (during, Journal.active.seek(_.id == id).let(_.current))
     . assert(_ == (t"e.Tests", Unset))
+
+    test(m"a run in flight is listed once, however the history is loaded around it"):
+      val id = start(List(t"g.Tests"))
+      val during: Int = Journal.completed.count(_.id == id) + Journal.all(100).count(_.id == id)
+      Journal.finish(id, Journal.Outcome.Passed, Unset)
+      val after: Int = Journal.completed.count(_.id == id) + Journal.all(100).count(_.id == id)
+      (during, after, Journal.completed.seek(_.id == id).let(_.record.outcome))
+    . assert(_ == (1, 2, t"passed"))
+
+    test(m"a run's record is persisted in the runs directory, and read back"):
+      val id = start(List(t"f.Tests"))
+      Journal.finish(id, Journal.Outcome.Passed, Unset)
+      Runs.read(id).let { record => (record.id == id, record.workspace, record.outcome, record.scheduled) }
+    . assert(_ == (true, t"/work/project", t"passed", List(t"f.Tests")))
+
+    test(m"run ids sort by time and are well-formed"):
+      val id: Text = Runs.id(at(1_700_000_000_000L))
+      (id.keep(15), id.length)
+    . assert(_ == (t"20231114-221320", 20))
 
     test(m"a run under Codex is detected from CODEX_SANDBOX"):
       given Environment = name => if name == t"CODEX_SANDBOX" then t"1" else Unset
@@ -660,8 +687,8 @@ object Tests extends Suite(m"Fume tests"):
       . assert(_ == (List(t"heading", t"figure", t"table", t"heading", t"figure", t"table"), List(t"heading", t"table", t"heading", t"other", t"chart", t"table")))
 
     suite(m"Progress"):
-      def observed(suite: Text, tests: Int, millis: Long): Journal.SuiteRun =
-        Journal.SuiteRun(suite, true, Doc.Totals(tests, 0, 0, 0, Nil), at(1000L), at(1000L + millis))
+      def observed(suite: Text, tests: Int, millis: Long): RunRecord.Suite =
+        RunRecord.Suite(suite, true, at(1000L), at(1000L + millis), RunRecord.Totals(tests, 0, 0, 0), Unset, false)
 
       def forecastDirectory(): Path on Linux = scratch()
 
@@ -688,23 +715,23 @@ object Tests extends Suite(m"Fume tests"):
 
       test(m"a suite without totals teaches nothing, and different classpaths do not share"):
         val directory = forecastDirectory()
-        Forecasts.save(classpath, List(Journal.SuiteRun(t"a.Tests", true, Unset, at(0L), at(100L))), directory)
+        Forecasts.save(classpath, List(RunRecord.Suite(t"a.Tests", true, at(0L), at(100L), Unset, Unset, false)), directory)
         Forecasts.save(t"/other.jar", List(observed(t"a.Tests", 5, 50L)), directory)
         Forecasts.load(classpath, directory).size
       . assert(_ == 0)
 
-      def forecastOf(runs: Journal.SuiteRun*): Forecasts.Forecast =
+      def forecastOf(runs: RunRecord.Suite*): Forecasts.Forecast =
         val directory = forecastDirectory()
         Forecasts.save(classpath, runs.to(List), directory)
         Forecasts.load(classpath, directory)
 
       test(m"the forecast total sums the known suites exactly"):
-        val progress = Progress(List(t"a", t"b"), forecastOf(observed(t"a", 100, 1000L), observed(t"b", 50, 500L)))
+        val progress = Progress(List(t"a", t"b"), forecastOf(observed(t"a", 100, 1000L), observed(t"b", 50, 500L)), Map())
         (progress.forecastTotal, progress.approximate)
       . assert(_ == (150, false))
 
       test(m"an unknown suite contributes the mean of the known, and marks the total approximate"):
-        val progress = Progress(List(t"a", t"b", t"c"), forecastOf(observed(t"a", 100, 1000L), observed(t"b", 50, 500L)))
+        val progress = Progress(List(t"a", t"b", t"c"), forecastOf(observed(t"a", 100, 1000L), observed(t"b", 50, 500L)), Map())
         (progress.forecastTotal, progress.approximate)
       . assert(_ == (225, true))
 
@@ -726,7 +753,7 @@ object Tests extends Suite(m"Fume tests"):
       . assert(_ == (Unset, Unset))
 
       test(m"the time left is the unfinished suites' forecast, the current one net of its elapsed time"):
-        val progress = Progress(List(t"a", t"b", t"c"), forecastOf(observed(t"a", 10, 1000L), observed(t"b", 10, 2000L), observed(t"c", 10, 3000L)))
+        val progress = Progress(List(t"a", t"b", t"c"), forecastOf(observed(t"a", 10, 1000L), observed(t"b", 10, 2000L), observed(t"c", 10, 3000L)), Map())
         progress.begin(t"a", at(0L))
         progress.end(t"a", at(1000L))
         progress.begin(t"b", at(1000L))
@@ -734,7 +761,7 @@ object Tests extends Suite(m"Fume tests"):
       . assert(_ == Duration(4500L))
 
       test(m"a slow start scales the estimate, clamped to at most double"):
-        val progress = Progress(List(t"a", t"b"), forecastOf(observed(t"a", 10, 1000L), observed(t"b", 10, 1000L)))
+        val progress = Progress(List(t"a", t"b"), forecastOf(observed(t"a", 10, 1000L), observed(t"b", 10, 1000L)), Map())
         progress.begin(t"a", at(0L))
         progress.end(t"a", at(5000L))
         progress.begin(t"b", at(5000L))
@@ -742,7 +769,7 @@ object Tests extends Suite(m"Fume tests"):
       . assert(_ == Duration(2000L))
 
       test(m"a fast start scales the estimate, clamped to at least half"):
-        val progress = Progress(List(t"a", t"b"), forecastOf(observed(t"a", 10, 1000L), observed(t"b", 10, 1000L)))
+        val progress = Progress(List(t"a", t"b"), forecastOf(observed(t"a", 10, 1000L), observed(t"b", 10, 1000L)), Map())
         progress.begin(t"a", at(0L))
         progress.end(t"a", at(100L))
         progress.begin(t"b", at(100L))
@@ -952,3 +979,190 @@ object Tests extends Suite(m"Fume tests"):
         Budget.factor(100_000_000_000L*scale, 100_000_000_000L)
     . assert((scale, factor) => factor == t"$scale.000000000")
 
+    suite(m"Runs, records and the MCP server"):
+      import charsets.utf8Charset
+      import dynamicAccess.dynamicJson
+      import formatting.compactJsonFormatting
+      import internetAccess.online
+      import probates.cancelProbate
+      import textSanitizers.skipSanitizer
+      import threading.platformThreading
+
+      def record(id: Text, suites: List[RunRecord.Suite], outcome: Optional[Text]): RunRecord =
+        RunRecord
+          ( id, t"0.8.0", t"/work/project", t"claude", t"123", t"laptop", at(1_700_000_000_000L),
+            outcome.let { _ => at(1_700_000_005_000L) }, outcome, List(t"/out/a.jar", t"/out/b.jar"),
+            List(t"kind:bench", t"N=4"), suites.map(_.suite), suites, Unset )
+
+      val tinySuite: RunRecord.Suite =
+        RunRecord.Suite
+          ( t"fume.Tiny", true, at(1_700_000_001_000L), at(1_700_000_002_000L),
+            RunRecord.Totals(2, 0, 0, 0), Runs.eventsFile(1), false )
+
+      test(m"a record round-trips through TEL"):
+        val original: RunRecord = record(t"20231114-222000-abcd", List(tinySuite), t"passed")
+        RunRecord.read(RunRecord.write(original))
+      . assert(_ == record(t"20231114-222000-abcd", List(tinySuite), t"passed"))
+
+      test(m"an unfinished record round-trips with its absent fields absent"):
+        val original: RunRecord = record(t"20231114-222001-abcd", Nil, Unset)
+        RunRecord.read(RunRecord.write(original)).let { read => (read.finished, read.outcome, read.running) }
+      . assert(_ == (Unset, Unset, true))
+
+      test(m"records are written to the runs directory and loaded newest first"):
+        Runs.write(record(t"20231114-222002-aaaa", Nil, t"failed"))
+        Runs.write(record(t"20231114-222003-bbbb", Nil, t"passed"))
+        val ids: List[Text] = Runs.load(100).map(_.id)
+        (ids.has(t"20231114-222002-aaaa"), ids.has(t"20231114-222003-bbbb"),
+         ids.filter(_.starts(t"20231114-22200")))
+      . assert(_ == (true, true, List(t"20231114-222003-bbbb", t"20231114-222002-aaaa")))
+
+      test(m"pruning keeps the newest runs and deletes the rest"):
+        Runs.write(record(t"20231114-222004-cccc", Nil, t"passed"))
+        val before: Int = Runs.ids.size
+        Runs.prune(before - 1)
+        (Runs.ids.size == before - 1, Runs.read(t"20231114-222002-aaaa").present)
+      . assert(_ == (true, false))
+
+      test(m"frames teed into a run directory are read back byte for byte"):
+        val id: Text = t"20231114-222005-dddd"
+        Runs.write(record(id, Nil, t"passed"))
+        val frames: List[Data] = List(t"first".in[Data], t"second frame".in[Data], t"".in[Data])
+        val writer: Optional[Runs.Writer] = Runs.writer(id, 1)
+        val sink: EventStream.Sink = Runs.tee(writer, EventStream.Sink.forwarding { _ => () })
+        sink.fingerprint(frames.prim.or(t"".in[Data]))
+        frames.skip(1).each(sink.frame)
+        writer.let(_.close())
+
+        def texts(chain: Chain[Data], done: List[Text]): List[Text] = chain match
+          case head #:: tail => texts(tail, head.read[Text] :: done)
+          case _             => done.reverse
+
+        Runs.bytes(id, Runs.eventsFile(1)).let: data =>
+          val chunks: Chain[Data] = Chain(data)
+          texts(EventStream.split(chunks), Nil)
+      . assert(_ == List(t"first", t"second frame", t""))
+
+      // The frames a suite streams, by running it in this JVM through Probably's own streamer.
+      def stream(fail: Boolean): List[Data] =
+        if fail then java.lang.System.setProperty("fume.tiny.fail", "1")
+        val output = java.io.ByteArrayOutputStream()
+        try probably.Streamer.stream(t"fume.Tiny", t"", output)
+        finally java.lang.System.clearProperty("fume.tiny.fail")
+        val raw: scala.Array[Byte] = output.toByteArray.nn
+        val chunks: Chain[Data] = Chain(Array.unsafeFrozen[Byte](raw))
+        EventStream.split(chunks).to[List]
+
+      def persisted(id: Text, frames: List[Data]): RunRecord =
+        val stored: RunRecord = record(id, List(tinySuite), t"passed")
+        Runs.write(stored)
+        val writer: Optional[Runs.Writer] = Runs.writer(id, 1)
+        frames.each { frame => writer.let(_.frame(frame)) }
+        writer.let(_.close())
+        stored
+
+      test(m"a run's results are replayed from its stored frames"):
+        val stored: RunRecord = persisted(t"20231114-222006-eeee", stream(false))
+        val replayed: Runs.Replayed = Runs.replay(stored)
+        val totals: Doc.Totals = Documenting.totals(replayed.state)
+        (replayed.availability, totals.passed, totals.failed)
+      . assert(_ == (t"available", 2, 0))
+
+      test(m"a failure replays with its diagnostics, and its rerun command"):
+        val stored: RunRecord = persisted(t"20231114-222007-ffff", stream(true))
+        val run: Journal.Run = Journal.Run(stored, Unset)
+        val failures: Api.Failures = Views.failures(run, Runs.replay(stored).state)
+        def summarize(failure: Api.Failure): (Text, Text, Boolean) =
+          val id: Text = failure.ref.id
+          val expected: Text = t"fume run -c /out/a.jar:/out/b.jar -s fume.Tiny $id"
+          (failure.ref.name, failure.status, failure.rerun == expected && id.length == 6)
+
+        failures.failures.map(summarize)
+      . assert(_ == List((t"fails on demand", t"fail", true)))
+
+      test(m"frames of another event schema are reported incompatible"):
+        val bogus: List[Data] = List(t"not a fingerprint".in[Data])
+        val stored: RunRecord = persisted(t"20231114-222008-0000", bogus)
+        Runs.replay(stored).availability
+      . assert(_ == t"incompatible")
+
+      test(m"the API's totals encode as flat JSON"):
+        Api.Totals(1, 2, 3, 4).in[Json].show
+      . assert(_ == t"""{"passed":1,"failed":2,"aspirePassed":3,"aspireFailed":4}""")
+
+      test(m"an absent optional field is omitted, and an instant is ISO 8601 in UTC"):
+        Api.Daemon(7L, t"0.8.0", at(0L), t"/runs").in[Json].show
+      . assert(_ == t"""{"pid":7,"version":"0.8.0","started":"1970-01-01T00:00:00Z","runsDirectory":"/runs"}""")
+
+      test(m"a test ref without a moniker has no moniker key"):
+        Api.TestRef(t"abc123", t"a test", Unset, List(t"suite", t"a test"), t"a.Suite", t"a.scala", 9).in[Json].show
+      . assert(_ == t"""{"id":"abc123","name":"a test","path":["suite","a test"],"suite":"a.Suite","file":"a.scala","line":9}""")
+
+      test(m"the schema describes every type, with its memos"):
+        val schema: Json = Api.schema(t"0.8.0").in[Json]
+        val names: List[Text] = schema.properties.as[Map[Text, Json]].keys.to[List]
+        (names.size, schema.properties.Totals.properties.passed.description.as[Text])
+      . assert(_ == (27, t"tests which passed, including measurements which completed"))
+
+      test(m"the documentation carries the schema the server serves"):
+        import formatting.indentedJsonFormatting
+        val documented: Text = McpServer.documentation
+        val opening: Text = t"```json\n"
+        val start: Int = documented.s.lastIndexOf(opening.s) + opening.length
+        val end: Int = documented.s.lastIndexOf("\n```")
+        documented.s.substring(start, end).nn.tt == Api.schema(t"0.8.0").in[Json].show
+      . assert(_ == true)
+
+      // An MCP request to the server, as a client would POST it, answered in-process.
+      def rpc(method: Text, params: Text): Json =
+        McpServer.register(Answering)
+        val body: Text = t"""{"jsonrpc":"2.0","id":1,"method":"$method","params":$params}"""
+        val headers: List[Http.Header] = List(Http.Header(t"content-type", t"application/json"))
+
+        val request: Http.Request =
+          Http.Request(Http.Post, 1.1, t"localhost".as[Host], t"/mcp", headers, () => Http.Body.Fixed(body.in[Data]).stream)
+
+        val response: Optional[Http.Response] = supervise(McpServer.respond(request))
+
+        def text(response: Http.Response): Text = response.body match
+          case Http.Body.Fixed(data)     => data.read[Text]
+          case Http.Body.Flowing(source) => source().memoize.read[Text]
+          case _                         => t"{}"
+
+        val answer: Text = response match
+          case response: Http.Response => text(response)
+          case _                       => t"{}"
+
+        answer.read[Json]
+
+      test(m"the server lists its tools"):
+        val tools: List[Json] = rpc(t"tools/list", t"{}").result.tools.as[List[Json]]
+        tools.map(_.name.as[Text]).to[Set]
+      . assert(_ == Set(t"runs", t"runsIn", t"run", t"results", t"suiteResults", t"failures", t"test",
+                        t"benchmarks", t"captured", t"processes", t"suites", t"tests"))
+
+      test(m"every tool parameter is required, and documented"):
+        val tools: List[Json] = rpc(t"tools/list", t"{}").result.tools.as[List[Json]]
+
+        tools.map: tool =>
+          val properties: Int = tool.inputSchema.properties.as[Map[Text, Json]].size
+          val required: Int = tool.inputSchema.required.as[List[Text]].size
+          (properties == required, tool.description.as[Text].length > 20)
+        . distinct
+      . assert(_ == List((true, true)))
+
+      test(m"the server answers `processes` with this daemon"):
+        val result: Json = rpc(t"tools/call", t"""{"name":"processes","arguments":{}}""").result
+        result.structuredContent.result.daemon.pid.as[Long] == ProcessHandle.current.nn.pid
+      . assert(_ == true)
+
+      test(m"the server answers `run` for a persisted run"):
+        val result: Json = rpc(t"tools/call", t"""{"name":"run","arguments":{"id":"20231114-222006-eeee"}}""").result
+        val detail: Json = result.structuredContent.result
+        (detail.summary.invoker.as[Text], detail.results.as[Text], detail.suites.as[List[Json]].size)
+      . assert(_ == (t"claude", t"available", 1))
+
+      test(m"the server serves the schema resource"):
+        val result: Json = rpc(t"resources/read", t"""{"uri":"fume://schema"}""").result
+        result.contents.as[List[Json]].prim.let(_.text.as[Text].starts(t"{"))
+      . assert(_ == true)

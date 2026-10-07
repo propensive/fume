@@ -34,44 +34,15 @@ package fume
 
 import soundness.*
 
-object Invoker:
-  val all: List[Invoker] = List(Human, Claude, Codex, Remote)
+// A suite of two tests, streamed in-process by the replay tests to make real event frames:
+// both pass, unless the `fume.tiny.fail` property is set, when the second fails — so the
+// suite passes when fume's own tests run it, and fails only on demand.
+object Tiny extends Suite(m"Tiny Tests"):
+  def run(): Unit =
+    test(m"one and one"):
+      1 + 1
+    . assert(_ == 2)
 
-  // The invoker of the current invocation. Each variable must be set to exactly `1`; Codex's is
-  // checked first, so an environment carrying both reads as Codex.
-  def detect(using Environment): Invoker =
-    if safely(Environment.codexSandbox[Text]) == t"1" then Codex
-    else if safely(Environment.claudecode[Text]) == t"1" then Claude
-    else Human
-
-  // The invoker a record names; a word no fume wrote is read as a human's.
-  def of(word: Text): Invoker = all.seek(_.word == word).or(Human)
-
-// Who or what ran the `fume` command: an agent, when its environment says so — Codex sets
-// `CODEX_SANDBOX=1` and Claude Code `CLAUDECODE=1` — or otherwise a human; or another fume,
-// when this daemon is a worker running a selection sent to it by a controller. Recorded on
-// every run in the journal, so the dashboard can mark the runs an agent launched.
-enum Invoker:
-  case Human, Claude, Codex, Remote
-
-  // The word a run's record carries.
-  def word: Text = this match
-    case Human  => RunRecord.human
-    case Claude => RunRecord.claude
-    case Codex  => RunRecord.codex
-    case Remote => RunRecord.remote
-
-  // The invoker named in words, where its icon cannot be shown.
-  def name: Text = this match
-    case Human  => t"a human"
-    case Claude => t"Claude"
-    case Codex  => t"Codex"
-    case Remote => t"another fume"
-
-  // The basename of the invoker's icon among the client's `fume/` resources; a human has none,
-  // and a remote controller is named in words.
-  def icon: Optional[Text] = this match
-    case Human  => Unset
-    case Claude => t"claude"
-    case Codex  => t"codex"
-    case Remote => Unset
+    test(m"fails on demand"):
+      java.lang.System.getProperty("fume.tiny.fail") == null
+    . assert(_ == true)

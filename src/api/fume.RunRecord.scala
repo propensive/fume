@@ -34,44 +34,71 @@ package fume
 
 import soundness.*
 
-object Invoker:
-  val all: List[Invoker] = List(Human, Claude, Codex, Remote)
+import calendars.gregorianCalendar
+import codepages.utf8Codepage
+import decodables.instantTelDecodable
+import encodables.instantTelEncodable
 
-  // The invoker of the current invocation. Each variable must be set to exactly `1`; Codex's is
-  // checked first, so an environment carrying both reads as Codex.
-  def detect(using Environment): Invoker =
-    if safely(Environment.codexSandbox[Text]) == t"1" then Codex
-    else if safely(Environment.claudecode[Text]) == t"1" then Claude
-    else Human
+// The record of one run, as the daemon persists it in `run.tel` under the run's directory
+// (`Runs`), and as the journal holds it: who ran what, where, and how each suite fared. Pure
+// data — texts, numbers, instants, lists — so the TEL codec derives, and a record written by
+// one daemon is read by the next. The results themselves are not here: they are replayed from
+// the suites' event frames, stored beside the record, so the record stays small however large
+// the run.
+//
+// Vocabularies: `invoker` is `human`, `claude`, `codex` or `remote`; `outcome` is `passed`,
+// `failed` or `aborted`, and absent while the run is in flight.
+case class RunRecord
+  ( id:        Text,
+    version:   Text,
+    workspace: Text,
+    invoker:   Text,
+    client:    Text,
+    machine:   Text,
+    started:   Instant over Unix,
+    finished:  Optional[Instant over Unix],
+    outcome:   Optional[Text],
+    classpath: List[Text],
+    selection: List[Text],
+    scheduled: List[Text],
+    suites:    List[RunRecord.Suite],
+    totals:    Optional[RunRecord.Totals] ):
 
-  // The invoker a record names; a word no fume wrote is read as a human's.
-  def of(word: Text): Invoker = all.seek(_.word == word).or(Human)
+  def running: Boolean = finished.absent
+  def duration: Optional[Duration] = finished.let(_ - started)
+  def failures: Int = suites.count(!_.passed)
 
-// Who or what ran the `fume` command: an agent, when its environment says so — Codex sets
-// `CODEX_SANDBOX=1` and Claude Code `CLAUDECODE=1` — or otherwise a human; or another fume,
-// when this daemon is a worker running a selection sent to it by a controller. Recorded on
-// every run in the journal, so the dashboard can mark the runs an agent launched.
-enum Invoker:
-  case Human, Claude, Codex, Remote
+object RunRecord:
+  // The counts of a run, or of one suite's share of it.
+  case class Totals(passed: Int, failed: Int, aspirePassed: Int, aspireFailed: Int):
+    def total: Int = passed + failed + aspirePassed + aspireFailed
 
-  // The word a run's record carries.
-  def word: Text = this match
-    case Human  => RunRecord.human
-    case Claude => RunRecord.claude
-    case Codex  => RunRecord.codex
-    case Remote => RunRecord.remote
+  // One suite's contribution to a run: whether it passed, its totals when it ran by the event
+  // protocol (a legacy or forked suite reports only its exit status), the file its event
+  // frames were stored in, if any, and whether it printed anything outside its report.
+  case class Suite
+    ( suite:    Text,
+      passed:   Boolean,
+      started:  Instant over Unix,
+      finished: Instant over Unix,
+      totals:   Optional[Totals],
+      events:   Optional[Text],
+      captured: Boolean ):
 
-  // The invoker named in words, where its icon cannot be shown.
-  def name: Text = this match
-    case Human  => t"a human"
-    case Claude => t"Claude"
-    case Codex  => t"Codex"
-    case Remote => t"another fume"
+    def duration: Duration = finished - started
 
-  // The basename of the invoker's icon among the client's `fume/` resources; a human has none,
-  // and a remote controller is named in words.
-  def icon: Optional[Text] = this match
-    case Human  => Unset
-    case Claude => t"claude"
-    case Codex  => t"codex"
-    case Remote => Unset
+  // The record as TEL text, and back. A record which cannot be read — written by a fume whose
+  // record differs — is `Unset`, and the caller lists what it can.
+  def write(record: RunRecord): Text = record.tel.show
+
+  def read(text: Text): Optional[RunRecord] = safely(text.read[Tel].as[RunRecord])
+
+  // The words the vocabularies use.
+  val human: Text = t"human"
+  val claude: Text = t"claude"
+  val codex: Text = t"codex"
+  val remote: Text = t"remote"
+
+  val passed: Text = t"passed"
+  val failed: Text = t"failed"
+  val aborted: Text = t"aborted"

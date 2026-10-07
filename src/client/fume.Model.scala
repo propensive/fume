@@ -66,7 +66,9 @@ object Model:
       anchor:      Optional[TestEvent.AnchorRecorded],
       // The axes a listing pre-pass announced for the test, with their values where they are
       // known ahead: what a chart can lay out before a single record arrives.
-      axes:        List[TestEvent.AxisSchedule] = Nil )
+      axes:        List[TestEvent.AxisSchedule] = Nil,
+      // The suite class the entry arrived under (`enter`), which its ref does not name.
+      scope:       Text = t"" )
 
   case class State
     ( lines:          List[Line],
@@ -153,7 +155,7 @@ final class Model:
 
   private def entry(ref: TestEvent.Ref, kind: Optional[Text]): Entry =
     entries0(key(ref)).or:
-      val entry = Entry(ref, kind, Nil, Nil, Nil, Unset, Unset)
+      val entry = Entry(ref, kind, Nil, Nil, Nil, Unset, Unset, Nil, scope0)
       entries0 = entries0.define(key(ref), entry)
       lines0 = (t"e:${key(ref)}", scope0) :: lines0
       ordered0 = Unset

@@ -62,7 +62,7 @@ object EventStream:
   // (blocking, Relay-backed) chunk chain until the next frame is demanded, and partial bytes
   // accumulate across chunk boundaries in an immutable array. A trailing partial frame (a
   // truncated stream) is dropped.
-  private def frames(chunks: Chain[Data]): Chain[Data] =
+  private[fume] def split(chunks: Chain[Data]): Chain[Data] =
     def join(left: Data, right: Data): Data =
       val out = Array.allocate[Byte](left.length + right.length)
       out.place(left, 0, 0, left.length)
@@ -190,7 +190,7 @@ object EventStream:
           // `await`, hence the (sanctioned, narrow) `unsafeAssumeSeparate`.
           def exit(): Int = scala.caps.unsafe.unsafeAssumeSeparate(unsafely(task.await()))
 
-          EventStream.frames(output.stream) match
+          EventStream.split(output.stream) match
             case first #:: _ if !sink.fingerprint(first) =>
               def hex(data: Data): Text = data.serialize[Hex]
               Outcome.Incompatible(hex(first), hex(probably.Streamer.fingerprint))

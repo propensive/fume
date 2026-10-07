@@ -56,6 +56,10 @@ object Captures:
   private def section(stream: Text, text: Text): Text =
     if text == t"" then t"" else t"[$stream]\n$text${if text.ends(t"\n") then t"" else t"\n"}"
 
+  // A capture's text as the log and a run's directory keep it: a section per stream.
+  def sections(captured: Captured): Text =
+    section(t"stdout", captured.out) + section(t"stderr", captured.err)
+
   // Appends a capture to the log under a heading naming the suite and the time, returning the
   // log's path; `Unset` if it could not be written.
   def record(captured: Captured)(using Environment): Optional[Path on Linux] =
@@ -68,8 +72,7 @@ object Captures:
         val moment: Text = (now() in tz"UTC").show
         val heading: Text = t"── ${captured.suite} · $moment ──\n"
 
-        val entry: Text =
-          heading + section(t"stdout", captured.out) + section(t"stderr", captured.err)
+        val entry: Text = heading + sections(captured)
 
         Eof(path).open(Write) { handle ?=> handle.write(Chain(entry.in[Data])) }
         path
