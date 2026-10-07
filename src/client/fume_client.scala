@@ -181,7 +181,9 @@ object ui:
         Nil,
         "with list: run each suite's body to list its tests, rather than read the index of them" )
 
-  val Fork = Flag[Unit]("fork", false, Nil, "run each suite in a separate JVM")
+  val Fork =
+    Flag[Unit]
+      ( "fork", false, Nil, "run each suite in a JVM of its own, in this directory and environment" )
 
   // Single-valued options are `Setting`s rather than `Flag`s, so each is also configurable
   // through the `Configurator` cascade `Fume.standard` provides; the camelCase name derives the
@@ -374,8 +376,7 @@ def runClient(): Unit =
 
                 // ONE model and ONE board for the whole run: every suite's events fold into the
                 // same model, so the progress gauge counts every scheduled test of the run and
-                // the report renders once, at the end, grouped by suite. (`--fork` runs suites
-                // as separate processes whose events never reach fume, so it has no board.)
+                // the report renders once, at the end, grouped by suite.
                 //
                 // The live board, shown in the terminal by Pyrocosm's frontend, is skipped in
                 // terse mode (CI, Claude Code), where events fold quietly, and for a piped
@@ -385,8 +386,16 @@ def runClient(): Unit =
                 if fork && machine.present
                 then Render.announce(t"--fork does not apply to a remote run; ignoring it")
 
+                // `--fork` runs each suite in a JVM of its own, in the invocation's directory and
+                // environment, where in-process a suite sees the daemon's, which belong to no
+                // invocation. A suite whose Probably has `probably.Standalone` streams its events
+                // from there into the same model and board as an in-process one; an older one is
+                // forked the legacy way, and renders its own report, so there is no board.
+                val loader: Classloader = classpath.classloader(Classloader.Delegation.Preferential)
+                val legacyFork: Boolean = fork && !EventStream.forkable(loader)
+
                 val model = Model()
-                val shown: Boolean = !terse && tty && !fork
+                val shown: Boolean = !terse && tty && !legacyFork
 
                 val title: Text = suites match
                   case List(only) => only
@@ -413,7 +422,8 @@ def runClient(): Unit =
                 val progress: Progress = Progress(suites, forecast, declared)
 
                 val board: Optional[fume.Board] =
-                  if (shown || Server.serving) && !fork then fume.Board(model, title, progress) else Unset
+                  if (shown || Server.serving) && !legacyFork then fume.Board(model, title, progress)
+                  else Unset
 
                 // The listing pre-pass over every suite: each runs with `--list` on the event
                 // protocol, emitting one `TestScheduled` per admitted test — with its real ref,
@@ -432,16 +442,25 @@ def runClient(): Unit =
                 // suite guarded against, and older suites still get one.
                 val wantsBudget: Boolean = target.present && scaleTerm.absent
 
-                val loader: Classloader = classpath.classloader(Classloader.Delegation.Preferential)
-
                 val shared: Optional[Classloader] =
                   if EventStream.reentrant(loader) then loader else Unset
+
+                // One suite's run on the event protocol: in-process, or with `--fork` in a JVM of
+                // its own.
+                def streamed(suite: Text, args: List[Text])
+                  ( sink:     EventStream.Sink^,
+                    abort:    () => Boolean,
+                    captured: (Text, Text) => Unit )
+                :   Optional[EventStream.Outcome] =
+
+                  if fork then EventStream.forked(classpath, suite, args)(sink, abort, captured)
+                  else EventStream.frames(classpath, suite, args, shared)(sink, abort, captured)
 
                 val schedule: scala.collection.mutable.ListBuffer[TestEvent.TestScheduled] =
                   scala.collection.mutable.ListBuffer()
 
                 val listed: Optional[Boolean] =
-                  if fork || !wantsBudget then Unset else
+                  if legacyFork || !wantsBudget then Unset else
                     Render.announce(t"pricing the budget: listing ${suites.size} suites")
 
                     def collect(event: TestEvent): Unit =
@@ -465,8 +484,8 @@ def runClient(): Unit =
 
                         val outcome: Optional[EventStream.Outcome] =
                           safely:
-                            EventStream.stream(classpath, head, t"--list" :: selectionArgs, shared)
-                              ( collect(_), () => false, (_, _) => () )
+                            streamed(head, t"--list" :: selectionArgs)
+                              ( EventStream.Sink.decoding(collect(_)), () => false, (_, _) => () )
 
                         outcome match
                           case EventStream.Outcome.Completed(_) => recur(tail)
@@ -505,7 +524,7 @@ def runClient(): Unit =
                 // `EventStream.queued`): each suite's code between tests runs once, its rows
                 // appear as it is traversed, and declaration order is kept.
                 val workerTerms: List[Text] =
-                  if !fork && EventStream.queued(loader) then List(t"--workers=1") else Nil
+                  if !legacyFork && EventStream.queued(loader) then List(t"--workers=1") else Nil
 
                 val args: List[Text] = scaleTerms + workerTerms + selectionArgs
 
@@ -672,7 +691,7 @@ def runClient(): Unit =
 
                       val outcome: Optional[EventStream.Outcome] =
                         try
-                          EventStream.frames(classpath, head, args, shared)
+                          streamed(head, args)
                             ( sink,
                               () => aborted(),
                               (out, err) => captures.append(Captures.Captured(head, out, err)) )
@@ -930,7 +949,7 @@ def runClient(): Unit =
                         document.totals
 
                     (failures, ran, totals)
-                  else if fork then
+                  else if legacyFork then
                     val (failures, ran) = legacyRun(suites, 0, 0)
                     (failures, ran, Unset)
                   else if listed == false then
