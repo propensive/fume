@@ -197,8 +197,7 @@ make fume                    # assemble, repackage with Burdock, emit the `fume`
 make install                 # copy it to ~/.local/bin
 ```
 
-A release is cut by tagging, not by make. Bump `fumeVersion` in `build.mill`, merge it, wait for
-CI to go green on that commit, and then `git tag -s X.Y.Z && git push --tags`: the tag fires
+A release is cut by tagging, not by make. Wait for CI to go green on the commit, and then `git tag -s X.Y.Z && git push --tags`: the tag fires
 `.github/workflows/release.yml`, which publishes the `fume-client` jar and the repackaged
 executables through the shared `release.sh` in
 [propensive/.github](https://github.com/propensive/.github).
