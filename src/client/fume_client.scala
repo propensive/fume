@@ -337,7 +337,7 @@ def runClient(): Unit =
 
                 val width: Int = terminalWidth()
                 val terse: Boolean = fume.GithubActions.terse
-                val tty: Boolean = summon[DaemonService[?]].cliInput == ethereal.Terminus.Terminal
+                val tty: Boolean = summon[Resident].cliInput == ethereal.Terminus.Terminal
 
                 import probates.cancelProbate
                 import denominative.dysasymptotics.linearSize
@@ -513,7 +513,7 @@ def runClient(): Unit =
                 // to the completed list at the end, whichever way it ends.
                 val journalId: Int =
                   Journal.start
-                    ( summon[DaemonService[?]].pid.value.show,
+                    ( summon[Resident].pid.value.show,
                       Invoker.detect,
                       classpath(),
                       args,
@@ -678,7 +678,7 @@ def runClient(): Unit =
                 // here against fume's own Probably exactly as `EventStream` checks a local
                 // suite's. Yields as `eventRun` does, with nothing left for the legacy loop.
                 def remoteRun(machine: Machine): (Int, Int, List[Text]) =
-                  Render.announce(t"connecting to ${machine.name} (${machine.host})")
+                  Render.announce(t"connecting to ${machine.name} (${machine.hosts.join(t", ")})")
 
                   // Each entry's digest and bytes: a directory is bundled into a jar first.
                   val prepared: List[(Blobs.Entry, Data)] =
@@ -1121,7 +1121,7 @@ def runClient(): Unit =
             import webserverErrorPages.minimalErrorPage
 
             val stdio: Stdio = summon[Stdio]
-            val tty: Boolean = summon[DaemonService[?]].cliInput == ethereal.Terminus.Terminal
+            val tty: Boolean = summon[Resident].cliInput == ethereal.Terminus.Terminal
             val aborted: Atomic[Boolean] = Atomic(false)
 
             trap:
@@ -1177,7 +1177,7 @@ def runClient(): Unit =
             import probates.cancelProbate
 
             val stdio: Stdio = summon[Stdio]
-            val tty: Boolean = summon[DaemonService[?]].cliInput == ethereal.Terminus.Terminal
+            val tty: Boolean = summon[Resident].cliInput == ethereal.Terminus.Terminal
             val aborted: Atomic[Boolean] = Atomic(false)
 
             trap:

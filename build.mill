@@ -20,13 +20,13 @@ object settings:
   // NOTE these two `sys.env` overrides do NOT work under Mill: the value is read when the build
   // script is evaluated, and neither a fresh daemon nor `--no-daemon` propagates the variable. To
   // switch toolchains, edit the defaults here.
-  val scalaVersion = sys.env.getOrElse("SOUNDNESS_SCALA_VERSION", "3.9.0-p16")
+  val scalaVersion = sys.env.getOrElse("SOUNDNESS_SCALA_VERSION", "3.9.1-dev-p17")
   // The propensive/proscala release the toolchain jars are downloaded from (unless a local
   // `SOUNDNESS_SCALA_HOME` is set), exactly as in the Soundness build. The two MAY differ (the
   // synthetic repository below republishes whatever the release ships under `scalaVersion`), but
   // the pair must be kept in step with Soundness's own, or fume would compile against a different
   // compiler build from the one that produced the Soundness TASTy it reads.
-  val scalaRelease = sys.env.getOrElse("SOUNDNESS_SCALA_RELEASE", "3.9.0-p16")
+  val scalaRelease = sys.env.getOrElse("SOUNDNESS_SCALA_RELEASE", "3.9.1-dev-p17")
   // Empty by default → download `scalaRelease`. Set to a local `make`-built `release` directory
   // to use its `release/lib` jars directly (fork-developer mode).
   val scalaHome = sys.env.getOrElse("SOUNDNESS_SCALA_HOME", "")
@@ -41,7 +41,7 @@ object settings:
   // inlining. Bump (and commit) per release; release.sh (in propensive/.github) refuses to
   // release when this pin disagrees with the tag being released. Snapshots override it through
   // `publishVersion` (below), never here.
-  val fumeVersion = "0.6.0"
+  val fumeVersion = "0.7.0"
 
   // What a build of fume identifies itself as, written into the client jar as
   // `META-INF/pyrocosm/fume/version` for `pyrocosm-cli` to read (`fume about`,

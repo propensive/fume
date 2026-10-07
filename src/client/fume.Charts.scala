@@ -287,7 +287,7 @@ object Charts:
       ( abscissa = Calibration[Int](Calibration.Policy.Logarithmic),
         ordinate = Calibration[Double](Calibration.Policy.Exponential()) )
 
-  private def show(svg: Svg): Text = svg.xml.show
+  private def show(svg: Svg): Text = svg.in[Xml].show
 
   private def partIds(drawing: Chart.Drawing): List[Text] =
     drawing.parts.to[List].map { (pair: (Svg.Id, Figure)) => pair(0).text }
@@ -307,7 +307,7 @@ object Charts:
     if fresh then figure.redraw(drawing)
     else revisions.each:
       case Chart.Revision.Redraw(svg)         => figure.redraw(show(svg))
-      case Chart.Revision.Replace(id, figure0) => figure.replace(id.text, figure0.xml.show, drawing)
+      case Chart.Revision.Replace(id, figure0) => figure.replace(id.text, figure0.in[Xml].show, drawing)
 
   // A chart in hand: its figure, the drawing it was last revised from, and the data that
   // drawing shows, so a refresh which brings nothing new sends nothing.
@@ -354,12 +354,12 @@ final class Charts:
           if data0 == data then Held.Bench(figure, chart, data) else
             val known = partIds(chart.drawing)
             val (chart2, revisions) = chart.revise(benchSeries(data))
-            Charts.revise(figure, revisions, known, chart2.svg)
+            Charts.revise(figure, revisions, known, chart2.in[Svg])
             Held.Bench(figure, chart2, data)
 
         case other =>
           val chart = benchSeries(data).chart(Bars())
-          val drawing: Text = chart.svg.xml.show
+          val drawing: Text = chart.in[Svg].in[Xml].show
           val figure: pyrocosm.Figure = other.let(figureOf(_)).or(pyrocosm.Figure(alt, drawing))
           if other.present then figure.redraw(drawing)
           Held.Bench(figure, chart, data)
@@ -380,12 +380,12 @@ final class Charts:
           if curves0 == curves then Held.Stress(figure, chart, curves) else
             val known = partIds(chart.drawing)
             val (chart2, revisions) = chart.revise(stressSeries(curves))
-            Charts.revise(figure, revisions, known, chart2.svg)
+            Charts.revise(figure, revisions, known, chart2.in[Svg])
             Held.Stress(figure, chart2, curves)
 
         case other =>
           val chart = stressSeries(curves).chart(stressLines)
-          val drawing: Text = chart.svg.xml.show
+          val drawing: Text = chart.in[Svg].in[Xml].show
           val figure: pyrocosm.Figure = other.let(figureOf(_)).or(pyrocosm.Figure(alt, drawing))
           if other.present then figure.redraw(drawing)
           Held.Stress(figure, chart, curves)
