@@ -47,10 +47,17 @@ A tool that cannot answer — an unknown run or suite — fails with a message s
 | `processes` | | `Processes`: the daemon, its services, the runs in flight with the tests they are executing, and any run it is working for another machine |
 | `suites` | `classpath` | `IndexedSuite[]`: the suites a classpath declares, from its index, running nothing |
 | `tests` | `classpath`, `terms` | `IndexedTest[]`: the tests a classpath declares, narrowed by space-separated selection terms as `fume list` takes them |
+| `launch` | `classpath`, `terms` | `RunSummary`: starts a run of the classpath's suites, narrowed by space-separated selection terms as `fume run` takes them, and answers at once; `run`, `results` and `failures` follow it as it goes |
+| `cancel` | `run` | `true` if the run was launched here and in flight, and is now aborted |
 
 A `classpath` is `:`-separated jars and directories, absolute, with globs expanded as
 `--classpath` expands them. A `TestResult` carries a `rerun` command which runs exactly that
 test.
+
+A launched run is the daemon's own: it has no terminal and no working directory but the
+classpath's, so a suite which reads relative paths or the environment sees the daemon's. Its
+invoker is `mcp`, and the dashboard marks it with the protocol's logo. Give `launch` an empty
+`terms` to run everything the classpath declares, or `kind:bench` for its benchmarks alone.
 
 ## Resources
 
@@ -69,7 +76,8 @@ Every vocabulary is a text whose words are Probably's own:
  - a test's `status` is its collective outcome: one of those, `mixed` when its cells disagree,
    or `bench`, `stress`, `profile` for a measurement;
  - a run's `outcome` is `passed`, `failed` or `aborted`, and absent while the run is in flight;
- - a run's `invoker` is `human`, `claude`, `codex`, or `remote` for a run another machine sent;
+ - a run's `invoker` is `human`, `claude`, `codex`, `remote` for a run another machine sent, or
+   `mcp` for a run launched through this server;
  - a run's `results` are `available`, `partial` (some suites could not stream their events),
    `incompatible` (the suites were built against a Probably whose event schema differs from
    this fume's) or `none`.

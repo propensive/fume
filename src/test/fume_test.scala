@@ -310,6 +310,10 @@ object Tests extends Suite(m"Fume tests"):
       Assets.asset(Assets.location(t"claude")).let(_.starts(t"<svg"))
     . assert(_ == true)
 
+    test(m"the MCP logo is served from the classpath, for runs launched through the server"):
+      (Assets.asset(Assets.location(t"mcp")).let(_.starts(t"<svg")), Invoker.of(t"mcp").icon)
+    . assert(_ == (true, t"mcp"))
+
     test(m"Codex's icon is served from the classpath"):
       Assets.asset(Assets.location(t"codex")).let(_.starts(t"<svg"))
     . assert(_ == true)
@@ -890,6 +894,31 @@ object Tests extends Suite(m"Fume tests"):
         val sum: Int = above.fold(0) { (sum, name) => sum + name.s.hashCode }
         String.format("%06x", Int.box((sum ^ name.s.hashCode) & 0xffffff)).nn.tt
 
+      // The plugin's second format: a line placed from a suite's root leaves the topic empty,
+      // the suite being the one whose body it is within; everything else is as before.
+      val document2: Text =
+        List
+         ( t"# probably tests 2",
+           t"# source: /src/jacinta_test.scala",
+           t"suite\tjacinta.Tests\tjson\tJacinta tests\t10",
+           t"test\t\t\t\tcheck\tparses a number\t\t\t12\t",
+           t"group\t\t\t\tParsing and/or printing\tparsing\t14",
+           t"test\t\t\tParsing and\\/or printing\tbench\tparse a document\tparseDocument\tslow,io\t15\tspread",
+           t"test\t\t\tParsing and\\/or printing\tcheck\tcase \\* parses\t\t\t17\t",
+           t"call\t\t\tParsing and\\/or printing\tjacinta.Tests.shared\t19",
+           t"test\tjson\tjacinta.Tests.shared\t\tcheck\tshared by two groups\t\t\t30\t",
+           t"nest\t\t\t\tjacinta.Other\t21",
+           t"open\t\t\t\t23",
+           t"suite\tjacinta.Other\tother-tests\tOther tests\t40",
+           t"test\t\t\t\tcheck\tnested\t\t\t42\t" )
+        . join(t"\n")
+
+      test(m"the second format, with root-level topics left empty, lists the same tests"):
+        val index2: Index = Index.parse(document2)
+        (index2.tests(t"jacinta.Tests") == tests, index2.open(t"jacinta.Tests"),
+         index2.tests(t"jacinta.Other").map(_.path.join(t" / ")))
+      . assert(_ == (true, 1, List(t"other-tests / nested")))
+
       test(m"a suite's tests are listed in order, each under its groups by moniker"):
         tests.map(_.path.join(t" / "))
       . assert(_ == List
@@ -1139,7 +1168,7 @@ object Tests extends Suite(m"Fume tests"):
         val tools: List[Json] = rpc(t"tools/list", t"{}").result.tools.as[List[Json]]
         tools.map(_.name.as[Text]).to[Set]
       . assert(_ == Set(t"runs", t"runsIn", t"run", t"results", t"suiteResults", t"failures", t"test",
-                        t"benchmarks", t"captured", t"processes", t"suites", t"tests"))
+                        t"benchmarks", t"captured", t"processes", t"suites", t"tests", t"launch", t"cancel"))
 
       test(m"every tool parameter is required, and documented"):
         val tools: List[Json] = rpc(t"tools/list", t"{}").result.tools.as[List[Json]]

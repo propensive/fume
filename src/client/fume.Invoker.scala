@@ -35,7 +35,7 @@ package fume
 import soundness.*
 
 object Invoker:
-  val all: List[Invoker] = List(Human, Claude, Codex, Remote)
+  val all: List[Invoker] = List(Human, Claude, Codex, Remote, Mcp)
 
   // The invoker of the current invocation. Each variable must be set to exactly `1`; Codex's is
   // checked first, so an environment carrying both reads as Codex.
@@ -50,9 +50,10 @@ object Invoker:
 // Who or what ran the `fume` command: an agent, when its environment says so — Codex sets
 // `CODEX_SANDBOX=1` and Claude Code `CLAUDECODE=1` — or otherwise a human; or another fume,
 // when this daemon is a worker running a selection sent to it by a controller. Recorded on
-// every run in the journal, so the dashboard can mark the runs an agent launched.
+// every run in the journal, so the dashboard can mark the runs an agent launched; or an MCP
+// client, when the run was launched through the daemon's MCP server.
 enum Invoker:
-  case Human, Claude, Codex, Remote
+  case Human, Claude, Codex, Remote, Mcp
 
   // The word a run's record carries.
   def word: Text = this match
@@ -60,6 +61,7 @@ enum Invoker:
     case Claude => RunRecord.claude
     case Codex  => RunRecord.codex
     case Remote => RunRecord.remote
+    case Mcp    => RunRecord.mcp
 
   // The invoker named in words, where its icon cannot be shown.
   def name: Text = this match
@@ -67,6 +69,7 @@ enum Invoker:
     case Claude => t"Claude"
     case Codex  => t"Codex"
     case Remote => t"another fume"
+    case Mcp    => t"an MCP client"
 
   // The basename of the invoker's icon among the client's `fume/` resources; a human has none,
   // and a remote controller is named in words.
@@ -75,3 +78,4 @@ enum Invoker:
     case Claude => t"claude"
     case Codex  => t"codex"
     case Remote => Unset
+    case Mcp    => t"mcp"
