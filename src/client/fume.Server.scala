@@ -36,7 +36,7 @@ import soundness.*
 
 import denominative.dysasymptotics.linearSize
 
-import pyrocosm.{Action, Block, Event, Hints, Inline, Interface, Panel, Tone, Tool, hints}
+import pyrocosm.{Action, Activity, Block, Event, Hints, Inline, Interface, Panel, Tone, Tool, hints}
 
 // The runs the daemon has seen, for the web front-end: the board of every suite in flight,
 // and the final blocks of every suite that has finished, kept for the runs the journal
@@ -173,9 +173,11 @@ final class Dashboard():
   @scala.caps.unsafe.untrackedCaptures
   private var lastRun: Optional[Text] = Unset
 
+  @scala.caps.unsafe.untrackedCaptures
+  private var lastActivities: List[Activity] = Nil
+
   val runs: pyrocosm.Live[List[Block]] = pyrocosm.Live(List(Block.paragraph(t"No runs yet.")))
   val content: pyrocosm.Live[List[Block]] = pyrocosm.Live(List(Block.paragraph(t"Select a run.")))
-  val progress: pyrocosm.Live[List[Block]] = pyrocosm.Live(Nil)
 
   // Lays a two-axis benchmark out the other way round: its second axis as the rows and the
   // bar groups, its first as the columns and the bars within a group.
@@ -215,6 +217,24 @@ final class Dashboard():
       import timeFormats.railwayTimeFormat
       (started in Dashboard.timezone).time.show
 
+  // What a run is called: the suite in flight, else the last suite recorded, else the first
+  // scheduled, else its id.
+  private def nameOf(run: Journal.Run): Text =
+    val record: RunRecord = run.record
+    run.current.or(record.suites.last.let(_.suite).or(record.scheduled.prim.or(t"run ${run.id}")))
+
+  // A run in flight as an activity: its name, its board's gauge, with the board's caption and
+  // verdict as its state, and the action selecting the run, so its card opens the run's view.
+  // A run whose board is not yet attached is starting.
+  private def activityOf(run: Journal.Run): Activity =
+    val board: Optional[Activity] = Server.board(run.id).let(_.activity)
+    val status: pyrocosm.Status = board.let(_.status).or(pyrocosm.Status.Reckoning(0L, Unset))
+
+    val state: List[Inline] =
+      board.lay(Inline.text(t"starting")) { activity => activity.title + List(Inline.Textual(t" · ")) + activity.state }
+
+    Activity(run.id, Inline.text(nameOf(run)), status, Inline.Destination.Internal(action(run.id)), state)
+
   private def runItem(run: Journal.Run): Block.Item =
     val record: RunRecord = run.record
 
@@ -229,11 +249,8 @@ final class Dashboard():
     val agent: List[Inline] = invoker.icon.lay(Nil: List[Inline]): icon =>
       List(Inline.Icon(Assets.location(icon), invoker.name), Inline.Textual(t" "))
 
-    val name: Text =
-      run.current.or(record.suites.last.let(_.suite).or(record.scheduled.prim.or(t"run ${run.id}")))
-
     val detail: List[Inline] =
-      List(Inline.Emphasis(Inline.text(name)), Inline.Textual(t" "),
+      List(Inline.Emphasis(Inline.text(nameOf(run))), Inline.Textual(t" "),
           Inline.Toned(Tone.Muted, Inline.text(t"${when(record.started)} · ${record.client} · ${record.machine}")))
 
     val label: List[Inline] = List(standing, Inline.Textual(t" ")) + agent + detail
@@ -256,6 +273,13 @@ final class Dashboard():
       lastRuns = listing
       runs() = listing
 
+    // Every run in flight is a card in the masthead, and gone once it finishes.
+    val activities: List[Activity] = active.map(activityOf)
+
+    if activities != lastActivities then
+      lastActivities = activities
+      interface.activities() = activities
+
     selected.let: run =>
       val board = Server.board(run)
       val finished = Server.done(run)
@@ -270,10 +294,9 @@ final class Dashboard():
           Block.Heading(2, Inline.text(entry.suite)) :: entry.blocks
 
         val current: List[Block] = board.lay(Nil: List[Block]) { board => Block.Heading(2, Inline.text(board.title)) :: board.webResults() }
-        val all = past + current
-        content() = if all.nil then List(Block.paragraph(t"Nothing recorded yet.")) else all
-        // A run in flight shows its progress; a finished one, its outcome and totals.
-        progress() = board.let(_.progress()).or:
+        // A finished run's report opens with its outcome and totals; a run in flight has its
+        // card in the masthead instead.
+        val summary: List[Block] = if board.present then Nil else
           (active + completed).seek(_.id == run).lay(Nil: List[Block]): entry =>
             val outcome: Inline = entry.record.outcome.lay(Inline.Toned(Tone.Accent, Inline.text(t"running"))):
               case RunRecord.passed => Inline.Toned(Tone.Success, Inline.text(t"passed"))
@@ -286,10 +309,12 @@ final class Dashboard():
 
             List(Block.Paragraph(outcome :: totals))
 
+        val all = summary + past + current
+        content() = if all.nil then List(Block.paragraph(t"Nothing recorded yet.")) else all
+
   val interface: Interface =
     Interface
       ( Inline.text(t"fume"),
         List
           ( Panel(Panel.Id(t"runs"), Panel.Role.Navigation, Inline.text(t"Runs"), runs, Panel.Priority.Important),
-            Panel(Panel.Id(t"run"), Panel.Role.Primary, Unset, content, Panel.Priority.Essential, controls = List(transposeControl), hints = Hints(hints.Follow)),
-            Panel(Panel.Id(t"progress"), Panel.Role.Status, Unset, progress, Panel.Priority.Important) ) )
+            Panel(Panel.Id(t"run"), Panel.Role.Primary, Unset, content, Panel.Priority.Essential, controls = List(transposeControl), hints = Hints(hints.Follow)) ) )

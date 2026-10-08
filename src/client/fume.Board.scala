@@ -34,18 +34,17 @@ package fume
 
 import soundness.*
 
-import pyrocosm.{Block, Hints, Inline, Interface, Panel, hints}
+import pyrocosm.{Activity, Block, Hints, Inline, Interface, Panel, hints}
 
 // The live board as a Pyrocosm interface: one primary panel of the run's blocks, following the
-// newest results, and a status panel with the run's progress. Events only MARK the board;
-// `repaint`, called by a task of its own, rebuilds both panels from the model when something
+// newest results, and the run's progress as the interface's activity. Events only MARK the
+// board; `repaint`, called by a task of its own, rebuilds both from the model when something
 // has changed since the last paint, so the thread consuming the run's events never renders,
 // and a burst of events costs one repaint.
 final class Board(model: Model, val title: Text, progress0: Optional[Progress] = Unset):
   private val dirty: Atomic[Boolean] = Atomic(true)
 
   val results: pyrocosm.Live[List[Block]] = pyrocosm.Live(Nil)
-  val progress: pyrocosm.Live[List[Block]] = pyrocosm.Live(Nil)
 
   // The results again, with the dashboard's charts above their tables: for the web alone,
   // since it is not a panel of this interface, so the terminal never draws them.
@@ -68,13 +67,15 @@ final class Board(model: Model, val title: Text, progress0: Optional[Progress] =
     results() = Blocks.board(state, document, memo = memo)
     // The web results, and the charts they carry, only while a dashboard can show them.
     if Server.serving then webResults() = Blocks.board(state, document, charts.refresh(state), memo)
-    progress() = List(Blocks.progress(state, progress0))
+    interface.activities() = List(Blocks.progress(state, progress0))
+
+  // The run's progress so far, for the dashboard's card of it.
+  def activity: Optional[Activity] = interface.activities().prim
 
   val interface: Interface =
     Interface
       ( Inline.text(title),
         List
           ( Panel(Panel.Id(t"results"), Panel.Role.Primary, Unset, results, Panel.Priority.Essential,
-                hints = Hints(hints.Follow, hints.terminal.Border.None)),
-            Panel(Panel.Id(t"progress"), Panel.Role.Status, Unset, progress, Panel.Priority.Essential,
-                hints = Hints(hints.terminal.Border.None)) ) )
+                hints = Hints(hints.Follow, hints.terminal.Border.None)) ),
+        hints = Hints(hints.terminal.Occupancy.Fullscreen) )
