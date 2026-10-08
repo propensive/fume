@@ -256,11 +256,12 @@ object Blocks:
     val durations: List[Long] = entry.completions.map { completion => completion(1).duration }
     if durations.nil then Nil else List(time(durations.fold(0L)(_ + _)/durations.size))
 
-  // The whole run's progress: the tests finished, of the total — exact from a schedule, forecast
-  // from the last run of the classpath when there is one — with the suite in flight and the
-  // time left. A plain line, not an indeterminate gauge, when no total is known: an animating
+  // The whole run's progress as an activity: the tests finished, of the total — exact from a
+  // schedule, forecast from the last run of the classpath when there is one — captioned with
+  // the suite in flight and the time left, and the verdict so far: green, or how many tests
+  // have failed. A count, not an indeterminate gauge, when no total is known: an animating
   // status would have the board repainted many times a second whether or not anything happened.
-  def progress(state: Model.State, progress: Optional[Progress] = Unset): Block =
+  def progress(state: Model.State, progress: Optional[Progress] = Unset): pyrocosm.Activity =
     val entries: List[Model.Entry] = state.lines.bind[List[Model.Entry], Model.Entry, List[Model.Entry]]:
       case Model.Line.EntryLine(entry) => List(entry)
       case _                           => Nil
@@ -273,7 +274,11 @@ object Blocks:
       val recorded = !entry.completions.nil || !entry.benches.nil || !entry.strains.nil || entry.hotspots.present
       recorded && !active.has(entry.ref.id)
 
+    def failing(entry: Model.Entry): Boolean =
+      entry.completions.exists { completion => Status.of(completion(1).outcome).failed }
+
     val done: Int = entries.count(finished(_))
+    val failures: Int = entries.count(failing(_)) + state.fatals.size
 
     val total: Optional[Int] =
       if state.scheduled then entries.size else progress.let(_.forecastTotal)
@@ -289,9 +294,16 @@ object Blocks:
     val plain: Text = if state.scheduled then t"$done/${entries.size}" else t"${Figures.grouped(done)} done"
     val caption: Text = progress.lay(plain)(captionOf(_))
 
-    total.lay(Block.Paragraph(Inline.text(caption))): total =>
+    val status: pyrocosm.Status = total.lay(pyrocosm.Status.Reckoning(done.toLong, Unset)): total =>
       val fraction: Double = if total == 0 then 0.0 else (done.toDouble/total).min(1.0)
-      Block.Gauge(pyrocosm.Status.Fraction(fraction), Inline.text(caption))
+      pyrocosm.Status.Fraction(fraction)
+
+    val verdict: Inline =
+      if failures == 0 then Inline.Toned(Tone.Success, Inline.text(t"green so far"))
+      else if failures == 1 then Inline.Toned(Tone.Failure, Inline.text(t"1 failure"))
+      else Inline.Toned(Tone.Failure, Inline.text(t"${failures.toString} failures"))
+
+    pyrocosm.Activity(t"progress", Inline.text(caption), status, state = List(verdict))
 
   // The board: the live table of checks, then every measurement group, with the dashboard's
   // charts among them when given.
