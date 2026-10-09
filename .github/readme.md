@@ -79,6 +79,22 @@ three things the source does not state, and fume does it exactly when one of the
 Selection terms apply to an indexed listing as they do to a run, with one difference: an axis
 constraint admits every test, since which cells a test has is not in the index.
 
+A run reads the index too, to decide which suites to invoke at all. Probably never skips a
+suite: given a selection, every suite's body runs in full — everything around its tests, every
+`check`, every suite it invokes — and only the assertions the selection does not admit are
+skipped. So a selection naming one test would run the body of every suite on the classpath for
+the sake of one. Instead fume invokes only the suites the index cannot rule out: a suite whose
+tests, or whose called methods' or invoked suites' tests, the terms could admit; a suite with an
+`impromptu` block, which may declare anything; and a suite the index does not cover. A test
+whose name is computed is ruled out only by what the index does know of it: its kind and tags,
+its monikers, and the fixed text around the holes in its name — so `json/**` rules it out when
+its suite is `html`, and `case*` does not, while a hex id could be its own and always reaches
+it. A suite invoked from another suite's body which is an entry point of its
+own (the beneficence plugin registers every `object` extending `Suite`) is run on its own when a
+term names its tests, rather than through the suite invoking it. A run with no selection terms
+invokes every suite, as it always did, and `fume run` says when it reaches fewer suites than
+the classpath has.
+
 ## Configuration files
 
 A project configures fume with a [TEL](https://soundness.dev/tel/) document at
