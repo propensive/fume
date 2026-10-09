@@ -51,9 +51,10 @@ object Headless:
   private val aborts: scala.collection.concurrent.TrieMap[Text, Atomic[Boolean]] =
     scala.collection.concurrent.TrieMap()
 
-  // Starts the run, or `Unset` when the classpath has no suites.
+  // Starts the run, or `Unset` when the classpath has no suites. The suites are those the
+  // terms reach, as for a run from a shell, so the run record lists what actually runs.
   def launch(classpath: LocalClasspath, terms: List[Text], workspace: Text): Optional[Text] =
-    val suites: List[Text] = Suites.discover(classpath)
+    val suites: List[Text] = Suites.reached(classpath, terms)
 
     if suites.nil then Unset else
       val aborted: Atomic[Boolean] = Atomic(false)

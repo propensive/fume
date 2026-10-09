@@ -57,7 +57,9 @@ test.
 A launched run is the daemon's own: it has no terminal and no working directory but the
 classpath's, so a suite which reads relative paths or the environment sees the daemon's. Its
 invoker is `mcp`, and the dashboard marks it with the protocol's logo. Give `launch` an empty
-`terms` to run everything the classpath declares, or `kind:bench` for its benchmarks alone.
+`terms` to run everything the classpath declares, or `kind:bench` for its benchmarks alone. As
+for `fume run`, only the suites the terms can reach — by the classpath's static index — are
+invoked, so the run's `suites` lists those alone.
 
 ## Resources
 

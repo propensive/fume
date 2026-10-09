@@ -950,7 +950,7 @@ object Tests extends Suite(m"Fume tests"):
       . assert(_ == List((false, false), (false, false), (true, true), (false, false), (false, false)))
 
       test(m"an impromptu block is counted, and a suite outside the index is unknown"):
-        (index.open(t"jacinta.Tests"), index.knows(t"jacinta.Tests"), index.knows(t"absent.Tests"))
+        (index.open(t"jacinta.Tests"), index.knows(t"jacinta.Tests"), index.knows(t"reach.Absent"))
       . assert(_ == (1, true, false))
 
       test(m"a schedule row carries the wire ref of the test"):
@@ -1000,6 +1000,85 @@ object Tests extends Suite(m"Fume tests"):
                       Nil,
                       List(t"case * parses"),
                       List(t"parse a document") ))
+
+      // A classpath of entry suites, for which of them a selection must run: one invoking
+      // another entry suite from its body; one with only a benchmark; one with only an
+      // `impromptu` block; one whose only test's name is computed; and one which calls a
+      // method with an `impromptu` block hanging from its parameter.
+      val reach: Text =
+        List
+         ( t"# probably tests 2",
+           t"# source: /src/reach_test.scala",
+           t"suite\treach.Parsing\tparsing\tParsing tests\t10",
+           t"test\t\t\t\tcheck\tparses a number\t\t\t12\t",
+           t"nest\t\t\t\treach.Nested\t14",
+           t"suite\treach.Nested\tnested\tNested tests\t20",
+           t"test\t\t\t\tcheck\tnested test\t\t\t22\t",
+           t"suite\treach.Benches\tbenches\tBench tests\t30",
+           t"test\t\t\t\tbench\truns fast\t\tfast\t32\t",
+           t"suite\treach.Sealed\tsealed\tSealed tests\t40",
+           t"open\t\t\t\t42",
+           t"suite\treach.Dynamic\tdynamic\tDynamic tests\t50",
+           t"test\t\t\t\tcheck\tcase \\* parses\t\t\t52\t",
+           t"suite\treach.Caller\tcaller\tCaller tests\t60",
+           t"call\t\t\t\treach.Caller.helper\t62",
+           t"open\tT\treach.Caller.helper\t\t64" )
+        . join(t"\n")
+
+      val reached: Index = Index.parse(reach)
+
+      val entries: List[Text] =
+        List(t"reach.Parsing", t"reach.Nested", t"reach.Benches", t"reach.Sealed", t"reach.Dynamic",
+             t"reach.Caller", t"reach.Absent")
+
+      def runs(terms: Text*): List[Text] =
+        reached.entries(entries, terms.to(List)).map(_.skip(6))
+
+      test(m"no terms, or settings alone, reach every suite"):
+        (runs(), runs(t"--workers=1", t"--scale=2"))
+      . assert(_ == (entries.map(_.skip(6)), entries.map(_.skip(6))))
+
+      test(m"an id reaches its suite, and the suites the index cannot rule out"):
+        runs(id(List(t"Parsing tests"), t"parses a number"))
+      . assert(_ == List(t"Parsing", t"Sealed", t"Dynamic", t"Caller", t"Absent"))
+
+      test(m"a nested suite which is an entry point is reached on its own"):
+        (runs(t"nested"), reached.entries(entries.filter(_ != t"reach.Nested"), List(t"nested")))
+      . assert(_ == ( List(t"Nested", t"Sealed", t"Caller", t"Absent"),
+                      List(t"reach.Parsing", t"reach.Sealed", t"reach.Caller", t"reach.Absent") ))
+
+      test(m"a computed name is ruled out by what is fixed around its holes, and no more"):
+        ( runs(t"case*"), runs(t"*parses"), runs(t"dynamic/**"), runs(t"*/case *"),
+          runs(t"*fails"), runs(t"other/**"), runs(t"parsing") )
+      . assert(_ == ( List(t"Sealed", t"Dynamic", t"Caller", t"Absent"),
+                      List(t"Sealed", t"Dynamic", t"Caller", t"Absent"),
+                      List(t"Sealed", t"Dynamic", t"Caller", t"Absent"),
+                      List(t"Sealed", t"Dynamic", t"Caller", t"Absent"),
+                      List(t"Sealed", t"Caller", t"Absent"),
+                      List(t"Sealed", t"Caller", t"Absent"),
+                      List(t"Parsing", t"Sealed", t"Caller", t"Absent") ))
+
+      test(m"an exclusion rules out a computed name only when it certainly applies"):
+        (runs(t"not:dynamic"), runs(t"not:case*"), runs(t"not:kind:check"))
+      . assert(_ == ( List(t"Parsing", t"Nested", t"Benches", t"Sealed", t"Caller", t"Absent"),
+                      entries.map(_.skip(6)),
+                      List(t"Benches", t"Sealed", t"Caller", t"Absent") ))
+
+      test(m"a kind or a tag rules out a suite, even one with computed names"):
+        (runs(t"kind:bench"), runs(t"kind:bench", t"tag:fast"), runs(t"kind:bench", t"tag:slow"))
+      . assert(_ == ( List(t"Benches", t"Sealed", t"Caller", t"Absent"),
+                      List(t"Benches", t"Sealed", t"Caller", t"Absent"),
+                      List(t"Sealed", t"Caller", t"Absent") ))
+
+      test(m"a glob reaches by path, an exclusion subtracts, and an axis constraint reaches all"):
+        (runs(t"parsing/*"), runs(t"not:parsing"), runs(t"N=4.."))
+      . assert(_ == ( List(t"Parsing", t"Sealed", t"Caller", t"Absent"),
+                      entries.map(_.skip(6)).filter(_ != t"Parsing"),
+                      entries.map(_.skip(6)) ))
+
+      test(m"an impromptu block behind a method call is counted as open"):
+        (reached.open(t"reach.Caller"), reached.open(t"reach.Sealed"), reached.open(t"reach.Parsing"))
+      . assert(_ == (1, 1, 0))
 
     // A tagged, axial test of fume's own, so that `fume list --axes`, `tag:selection` and
     // `scale=` completion can be exercised against this very suite.

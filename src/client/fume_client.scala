@@ -322,20 +322,29 @@ def runClient(): Unit =
               NoMachine
 
             case classpath: LocalClasspath =>
-              val suites: List[Text] = selectSuites(classpath, suite())
+              val selectionArgs: List[Text] =
+                Selection.lower
+                  ( kinds,
+                    tags().lay(Nil: List[Text])(_.values),
+                    axes().lay(Nil: List[Text])(_.values),
+                    excludes().lay(Nil: List[Text])(_.values),
+                    terms )
 
-              if suites.nil then
+              // The suites to run: those the selection reaches, by the classpath's index of
+              // tests, so that a selection naming one test runs the suite declaring it and not
+              // the body of every other (see `Suites.reached`). A selection reaching no suite
+              // is the run every suite would have reported nothing for: it passes, and says so.
+              val discovered: List[Text] = Suites.discover(classpath)
+              val chosen: Optional[Text] = suite()
+              val suites: List[Text] = selectSuites(classpath, chosen, selectionArgs)
+
+              if discovered.nil || chosen.lay(false) { chosen => !discovered.has(chosen) } then
                 Render.announce(t"no test suites were found on the classpath")
                 NoSuites
+              else if suites.nil then
+                Render.announce(t"no suite on the classpath declares a test the selection admits")
+                Exit.Ok
               else
-                val selectionArgs: List[Text] =
-                  Selection.lower
-                    ( kinds,
-                      tags().lay(Nil: List[Text])(_.values),
-                      axes().lay(Nil: List[Text])(_.values),
-                      excludes().lay(Nil: List[Text])(_.values),
-                      terms )
-
                 // A positive factor becomes probably's `--scale=<factor>`; anything else is
                 // reported and dropped, like `--max-load` above, so that a mistyped multiplier
                 // costs a warning rather than a run. The factor is checked here but forwarded
@@ -358,6 +367,9 @@ def runClient(): Unit =
 
                 import probates.cancelProbate
                 import denominative.dysasymptotics.linearSize
+
+                if chosen.absent && suites.size < discovered.size
+                then Render.announce(t"the selection reaches ${suites.size} of ${discovered.size} suites")
 
                 // The board's frontend drives the terminal through the invocation's console, a
                 // tracked capability sealed here for the run, as flame does for its commands.
@@ -1551,10 +1563,12 @@ private def selectionArguments(rest: List[Argument]): List[Argument] =
 private def selectionTerms(rest: List[Argument]): List[Text] =
   selectionArguments(rest).map { (argument: Argument) => argument() }
 
-// The suites the selection admits: everything discovered on the classpath, narrowed to
-// `--suite` when given. Empty means nothing to run (reported by the caller as `NoSuites`).
-private def selectSuites(classpath: LocalClasspath, suite: Optional[Text]): List[Text] =
-  val all: List[Text] = Suites.discover(classpath)
+// The suites the selection admits: those on the classpath the terms reach (every suite, for
+// no terms), narrowed to `--suite` when given. Empty means nothing to run.
+private def selectSuites(classpath: LocalClasspath, suite: Optional[Text], terms: List[Text] = Nil)
+:   List[Text] =
+
+  val all: List[Text] = Suites.reached(classpath, terms)
   suite.lay(all) { chosen => all.filter(_ == chosen) }
 
 // Runs one suite in a fresh JVM — `java -cp <classpath> <suite> <terms…>` — forwarding its

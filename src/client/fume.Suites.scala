@@ -283,6 +283,12 @@ object Suites:
       indexes(key) = index
       index
 
+  // The suites a run of the terms must invoke: every entry suite the index cannot rule out
+  // (`Index#entries`), so a selection naming one test runs the suite that declares it and not
+  // the body of every other; a classpath with no index runs them all, as it always did.
+  def reached(classpath: LocalClasspath, terms: List[Text]): List[Text] =
+    index(classpath).entries(discover(classpath), terms)
+
   def catalogue(classpath: LocalClasspath): Catalogue =
     val key: Text = fingerprint(classpath)
     val cached: Optional[Catalogue] = cache.getOrElse(key, Unset)
