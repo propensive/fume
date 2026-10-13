@@ -412,9 +412,8 @@ def runClient(): Unit =
                 val model = Model()
                 val shown: Boolean = !terse && tty && !legacyFork
 
-                val title: Text = suites match
-                  case List(only) => only
-                  case _          => t"${suites.size} suites"
+                // The run's name, as its record will have it: the invocation's directory.
+                val title: Text = RunRecord.name(workspace, t"${suites.size} suites")
 
                 // The run's progress, forecast from the last run of this classpath where it can
                 // be: the board's status line, ticking as the suites go by.
