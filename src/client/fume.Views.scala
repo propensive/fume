@@ -226,9 +226,10 @@ object Views:
 
   def indexedTests(classpath: LocalClasspath, terms: List[Text]): List[Api.IndexedTest] =
     val index: Index = Suites.index(classpath)
+    val resolved: List[Text] = index.resolve(terms)
 
     Suites.discover(classpath).bind[List[Api.IndexedTest], Api.IndexedTest, List[Api.IndexedTest]]: suite =>
-      index.tests(suite).filter(Index.admits(_, terms)).map: test =>
+      index.tests(suite).filter(Index.admits(_, resolved)).map: test =>
         val leaf: Optional[Index.Link] = test.links.last
 
         Api.IndexedTest

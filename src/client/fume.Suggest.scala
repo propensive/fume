@@ -34,21 +34,28 @@ package fume
 
 import soundness.*
 
+import denominative.dysasymptotics.linearSize
+
 import probably.TestEvent
 
-// Tab-completion for selection terms, as PURE logic over the classpath's cached schedule: the
-// focused word, the other arguments' wire terms, and every scheduled test in. No I/O, so it is
-// fully unit-testable. The rules:
+// Tab-completion for selection terms, as PURE logic over the classpath's cached index and
+// schedule. No I/O, so it is fully unit-testable. The rules:
 //
-//   - A bare word offers the kinds, `tag:<name>` for every tag on the classpath, the ids and
-//     monikers of every test, and — once at least one test is IDENTIFIED by the other
-//     arguments (an id, moniker or glob; `--suite` alone does not count) — an `<axis>=` stub for
-//     each axis of the identified tests, marked incomplete so the shell stops at the `=`.
-//   - A word `<axis>=…` (cursor after the `=`) offers that axis's values across the identified
-//     tests: a discrete axis's labels; a numeric axis's declared values plus `lo..hi`, `lo..`
-//     and `..hi` templates from the observed extremes; an emergent axis's range templates from
-//     its declared bounds. After a comma (`N=4,`) the remaining values follow, with the typed
-//     prefix retained. With nothing identified, an axis word offers nothing at all.
+//   - A positional word (`terms`) offers what somebody NAMED, and little else. An empty word
+//     offers the first moniker on the way to each test, which is its suite's wherever the suite
+//     has one. A word with something typed offers every moniker beginning with it, and the ids
+//     which do too: a suite's derived id, and the hex id of a test or a group.
+//   - A word with a scope (`threads/`, `threads/errors/`) offers what is below the scope: for
+//     each test, the first moniker on the way to it, or its hex id if nothing on the way is
+//     named; and, once more is typed, the monikers and hex ids below which begin with it.
+//   - Each is described by the names from the scope down to it, so nothing typed is repeated.
+//   - The `--axis` operand (`axes`) offers an `<axis>=` stub for each axis of the tests the
+//     other arguments IDENTIFY (an id, moniker or glob; `--suite` alone does not count), marked
+//     incomplete so the shell stops at the `=`; then, after the `=`, that axis's values: a
+//     discrete axis's labels; a numeric axis's declared values plus `lo..hi`, `lo..` and `..hi`
+//     templates from the observed extremes; an emergent axis's range templates from its
+//     declared bounds. After a comma (`N=4,`) the remaining values follow, with the typed
+//     prefix retained. With nothing identified, it offers nothing at all.
 object Suggest:
   // `kind:test` selects what the event protocol calls a `check`.
   private def kindOf(name: Text): Text = if name == t"test" then t"check" else name
@@ -91,13 +98,81 @@ object Suggest:
         && (kinds.nil || kinds.has(test.kind))
         && tags.all { alternatives => alternatives.exists(test.tags.has(_)) }
 
-  def apply(word: Text, others: List[Text], schedule: List[Suites.Scheduled]): List[Suggestion] =
-    axisOf(word) match
-      case axis: Text if word.contains(t"=") =>
-        values(axis, word.after(word.offsetOf("=").or(Prim)), identified(others, schedule))
+  // One candidate for a term: the handle to type for a link, and where the link is among
+  // those below the scope, which is what describes it.
+  private case class Candidate(handle: Text, depth: Int, links: List[Index.Link])
+
+  // The handles by which the link at `depth` answers to the typed text: its moniker, and its
+  // ids — a suite's derived one, at the top level, and anything's hex.
+  private def handles(link: Index.Link, depth: Int, links: List[Index.Link], typed: Text, top: Boolean)
+  :   List[Candidate] =
+
+    val written: List[Text] = link.written.lay(Nil: List[Text])(List(_))
+    val hex: List[Text] = if link.id == t"" then Nil else List(link.id)
+
+    val derived: List[Text] =
+      if top && link.derived then link.moniker.lay(Nil: List[Text])(List(_)) else Nil
+
+    val names: List[Text] = written + derived + hex
+
+    names.filter(_.starts(typed)).map(Candidate(_, depth, links))
+
+  // The one candidate on the way to a test when nothing is typed: the first link somebody
+  // named; failing that, within a scope, the test by its hex id; and at the top level nothing.
+  private def nearest(links: List[Index.Link], top: Boolean): List[Candidate] =
+    def recur(todo: List[Index.Link], depth: Int): List[Candidate] = todo match
+      case link :: tail =>
+        link.written.lay(recur(tail, depth + 1)) { moniker => List(Candidate(moniker, depth, links)) }
 
       case _ =>
-        bare(others, schedule)
+        links.last.lay(Nil: List[Candidate]): leaf =>
+          if top || leaf.id == t"" then Nil else List(Candidate(leaf.id, links.size - 1, links))
+
+    recur(links, 0)
+
+  private def matching(links: List[Index.Link], typed: Text, top: Boolean): List[Candidate] =
+    def recur(todo: List[Index.Link], depth: Int): List[Candidate] = todo match
+      case link :: tail => handles(link, depth, links, typed, top) + recur(tail, depth + 1)
+      case _            => Nil
+
+    recur(links, 0)
+
+  // A candidate's suggestion: completed behind the scope, described by the names down to it,
+  // and left incomplete unless it is a test, so that a `/` and what is below can follow.
+  private def suggestion(scope: Text)(candidate: Candidate): Suggestion =
+    val description: Text = candidate.links.keep(candidate.depth + 1).map(_.name).join(t" → ")
+    val group: Boolean = candidate.depth + 1 < candidate.links.size
+
+    Suggestion
+      ( candidate.handle,
+        description,
+        incomplete = group,
+        prefix     = scope,
+        operand    = true,
+        display    = if scope == t"" then Unset else candidate.handle )
+
+  // The completions of a positional term: see the rules above. Every one is an operand VALUE,
+  // not a subcommand: the help tree (the manpage that `fume install` writes) is built by
+  // probing the suggestions at each prefix, and descending into terms would enumerate every
+  // ordering of the tests on the classpath.
+  def terms(word: Text, tests: List[Index.Test]): List[Suggestion] =
+    val slash: Int = word.s.lastIndexOf('/')
+    val scope: Text = if slash < 0 then t"" else word.keep(slash + 1)
+    val typed: Text = if slash < 0 then word else word.skip(slash + 1)
+    val path: List[Text] = Index.segments(scope)
+    val top: Boolean = path.nil
+
+    def below(test: Index.Test): List[List[Index.Link]] =
+      if top then List(test.links)
+      else Index.locate(test.links, path).lay(Nil: List[List[Index.Link]]) { found => List(found.skip(1)) }
+
+    def candidates(links: List[Index.Link]): List[Candidate] =
+      if typed == t"" then nearest(links, top) else matching(links, typed, top)
+
+    val seen: scala.collection.mutable.HashSet[Text] = scala.collection.mutable.HashSet()
+
+    tests.flatMap(below).flatMap(candidates).filter { candidate => seen.add(candidate.handle) }
+    . map(suggestion(scope))
 
   // The comma-continued names for the `--kind` and `--tag` operands: what remains after the
   // names already typed, behind the typed prefix.
@@ -118,32 +193,6 @@ object Suggest:
 
   private def count(tag: Text, schedule: List[Suites.Scheduled]): Int =
     schedule.count(_.tags.has(tag))
-
-  // Named methods rather than lambdas throughout: an interpolation inside a lambda passed to a
-  // collection combinator runs its implicit search while the element type is still
-  // uninstantiated, tripping dotc's `wildApprox` assertion (scala/scala3#24824).
-  private def tagged(tag: Text, schedule: List[Suites.Scheduled]): Text =
-    val n: Int = count(tag, schedule)
-    t"$n tagged $tag"
-
-  // Every term suggestion is an operand VALUE, not a subcommand: the help tree (the manpage that
-  // `fume install` writes) is built by probing the suggestions at each prefix, and descending into
-  // terms would enumerate every ordering of the tests on the classpath.
-  private def kindSuggestion(kind: Text): Suggestion =
-    Suggestion(t"kind:$kind", describeKind(kind), operand = true)
-
-  private def tagSuggestion(schedule: List[Suites.Scheduled])(tag: Text): Suggestion =
-    val description: Text = tagged(tag, schedule)
-    Suggestion(t"tag:$tag", description, operand = true)
-
-  private def testSuggestions(test: Suites.Scheduled): List[Suggestion] =
-    val path: Text = test.ref.path.join(t"/")
-    val kind: Text = if test.kind == t"check" then t"test" else test.kind
-    val description: Text = t"$kind  $path"
-    val hash = Suggestion(test.ref.id, description, operand = true)
-
-    test.ref.moniker.lay(List(hash)): moniker =>
-      List(hash, Suggestion(moniker, description, operand = true))
 
   private def stub(axis: Text): Suggestion =
     val description: Text = t"constrain the $axis axis"
@@ -170,13 +219,6 @@ object Suggest:
 
     candidates.filter(!chosen.has(_)).map(suggestion)
 
-  private def bare(others: List[Text], schedule: List[Suites.Scheduled]): List[Suggestion] =
-    val kinds: List[Suggestion] = Selection.kindNames.map(kindSuggestion)
-    val tags: List[Suggestion] = schedule.flatMap(_.tags).distinct.map(tagSuggestion(schedule))
-    val tests: List[Suggestion] = schedule.flatMap(testSuggestions)
-
-    kinds + tags + tests.distinct + stubs(others, schedule)
-
   // An `<axis>=` stub for each axis of the identified tests, incomplete so the shell stops
   // at the `=` and the values can follow.
   private def stubs(others: List[Text], schedule: List[Suites.Scheduled]): List[Suggestion] =
@@ -184,7 +226,12 @@ object Suggest:
 
   // The `--axis` operand: the stubs alone until an `=` is typed, then that axis's values.
   def axes(word: Text, others: List[Text], schedule: List[Suites.Scheduled]): List[Suggestion] =
-    if word.contains(t"=") then apply(word, others, schedule) else stubs(others, schedule)
+    axisOf(word) match
+      case axis: Text if word.contains(t"=") =>
+        values(axis, word.after(word.offsetOf("=").or(Prim)), identified(others, schedule))
+
+      case _ =>
+        if word.contains(t"=") then Nil else stubs(others, schedule)
 
   private def numeric(text: Text): Optional[Double] = text.absolve match
     case r"-?[0-9]+" | r"-?[0-9]+\.[0-9]+" => safely(text.as[Double])

@@ -84,8 +84,9 @@ otherwise.
   `N=4..64`, `N=4..`, `N=..64`, `not:TERM`), and the flags `-k/--kind`, `-t/--tag`,
   `-a/--axis` and `-x/--exclude` lower to them. Tests carry typed tags (`test(m"…", n"slow")`),
   `fume list --axes` shows each test's tags and axes, `fume list --tags` counts the tags,
-  and completion offers ids, monikers, kinds, tags and — once a test is identified — its
-  axes and their values, from a schedule cached in the daemon per classpath.
+  and completion offers monikers — and, once something is typed, ids — as positional terms,
+  scoped paths (`threads/0a48bc`) below a suite or a group, and, for `--axis`, the axes and
+  values of the tests identified, from an index cached in the daemon per classpath.
 - **0.5 Machine identity.** A `machine` block in configuration (name, capabilities such as
   `gpu`, `32-core`, `quiet`; defaulting to the hostname) identifies the host a run executes
   on. The identity is recorded in the run record, so notes and trends (3.1) compare like

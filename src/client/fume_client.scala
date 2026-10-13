@@ -296,7 +296,7 @@ def runClient(): Unit =
         val words: List[Text] = Selection.words(rest.map { (argument: Argument) => argument() })
         val tags: Prospective[Repeated] = tagFlag(classpath)
         val axes: Prospective[Repeated] = axisFlag(classpath, words)
-        val excludes: Prospective[Repeated] = excludeFlag(classpath, words)
+        val excludes: Prospective[Repeated] = excludeFlag(classpath)
         val failFast: Boolean = ui.FailFast().or(false)
         val maxLoad: Optional[Text] = ui.MaxLoad()
         val durationScale: Optional[Text] = ui.DurationScale()
@@ -322,13 +322,16 @@ def runClient(): Unit =
               NoMachine
 
             case classpath: LocalClasspath =>
+              // A scoped path (`threads/0a48bc`) is fume's own form of term, resolved here to
+              // the ids it leads to, which is what the suites — and everything below — read.
               val selectionArgs: List[Text] =
-                Selection.lower
-                  ( kinds,
-                    tags().lay(Nil: List[Text])(_.values),
-                    axes().lay(Nil: List[Text])(_.values),
-                    excludes().lay(Nil: List[Text])(_.values),
-                    terms )
+                Suites.index(classpath).resolve:
+                  Selection.lower
+                    ( kinds,
+                      tags().lay(Nil: List[Text])(_.values),
+                      axes().lay(Nil: List[Text])(_.values),
+                      excludes().lay(Nil: List[Text])(_.values),
+                      terms )
 
               // The suites to run: those the selection reaches, by the classpath's index of
               // tests, so that a selection naming one test runs the suite declaring it and not
@@ -1082,8 +1085,9 @@ def runClient(): Unit =
         // selection. The non-flag TERMS are raw Probably selection terms (6-hex-digit ids,
         // monikers, name and path globs, `kind:` terms, and axis constraints such as
         // `parser=jacinta`, `N=4..64` or `'N<32'` — the `<`/`>` forms need shell quoting),
-        // forwarded verbatim to each suite with no re-parsing; fume itself only prepends the
-        // `kind:` terms derived from the kind switches.
+        // forwarded to each suite as written, but for a scoped path (`threads/0a48bc`), which
+        // fume resolves to the ids it leads to (`Index#resolve`); fume otherwise only prepends
+        // the `kind:` terms derived from the kind switches.
         case ui.Run() :: rest =>
           runSelection(rest)
 
@@ -1100,7 +1104,7 @@ def runClient(): Unit =
           val words: List[Text] = Selection.words(rest.map { (argument: Argument) => argument() })
           val tags: Prospective[Repeated] = tagFlag(classpath)
           val axes: Prospective[Repeated] = axisFlag(classpath, words)
-          val excludes: Prospective[Repeated] = excludeFlag(classpath, words)
+          val excludes: Prospective[Repeated] = excludeFlag(classpath)
           val showAxes: Boolean = ui.Axes().present
           val showTags: Boolean = ui.Tags().present
           val scan: Boolean = ui.Scan().present
@@ -1120,12 +1124,13 @@ def runClient(): Unit =
                   NoSuites
                 else
                   val selectionArgs: List[Text] =
-                    Selection.lower
-                      ( kinds,
-                        tags().lay(Nil: List[Text])(_.values),
-                        axes().lay(Nil: List[Text])(_.values),
-                        excludes().lay(Nil: List[Text])(_.values),
-                        terms )
+                    Suites.index(classpath).resolve:
+                      Selection.lower
+                        ( kinds,
+                          tags().lay(Nil: List[Text])(_.values),
+                          axes().lay(Nil: List[Text])(_.values),
+                          excludes().lay(Nil: List[Text])(_.values),
+                          terms )
 
                   // The listing is read from the classpath's index of tests when it covers
                   // every suite asked for, so that nothing is run to make it: the index has
@@ -1509,30 +1514,25 @@ private def axisFlag(classpath: Optional[LocalClasspath], words: List[Text])
   ui.Axis()
 
 // Reads `--exclude`, whose operand is any selection term and completes as a positional one.
-private def excludeFlag(classpath: Optional[LocalClasspath], words: List[Text])
-   (using Cli, Interpreter)
+private def excludeFlag(classpath: Optional[LocalClasspath])(using Cli, Interpreter)
 :   Prospective[Repeated] =
 
   given discoverable: (Repeated is Discoverable) = (operand, _) =>
-    classpath.lay(List()) { cp => Suggest(operand, words, Suites.axial(cp, words)) }
+    classpath.lay(List()) { cp => Suggest.terms(operand, Suites.catalogue(cp).tests) }
 
   ui.Exclude()
 
 // Registers the completion of every positional selection term: the focused word completes to
-// the REAL tests on the classpath — ids, monikers, kinds, tags, and the axes and values of the
-// tests the OTHER words identify — from the daemon's cached schedule. Discovery is lazy: the
-// update thunk runs only when the focused word is a term, so ordinary invocations never pay
-// for the listing.
+// what is NAMED on the classpath — the monikers of its suites, groups and tests — and, once
+// something of it is typed, to the ids which begin with that too; within a scope (`threads/`),
+// to what is below it. All from the daemon's cached index. Discovery is lazy: the update thunk
+// runs only when the focused word is a term, so ordinary invocations never pay for the listing.
 private def completeTerms(classpath: Optional[LocalClasspath], rest: List[Argument])(using Cli)
 :   Unit =
 
   classpath.let: cp =>
     selectionArguments(rest).each: argument =>
-      val others: List[Text] =
-        Selection.words:
-          rest.filter(_.position != argument.position).map { (argument: Argument) => argument() }
-
-      summon[Cli].suggest(argument, Suggest(argument(), others, Suites.axial(cp, others)), t"", t"")
+      summon[Cli].suggest(argument, Suggest.terms(argument(), Suites.catalogue(cp).tests), t"", t"")
 
 // The raw Probably selection terms: every argument after the subcommand that is neither a flag
 // nor the operand of a value-taking flag. This does NOT interpret the terms — they are

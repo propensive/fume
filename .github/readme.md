@@ -31,13 +31,27 @@ fume --version                          # the version alone
 fume quit                               # stop the daemon, and any dashboard it serves
 ```
 
-The non-flag arguments to `run`, `list` and `watch` are raw Probably selection terms — 6-hex-digit
+The non-flag arguments to `run`, `list` and `watch` are selection terms — 6-hex-digit
 test ids, monikers, name/path globs, and axis constraints (`parser=jacinta,merino`, `N=4..64`,
-`'N<32'`) — forwarded verbatim to each suite. Note that the `<`/`>` constraint forms must be
-quoted in a shell; the `=` forms need no quoting. Test kinds are restricted with the `--test`,
-`--bench`, `--stress` and `--profile` switches, which union when combined; raw `kind:` terms are
-rejected, since Probably's union semantics would make one silently widen a restriction rather
-than narrow it.
+`'N<32'`) — forwarded to each suite, which reads them as Probably does. Note that the `<`/`>`
+constraint forms must be quoted in a shell; the `=` forms need no quoting. Test kinds are
+restricted with the `--test`, `--bench`, `--stress` and `--profile` switches, which union when
+combined, and tags with `--tag`.
+
+A term may also be a *scoped path*: the monikers and ids on the way to a test or a group,
+`/`-separated, with the groups nobody named left out. For a suite `Suite("threads", m"Parasite
+tests")`, `threads/0a48bc` is the test `0a48bc` within it, however deeply it is nested, and
+`threads/errors` a group whose moniker is `errors`. Fume resolves such a path, by the
+classpath's index of tests, to the ids it leads to, and it is those the suites receive.
+
+Tab-completion of a term shows as little as will do. With nothing typed, it offers the
+*monikers* alone — the names somebody chose, which for most classpaths are those of a few
+suites. Once something is typed, it also offers the ids which begin with it: a suite's derived
+id (`honeycomb-tests`) and the hex id of a test or a group. After a scope (`threads/`), it
+offers what is below: the monikers, and the hex ids of the tests which have none. Each is
+described by the names leading to it, joined by `→`, starting below whatever scope is already
+typed: `Parasite tests → Pooled supervisor → Task error handling → Awaiting a cancelled task
+raises Cancelled` for `0a48bc`, and `Pooled supervisor → …` for `threads/0a48bc`.
 
 Single-valued options such as `--classpath` and `--fail-fast` are Exoskeleton `Setting`s, read
 from a cascade of sources in priority order: the command-line flag, a `fume.`-prefixed system
@@ -58,7 +72,7 @@ groups it is within, and its kind, moniker, tags and declaration site. A suite i
 its title and its id — given, as in `Suite("html", m"Honeycomb Tests")`, or derived from the
 title, `honeycomb-tests` — and the id is a selection term like any other: `fume run html` runs
 that suite, and `html/**` is a path within it. Fume reads that index, as text, for `fume
-list` and for tab-completion of test ids, monikers, tags and kinds, so neither runs anything:
+list` and for tab-completion of monikers, ids and tags, so neither runs anything:
 a suite which starts a server or reads a corpus before declaring its tests does not do so
 because a shell asked for completions.
 

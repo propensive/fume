@@ -58,8 +58,17 @@ object Index:
 
   // One step of a test's path from its suite: a suite, a group, or the test itself. The id is
   // empty for anything whose name, or any name above it, is only known at runtime; `dynamic`
-  // says whether this link's own name has such a hole, shown as `*` in it.
-  case class Link(name: Text, moniker: Optional[Text], id: Text, dynamic: Boolean = false)
+  // says whether this link's own name has such a hole, shown as `*` in it. A suite's moniker is
+  // its id, and `derived` says that nobody wrote it: it is the title's own slug.
+  case class Link
+     ( name:    Text,
+       moniker: Optional[Text],
+       id:      Text,
+       dynamic: Boolean = false,
+       derived: Boolean = false ):
+
+    // The name its author chose for it, if they chose one.
+    def written: Optional[Text] = if derived then Unset else moniker
 
   case class Test
      ( links:   List[Link],
@@ -84,6 +93,26 @@ object Index:
     def scheduled: Suites.Scheduled =
       val leaf: Link = links.last.or(Link(t"", Unset, t""))
       Suites.Scheduled(TestEvent.Ref(leaf.id, leaf.name, leaf.moniker, path, file, line), kind, tags, Nil)
+
+  // A test known only by its wire ref, from a suite the index does not cover: the links are
+  // its path, whose first segment is the suite's id — written or derived, which the ref cannot
+  // say, so it is taken for derived — and only the test itself has an id.
+  def unindexed(scheduled: Suites.Scheduled): Test =
+    val ref: TestEvent.Ref = scheduled.ref
+    val leaf: Link = Link(ref.name, ref.moniker, ref.id)
+
+    val above: List[Link] = ref.path.reverse match
+      case _ :: outer => outer.reverse match
+        case suite :: groups =>
+          Link(suite, suite, t"", derived = true) :: groups.map { group => Link(group, Unset, t"") }
+
+        case _ =>
+          Nil
+
+      case _ =>
+        Nil
+
+    Test(above :+ leaf, scheduled.kind, scheduled.tags, !scheduled.axes.nil, false, ref.file, ref.line)
 
   // A name as the index holds it, with whether any part of it was a hole.
   private[fume] case class Name(text: Text, dynamic: Boolean)
@@ -275,6 +304,52 @@ object Index:
   // the hashes of the names of everything the entry is within.
   private def id(above: Int, name: Text): Text =
     String.format("%06x", Int.box((above ^ hash(name)) & 0xffffff)).nn.tt
+
+  // `probably.Suite.derive`: the id of a suite declared by its title alone — the title's
+  // letters and digits in lower case, with each run of anything else as one `-`, and none at
+  // either end; `suite` if that leaves nothing.
+  def derive(title: Text): Text =
+    val builder: StringBuilder = StringBuilder()
+
+    title.s.toLowerCase.nn.foreach: char =>
+      if Character.isLetterOrDigit(char) then builder.append(char)
+      else if builder.length > 0 && builder.charAt(builder.length - 1) != '-'
+      then builder.append('-')
+
+    if builder.length > 0 && builder.charAt(builder.length - 1) == '-'
+    then builder.setLength(builder.length - 1)
+
+    if builder.length == 0 then t"suite" else builder.toString.tt
+
+  // Whether a segment of a scoped path names the link: by its moniker — for a suite, its id —
+  // or by its hex id.
+  private def named(link: Link, segment: Text): Boolean =
+    link.moniker == segment || (link.id != t"" && link.id == segment)
+
+  // Where a scoped path (`threads/errors`) leads among a test's links: each segment names a
+  // link, in order, and the links between them — the groups nobody named — are passed over.
+  // The links from the one the last segment names, or `Unset` if the path leads nowhere here.
+  def locate(links: List[Link], segments: List[Text]): Optional[List[Link]] = segments match
+    case segment :: rest =>
+      links match
+        case link :: tail =>
+          if !named(link, segment) then locate(tail, segments)
+          else if rest.nil then links
+          else locate(tail, rest)
+
+        case _ =>
+          Unset
+
+    case _ =>
+      Unset
+
+  // The segments of a scoped path; a trailing `/` adds none, so `threads/` is `threads`.
+  def segments(path: Text): List[Text] = path.cut(t"/").filter(_ != t"")
+
+  // A term which is a scoped path: slashed, and neither a glob nor anything but an identity.
+  private def scoped(term: Text): Boolean =
+    term.contains(t"/") && !setting(term) && !narrowing(term)
+    && !term.s.exists { char => "*?[]{}\\".indexOf(char.toInt) >= 0 }
 
   // A term which is not a selection: a Probably setting such as `--workers=1`, or nothing.
   private def setting(term: Text): Boolean = term == t"" || term.starts(t"--")
@@ -501,9 +576,15 @@ final class Index private[fume] (private[fume] val lines: List[Index.Line]):
         Link(name.text, moniker, if dynamic2 then t"" else Index.id(above, name.text), name.dynamic)
       Position(link :: links, above + Index.hash(name.text), dynamic2)
 
-  // A suite's own position: named by its title, and known in paths by its id.
+  // A suite's own position: named by its title, and known in paths by its id, which is its
+  // moniker unless it is only what the title derives.
   private def root(topic: Text): Position =
-    Position(Nil, 0, false).enter(Name(titles(topic).or(topic), false), topic)
+    val title: Text = titles(topic).or(topic)
+    val entered: Position = Position(Nil, 0, false).enter(Name(title, false), topic)
+
+    entered.links match
+      case link :: _ if topic == Index.derive(title) => entered.copy(links = List(link.copy(derived = true)))
+      case _                                         => entered
 
   private def descend(position: Position, topic: Text, method: Text, path: List[Name]): Position =
     def recur(position: Position, done: List[Name], todo: List[Name]): Position = todo match
@@ -574,3 +655,35 @@ final class Index private[fume] (private[fume] val lines: List[Index.Line]):
         !knows(suite) || found(suite, suites).exists:
           case Found.Hole           => true
           case Found.Declared(test) => Index.could(test, terms)
+
+  // Every test the index lists, under every suite it has a line for.
+  private lazy val all: List[Test] =
+    lines.bind[List[Test], Test, List[Test]]:
+      case Line.Suite(className, _, _) => tests(className)
+      case _                           => Nil
+
+  // The ids of the links a scoped path leads to, or the path itself if it leads to none the
+  // index can name: nothing matches it, or what does has a name only known at runtime.
+  private def targets(term: Text): List[Text] =
+    val path: List[Text] = Index.segments(term)
+
+    def target(test: Test): List[Text] =
+      Index.locate(test.links, path).let(_.prim).lay(Nil: List[Text]) { link => List(link.id) }
+
+    val ids: List[Text] = all.flatMap(target).distinct
+    if ids.nil || ids.has(t"") then List(term) else ids
+
+  private def exclusion(id: Text): Text = t"not:$id"
+
+  private def resolved(term: Text): List[Text] =
+    if term.starts(t"not:") && Index.scoped(term.skip(4)) then
+      val ids: List[Text] = targets(term.skip(4))
+      if ids == List(term.skip(4)) then List(term) else ids.map(exclusion)
+    else if Index.scoped(term) then targets(term)
+    else List(term)
+
+  // The terms as a suite understands them: a scoped path — a test or a group within the links
+  // which are named, as `threads/0a48bc` or `threads/errors` — is one of fume's own forms, which
+  // Probably would read as a glob over names, so each is replaced by the ids of what it leads
+  // to. Every other term, and a path which leads nowhere, is kept as written.
+  def resolve(terms: List[Text]): List[Text] = terms.flatMap(resolved)

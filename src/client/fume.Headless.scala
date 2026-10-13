@@ -53,7 +53,8 @@ object Headless:
 
   // Starts the run, or `Unset` when the classpath has no suites. The suites are those the
   // terms reach, as for a run from a shell, so the run record lists what actually runs.
-  def launch(classpath: LocalClasspath, terms: List[Text], workspace: Text): Optional[Text] =
+  def launch(classpath: LocalClasspath, written: List[Text], workspace: Text): Optional[Text] =
+    val terms: List[Text] = Suites.index(classpath).resolve(written)
     val suites: List[Text] = Suites.reached(classpath, terms)
 
     if suites.nil then Unset else
@@ -61,7 +62,7 @@ object Headless:
 
       val id: Text =
         Journal.start
-          ( workspace, t"mcp", Invoker.Mcp, classpath.entries.map(entryPath), terms, suites,
+          ( workspace, t"mcp", Invoker.Mcp, classpath.entries.map(entryPath), written, suites,
             Machine.Identity.local.hostname )
 
       aborts(id) = aborted
