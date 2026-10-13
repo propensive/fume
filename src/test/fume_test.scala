@@ -429,57 +429,54 @@ object Tests extends Suite(m"Fume tests"):
     . assert:
         _ == List(t"kind:bench", t"tag:slow", t"N=4", t"not:tag:flaky", t"parseJson", t"jacinta/**")
 
-    test(m"a bare word offers kinds, tags, ids and monikers, but no axes unidentified"):
-      cores(Suggest(t"", Nil, schedule))
-    . assert: cores =>
-        cores.has(t"kind:bench") && cores.has(t"tag:slow") && cores.has(t"tag:heavy")
-        && cores.has(t"a1b2c3") && cores.has(t"parseJson") && cores.has(t"d4e5f6")
-        && !cores.has(t"a plain test") && !cores.exists(_.ends(t"="))
+    test(m"a bare word offers the monikers of a schedule read from no index, and nothing else"):
+      cores(Suggest.terms(t"", schedule.map(Index.unindexed)))
+    . assert(_ == List(t"parseJson", t"sweep", t"ratio"))
 
-    test(m"a tag suggestion counts the tests carrying it"):
-      Suggest(t"", Nil, schedule).seek(_.core == t"tag:slow").let(_.description)
-    . assert(_ == t"2 tagged slow")
+    test(m"a typed word offers the suite ids and hex ids of such a schedule too"):
+      (cores(Suggest.terms(t"jac", schedule.map(Index.unindexed))), cores(Suggest.terms(t"d4", schedule.map(Index.unindexed))))
+    . assert(_ == (List(t"jacinta"), List(t"d4e5f6")))
 
     test(m"once a test is identified, its axes are offered as incomplete stubs"):
-      Suggest(t"", List(t"parseJson"), schedule).filter(_.core.ends(t"=")).map: suggestion =>
+      Suggest.axes(t"", List(t"parseJson"), schedule).map: suggestion =>
         (suggestion.core, suggestion.incomplete)
     . assert(_ == List((t"N=", true), (t"parser=", true)))
 
     test(m"an integral axis offers its values and range templates"):
-      texts(Suggest(t"N=", List(t"parseJson"), schedule))
+      texts(Suggest.axes(t"N=", List(t"parseJson"), schedule))
     . assert(_ == List(t"N=4", t"N=8", t"N=64", t"N=4..64", t"N=4..", t"N=..64"))
 
     test(m"after a comma the remaining values follow behind the typed prefix"):
-      Suggest(t"N=4,", List(t"parseJson"), schedule).map { s => (s.prefix, s.core) }
+      Suggest.axes(t"N=4,", List(t"parseJson"), schedule).map { s => (s.prefix, s.core) }
     . assert(_ == List((t"N=4,", t"8"), (t"N=4,", t"64")))
 
     test(m"an axis word offers nothing when no test is identified"):
-      Suggest(t"N=", List(t"kind:bench", t"tag:slow"), schedule)
+      Suggest.axes(t"N=", List(t"kind:bench", t"tag:slow"), schedule)
     . assert(_ == Nil)
 
     test(m"a discrete axis offers its labels and no templates"):
-      texts(Suggest(t"parser=", List(t"a1b2c3"), schedule))
+      texts(Suggest.axes(t"parser=", List(t"a1b2c3"), schedule))
     . assert(_ == List(t"parser=jacinta", t"parser=circe"))
 
     test(m"an emergent axis offers range templates from its declared bounds"):
-      texts(Suggest(t"N=", List(t"sweep"), schedule))
+      texts(Suggest.axes(t"N=", List(t"sweep"), schedule))
     . assert(_ == List(t"N=2..16", t"N=2..", t"N=..16"))
 
     test(m"a decimal axis renders its extremes as written"):
-      texts(Suggest(t"x=", List(t"ratio"), schedule))
+      texts(Suggest.axes(t"x=", List(t"ratio"), schedule))
     . assert(_ == List(t"x=0.5", t"x=1.5", t"x=0.5..1.5", t"x=0.5..", t"x=..1.5"))
 
     test(m"a glob identifies tests, and kind: and tag: terms narrow them"):
-      ( texts(Suggest(t"N=", List(t"jacinta/**"), schedule)),
-        texts(Suggest(t"N=", List(t"**", t"kind:stress"), schedule)),
-        texts(Suggest(t"N=", List(t"**", t"tag:heavy"), schedule)) )
+      ( texts(Suggest.axes(t"N=", List(t"jacinta/**"), schedule)),
+        texts(Suggest.axes(t"N=", List(t"**", t"kind:stress"), schedule)),
+        texts(Suggest.axes(t"N=", List(t"**", t"tag:heavy"), schedule)) )
     . assert:
         _ == ( List(t"N=4", t"N=8", t"N=64", t"N=4..64", t"N=4..", t"N=..64"),
                List(t"N=2..16", t"N=2..", t"N=..16"),
                List(t"N=2..16", t"N=2..", t"N=..16") )
 
     test(m"values from several identified tests union, and templates span them"):
-      texts(Suggest(t"N=", List(t"parseJson", t"sweep"), schedule))
+      texts(Suggest.axes(t"N=", List(t"parseJson", t"sweep"), schedule))
     . assert(_ == List(t"N=4", t"N=8", t"N=64", t"N=2..64", t"N=2..", t"N=..64"))
 
     test(m"the --axis operand offers stubs until an = is typed"):
@@ -974,6 +971,79 @@ object Tests extends Suite(m"Fume tests"):
 
       def admitted(terms: Text*): List[Text] =
         tests.filter(Index.admits(_, terms.to(List))).map { test => test.links.last.let(_.name).or(t"") }
+
+      // Two suites, one given its id and one whose id is only what its title derives: a test
+      // within two groups nobody named, and a group with a moniker holding a test without one
+      // and a test with.
+      val named: Index =
+        Index.parse:
+          List
+           ( t"# probably tests 1",
+             t"# source: /src/parasite_test.scala",
+             t"suite\tpool.Tests\tthreads\tParasite Tests\t1",
+             t"test\tthreads\t\tPooled supervisor/Task error handling\tcheck\tAwaiting a cancelled task raises Cancelled\t\t\t3\t",
+             t"group\tthreads\t\t\tTiming\ttiming\t5",
+             t"test\tthreads\t\tTiming\tcheck\tsleeps\t\t\t6\t",
+             t"test\tthreads\t\tTiming\tcheck\twakes\twakes\t\t7\t",
+             t"suite\thoney.Tests\thoneycomb-tests\tHoneycomb Tests\t1",
+             t"test\thoneycomb-tests\t\t\tcheck\trenders\t\t\t3\t" )
+          . join(t"\n")
+
+      val chains: List[Index.Test] = named.tests(t"pool.Tests") + named.tests(t"honey.Tests")
+      val awaiting: Text = t"Awaiting a cancelled task raises Cancelled"
+
+      val cancelled: Text =
+        id(List(t"Parasite Tests", t"Pooled supervisor", t"Task error handling"), awaiting)
+
+      val timing: Text = id(List(t"Parasite Tests"), t"Timing")
+      val sleeps: Text = id(List(t"Parasite Tests", t"Timing"), t"sleeps")
+      val wakes: Text = id(List(t"Parasite Tests", t"Timing"), t"wakes")
+      val renders: Text = id(List(t"Honeycomb Tests"), t"renders")
+
+      test(m"a suite's id is its moniker unless it is what its title derives"):
+        ( Index.derive(t"Honeycomb Tests"),
+          Index.derive(t" — "),
+          chains.prim.let(_.links.prim.let(_.written)),
+          chains.last.let(_.links.prim.let(_.written)).absent )
+      . assert(_ == (t"honeycomb-tests", t"suite", t"threads", true))
+
+      test(m"a bare word completes to the monikers alone"):
+        cores(Suggest.terms(t"", chains))
+      . assert(_ == List(t"threads"))
+
+      test(m"a typed word completes to the monikers and the ids which begin with it"):
+        ( cores(Suggest.terms(t"t", chains)),
+          cores(Suggest.terms(t"h", chains)),
+          cores(Suggest.terms(cancelled.keep(3), chains)).has(cancelled) )
+      . assert(_ == (List(t"threads", t"timing"), List(t"honeycomb-tests"), true))
+
+      test(m"a test is described by every name down to it"):
+        Suggest.terms(cancelled, chains).prim.let(_.description)
+      . assert(_ == t"Parasite Tests → Pooled supervisor → Task error handling → $awaiting")
+
+      test(m"a scope completes to what is below it, described from there"):
+        Suggest.terms(t"threads/", chains).map: suggestion =>
+          (suggestion.text, suggestion.description, suggestion.incomplete)
+      . assert(_ == List
+                     ( (t"threads/$cancelled", t"Pooled supervisor → Task error handling → $awaiting", false),
+                       (t"threads/timing", t"Timing", true) ))
+
+      test(m"a deeper scope completes to its own tests, by moniker where there is one"):
+        ( Suggest.terms(t"threads/timing/", chains).map { s => (s.core, s.description) },
+          texts(Suggest.terms(t"threads/w", chains)) )
+      . assert(_ == (List((sleeps, t"sleeps"), (t"wakes", t"wakes")), List(t"threads/wakes")))
+
+      test(m"a scoped path resolves to the ids it leads to, and anything else is kept"):
+        named.resolve:
+          List(t"threads/$cancelled", t"threads/timing/", t"threads/timing/wakes", t"honeycomb-tests/$renders",
+               t"not:threads/timing", t"threads/nowhere", t"not:threads/nowhere", t"json/**", t"wakes",
+               t"kind:bench")
+      . assert(_ == List(cancelled, timing, wakes, renders, t"not:$timing", t"threads/nowhere",
+                         t"not:threads/nowhere", t"json/**", t"wakes", t"kind:bench"))
+
+      test(m"a resolved scoped path reaches the one suite it is within"):
+        named.entries(List(t"pool.Tests", t"honey.Tests"), named.resolve(List(t"threads/$cancelled")))
+      . assert(_ == List(t"pool.Tests"))
 
       test(m"no terms admit everything, and the terms that are not selections are ignored"):
         (admitted().size, admitted(t"--workers=1", t"--scale=2").size)

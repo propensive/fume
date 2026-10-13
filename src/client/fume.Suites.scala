@@ -243,6 +243,13 @@ object Suites:
     def schedule: List[Scheduled] =
       suites.bind[List[Scheduled], Scheduled, List[Scheduled]] { suite => suite(1) }
 
+    // Every test with the links of its path, for completing terms: the index's own, or, for a
+    // suite it does not cover, what the suite's schedule says of each.
+    lazy val tests: List[Index.Test] =
+      suites.bind[List[Index.Test], Index.Test, List[Index.Test]]: suite =>
+        if index.knows(suite(0)) then index.tests(suite(0)).filter(!_.dynamic)
+        else suite(1).map(Index.unindexed)
+
   private val cache: scala.collection.concurrent.TrieMap[Text, Catalogue] =
     scala.collection.concurrent.TrieMap()
 
