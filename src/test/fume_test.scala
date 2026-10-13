@@ -285,6 +285,22 @@ object Tests extends Suite(m"Fume tests"):
       Runs.read(id).let { record => (record.id == id, record.workspace, record.outcome, record.scheduled) }
     . assert(_ == (true, t"/work/project", t"passed", List(t"f.Tests")))
 
+    test(m"a run is named by its directory, whichever suite it is running or ran last"):
+      val id = start(List(t"h.Tests", t"i.Tests"))
+      val before = Journal.active.seek(_.id == id).let(_.record.name)
+      Journal.began(id, t"h.Tests")
+      val during = Journal.active.seek(_.id == id).let(_.record.name)
+      Journal.record(id, t"h.Tests", true, Unset, at(0L), Unset, false)
+      Journal.record(id, t"i.Tests", true, Unset, at(0L), Unset, false)
+      Journal.finish(id, Journal.Outcome.Passed, Unset)
+      (before, during, Journal.completed.seek(_.id == id).let(_.record.name))
+    . assert(_ == (t"project", t"project", t"project"))
+
+    test(m"a run with no directory is named by its fallback"):
+      ( RunRecord.name(t"", t"run 1"), RunRecord.name(t"/", t"run 1"),
+        RunRecord.name(t"/work/soundness/", t"run 1") )
+    . assert(_ == (t"run 1", t"run 1", t"soundness"))
+
     test(m"run ids sort by time and are well-formed"):
       val id: Text = Runs.id(at(1_700_000_000_000L))
       (id.keep(15), id.length)

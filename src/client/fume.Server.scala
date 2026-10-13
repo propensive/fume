@@ -217,11 +217,8 @@ final class Dashboard():
       import timeFormats.railwayTimeFormat
       (started in Dashboard.timezone).time.show
 
-  // What a run is called: the suite in flight, else the last suite recorded, else the first
-  // scheduled, else its id.
-  private def nameOf(run: Journal.Run): Text =
-    val record: RunRecord = run.record
-    run.current.or(record.suites.last.let(_.suite).or(record.scheduled.prim.or(t"run ${run.id}")))
+  // What a run is called: its record's name, which no suite starting or finishing changes.
+  private def nameOf(run: Journal.Run): Text = run.record.name
 
   // A run in flight as an activity: its name, its board's gauge, with the board's caption and
   // verdict as its state, and the action selecting the run, so its card opens the run's view.

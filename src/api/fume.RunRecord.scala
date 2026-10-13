@@ -68,7 +68,17 @@ case class RunRecord
   def duration: Optional[Duration] = finished.let(_ - started)
   def failures: Int = suites.count(!_.passed)
 
+  // What the run is called, from its first moment to its last: the directory it was invoked
+  // from. A run with no directory — another fume's, run here — is called by the machine which
+  // asked for it, and any other by its id.
+  def name: Text =
+    RunRecord.name(workspace, if invoker == RunRecord.remote then client else t"run $id")
+
 object RunRecord:
+  // The last segment of a working directory, or the fallback where it has none.
+  def name(workspace: Text, fallback: Text): Text =
+    workspace.cut(t"/").filter(_ != t"").reverse.prim.or(fallback)
+
   // The counts of a run, or of one suite's share of it.
   case class Totals(passed: Int, failed: Int, aspirePassed: Int, aspireFailed: Int):
     def total: Int = passed + failed + aspirePassed + aspireFailed
