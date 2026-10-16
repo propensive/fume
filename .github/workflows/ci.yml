@@ -20,3 +20,7 @@ jobs:
       publish_local: fume.__
       assembly:      fume.launcher.assembly
       test_assembly: fume.test.assembly
+      # Under plain `java` rather than fume, while the fume pinned in etc/tools cannot launch on
+      # the runner (it was built on a proscala release that no longer exists); the same entry
+      # point as `make test-plain`. Remove once a fume built on Proscala 1.0.1 is pinned.
+      test_main:     fume.runTests
