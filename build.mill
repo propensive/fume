@@ -17,14 +17,14 @@ object settings:
   // built for several upstream Scala versions, each shipped as `proscala-<scala version>.tar.gz`
   // and versioned `<scala version>-pro-<release>`; `SOUNDNESS_SCALA_BASE` selects the Scala
   // version. fume reads Soundness 0.71.0's TASTy, which is Scala 3.9's, so its base is 3.9.0 and
-  // the default is `3.9.0-pro-1.0.1`; the base moves to 3.10 with Soundness 0.72.0.
+  // the default is `3.9.0-pro-1.0.2`; the base moves to 3.10 with Soundness 0.72.0.
   // `SOUNDNESS_SCALA_VERSION` overrides the composed version; a release from before 1.0.0 is a
   // single build, named by its tag, and is still accepted.
   //
   // NOTE these `sys.env` overrides do NOT work under Mill: the value is read when the build
   // script is evaluated, and neither a fresh daemon nor `--no-daemon` propagates the variable. To
   // switch toolchains, edit the defaults here.
-  val scalaRelease = sys.env.getOrElse("SOUNDNESS_SCALA_RELEASE", "1.0.1")
+  val scalaRelease = sys.env.getOrElse("SOUNDNESS_SCALA_RELEASE", "1.0.2")
   val scalaBase = sys.env.getOrElse("SOUNDNESS_SCALA_BASE", "3.9.0")
   val scalaVersion = sys.env.getOrElse("SOUNDNESS_SCALA_VERSION",
     if scalaRelease.matches("[0-9]+\\.[0-9]+\\.[0-9]+") then s"$scalaBase-pro-$scalaRelease"
