@@ -222,7 +222,7 @@ object Suites:
   // than printed: the suite body runs, tests do not. Supervised here, since the caller (a
   // completion thunk, or `fume list`) need not hold a `Monitor`.
   def fetch(classpath: LocalClasspath, suite: Text, args: List[Text]): List[Scheduled] =
-    import threading.platformThreading
+    import threads.platformThreads
 
     val streamed: Optional[List[Scheduled]] =
       safely(supervise(schedule(classpath, suite, args)))

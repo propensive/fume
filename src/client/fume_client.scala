@@ -44,11 +44,10 @@ import pyrocosm.Tool
 
 import alphabets.hexLowerCase
 import backstops.silentBackstop
-import executives.completionsExecutive
 import interpreters.posixInterpreter
 import logging.silentLogging
 import systems.javaBaseSystem
-import threading.platformThreading
+import threads.platformThreads
 
 // Fume as a Pyrocosm tool: `about`, `install`, `quit` and `--version` come from `Tool`, as
 // does its configuration — every `Setting` below is read from its command-line flag first,
@@ -278,52 +277,865 @@ private def selectedKinds(using Cli, Interpreter): List[Text] =
 // live alone in the `launcher` module (`src/launcher/fume_launcher.scala`), which depends on
 // this module as a PUBLISHED Maven artifact — so `externalize` records its Central jar hash and
 // the repackager turns it into an on-demand `Burdock-Require` download instead of inlining it.
-def runClient(): Unit =
-  // `Fume.standard` handles the standard subcommands (`about`, `install`, `quit`) and
-  // `--version` first, and provides the full configuration cascade every `Setting` read below
-  // resolves through: the command-line flag always wins (handled structurally by `Setting`),
-  // then `fume.*` system properties, `FUME_*` environment variables, the project's
-  // `.pyrocosm/fume/config.tel` — resolved from the INVOCATION's working directory (each
-  // daemon client has its own), never the daemon process's — and the user's own.
-  cli:
-    Fume.standard:
-      // The run command's whole body, shared by `fume run …` and the BARE `fume …` (running is
-      // the default when no subcommand is given).
-      def runSelection(rest: List[Argument]) =
-        val classpath: Optional[LocalClasspath] = classpathSetting()
-        val suite: Prospective[Text] = suiteFlag(classpath)
-        val kinds: List[Text] = selectedKinds + kindSetting().lay(Nil: List[Text])(List(_))
-        val words: List[Text] = Selection.words(rest.map { (argument: Argument) => argument() })
-        val tags: Prospective[Repeated] = tagFlag(classpath)
-        val axes: Prospective[Repeated] = axisFlag(classpath, words)
-        val excludes: Prospective[Repeated] = excludeFlag(classpath)
-        val failFast: Boolean = ui.FailFast().or(false)
-        val maxLoad: Optional[Text] = ui.MaxLoad()
-        val durationScale: Optional[Text] = ui.DurationScale()
-        val target: Optional[Text] = ui.Target()
-        val fork: Boolean = ui.Fork().present
-        val terms: List[Text] = selectionTerms(rest)
-        val known: List[Machine] = machines()
-        val on: Optional[Text] = onSetting(known)
-        val retention: Int = ui.Retention() match
-          case text: Text => safely(text.as[Int]).or(200)
-          case _          => 200
-        val workspace: Text = summon[Cli].workingDirectory.directory()
+// An object rather than a top-level method, so that it can declare its use of the global
+// `threads` the completions executive supervises under and the `Watcher` the daemon watches its
+// state files with: a top-level definition can carry no `uses` clause.
+object Client uses parasite.threads, surveillance.Watcher:
+  def run(): Unit =
+    // `Fume.standard` handles the standard subcommands (`about`, `install`, `quit`) and
+    // `--version` first, and provides the full configuration cascade every `Setting` read below
+    // resolves through: the command-line flag always wins (handled structurally by `Setting`),
+    // then `fume.*` system properties, `FUME_*` environment variables, the project's
+    // `.pyrocosm/fume/config.tel` — resolved from the INVOCATION's working directory (each
+    // daemon client has its own), never the daemon process's — and the user's own.
+    // The completions executive supervises under the global `threads`, a capability it declares it
+    // uses; `cli` takes a pure executive, so it is vouched pure here.
+    given executive: exoskeleton.executives.CompletionsExecutive =
+      scala.caps.unsafe.unsafeAssumePure(executives.completionsExecutive)
 
-        completeTerms(classpath, rest)
+    cli:
+      Fume.standard:
+        dispatch()
 
-        execute:
-          given Stdio = summon[Invocation].stdio
-          val machine: Optional[Machine] = on.let { name => known.seek(_.name == name) }
+// The dispatch is a method rather than the body of the `cli` block: that block runs on a
+// connection's task and may retain only what is durable, a rule the inline body's closures (every
+// `safely`, the tasks a run spawns) fail under, where a method's are typed on their own.
+private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, Configurator): Execution =
+  // The run command's whole body, shared by `fume run …` and the BARE `fume …` (running is
+  // the default when no subcommand is given).
+  def runSelection(rest: List[Argument]) =
+    val classpath: Optional[LocalClasspath] = classpathSetting()
+    val suite: Prospective[Text] = suiteFlag(classpath)
+    val kinds: List[Text] = selectedKinds + kindSetting().lay(Nil: List[Text])(List(_))
+    val words: List[Text] = Selection.words(rest.map { (argument: Argument) => argument() })
+    val tags: Prospective[Repeated] = tagFlag(classpath)
+    val axes: Prospective[Repeated] = axisFlag(classpath, words)
+    val excludes: Prospective[Repeated] = excludeFlag(classpath)
+    val failFast: Boolean = ui.FailFast().or(false)
+    val maxLoad: Optional[Text] = ui.MaxLoad()
+    val durationScale: Optional[Text] = ui.DurationScale()
+    val target: Optional[Text] = ui.Target()
+    val fork: Boolean = ui.Fork().present
+    val terms: List[Text] = selectionTerms(rest)
+    val known: List[Machine] = machines()
+    val on: Optional[Text] = onSetting(known)
+    val retention: Int = ui.Retention() match
+      case text: Text => safely(text.as[Int]).or(200)
+      case _          => 200
+    val workspace: Text = summon[Cli].workingDirectory.directory()
 
-          classpath match
-            case _ if on.present && machine.absent =>
-              Render.announce(t"no machine named ${on.or(t"")} is configured")
-              NoMachine
+    completeTerms(classpath, rest)
 
-            case classpath: LocalClasspath =>
-              // A scoped path (`threads/0a48bc`) is fume's own form of term, resolved here to
-              // the ids it leads to, which is what the suites — and everything below — read.
+    execute:
+      given Stdio = summon[Invocation].stdio
+      val machine: Optional[Machine] = on.let { name => known.seek(_.name == name) }
+
+      classpath match
+        case _ if on.present && machine.absent =>
+          Render.announce(t"no machine named ${on.or(t"")} is configured")
+          NoMachine
+
+        case classpath: LocalClasspath =>
+          // A scoped path (`threads/0a48bc`) is fume's own form of term, resolved here to
+          // the ids it leads to, which is what the suites — and everything below — read.
+          val selectionArgs: List[Text] =
+            Suites.index(classpath).resolve:
+              Selection.lower
+                ( kinds,
+                  tags().lay(Nil: List[Text])(_.values),
+                  axes().lay(Nil: List[Text])(_.values),
+                  excludes().lay(Nil: List[Text])(_.values),
+                  terms )
+
+          // The suites to run: those the selection reaches, by the classpath's index of
+          // tests, so that a selection naming one test runs the suite declaring it and not
+          // the body of every other (see `Suites.reached`). A selection reaching no suite
+          // is the run every suite would have reported nothing for: it passes, and says so.
+          val discovered: List[Text] = Suites.discover(classpath)
+          val chosen: Optional[Text] = suite()
+          val suites: List[Text] = selectSuites(classpath, chosen, selectionArgs)
+
+          if discovered.nil || chosen.lay(false) { chosen => !discovered.has(chosen) } then
+            Render.announce(t"no test suites were found on the classpath")
+            NoSuites
+          else if suites.nil then
+            Render.announce(t"no suite on the classpath declares a test the selection admits")
+            Exit.Ok
+          else
+            // A positive factor becomes probably's `--scale=<factor>`; anything else is
+            // reported and dropped, like `--max-load` above, so that a mistyped multiplier
+            // costs a warning rather than a run. The factor is checked here but forwarded
+            // VERBATIM — the text the user wrote is what the suite parses, so no rounding
+            // or reformatting can creep in on the way.
+            val scaleTerm: Optional[Text] =
+              durationScale.lay(Unset: Optional[Text]): text =>
+                if safely(text.as[Double]).lay(false)(_ > 0.0) then t"--scale=$text" else Unset
+
+            if durationScale.present && scaleTerm.absent
+            then Render.announce(t"--duration-scale must be a positive number; ignoring it")
+
+            if durationScale.present && target.present
+            then Render.announce
+                   (t"--target and --duration-scale are mutually exclusive; using --duration-scale")
+
+            val width: Int = terminalWidth()
+            val terse: Boolean = fume.GithubActions.terse
+            val tty: Boolean = summon[Resident].cliInput == ethereal.Terminus.Terminal
+
+            import probates.cancelProbate
+            import denominative.dysasymptotics.linearSize
+
+            if chosen.absent && suites.size < discovered.size
+            then Render.announce(t"the selection reaches ${suites.size} of ${discovered.size} suites")
+
+            // The board's frontend drives the terminal through the invocation's console, a
+            // tracked capability sealed here for the run, as flame does for its commands.
+            given Console = scala.caps.unsafe.unsafeAssumePure(summon[Cli])
+
+            // Ctrl+C at the client arrives here as a trapped SIGINT: the current suite's
+            // event consumption stops, the partial report renders, and no further suite
+            // starts. (The suite's threads — and any measurement JVMs a staged benchmark
+            // has spawned — are cancelled, not awaited.)
+            val aborted: Atomic[Boolean] = Atomic(false)
+
+            trap:
+              case profanity.Signal(Interrupt.Int, _, _, _) =>
+                aborted() = true
+                SignalResponse.Accept
+
+            // ONE model and ONE board for the whole run: every suite's events fold into the
+            // same model, so the progress gauge counts every scheduled test of the run and
+            // the report renders once, at the end, grouped by suite.
+            //
+            // The live board, shown in the terminal by Pyrocosm's frontend, is skipped in
+            // terse mode (CI, Claude Code), where events fold quietly, and for a piped
+            // invocation (the launcher reports whether the client is on a terminal), which
+            // renders once at the end instead. It is built whenever someone can see it: on
+            // this terminal, or through the dashboard `fume serve` is serving.
+            if fork && machine.present
+            then Render.announce(t"--fork does not apply to a remote run; ignoring it")
+
+            // `--fork` runs each suite in a JVM of its own, in the invocation's directory and
+            // environment, where in-process a suite sees the daemon's, which belong to no
+            // invocation. A suite whose Probably has `probably.Standalone` streams its events
+            // from there into the same model and board as an in-process one; an older one is
+            // forked the legacy way, and renders its own report, so there is no board.
+            val loader: Classloader = classpath.classloader(Classloader.Delegation.Preferential)
+            val legacyFork: Boolean = fork && !EventStream.forkable(loader)
+
+            val model = Model()
+            val shown: Boolean = !terse && tty && !legacyFork
+
+            // The run's name, as its record will have it: the invocation's directory.
+            val title: Text = RunRecord.name(workspace, t"${suites.size} suites")
+
+            // The run's progress, forecast from the last run of this classpath where it can
+            // be: the board's status line, ticking as the suites go by.
+            //
+            // Where the last run is no guide to how many tests there will be — a suite it
+            // never ran, or any suite once the selection narrows the run — the count is
+            // what the classpath's index of tests declares for the selection, which costs
+            // a read of the index and runs nothing.
+            val forecast: Forecasts.Forecast = Forecasts.load(classpath(), Forecasts.directory)
+            val narrowed: Boolean = !selectionArgs.nil
+            val index: Index = Suites.index(classpath)
+
+            def declares(suite: Text): (Text, Int) =
+              suite -> index.tests(suite).count(Index.admits(_, selectionArgs))
+
+            val declared: Map[Text, Int] =
+              suites.filter { suite => index.knows(suite) && (narrowed || !forecast.known(suite)) }
+              . map(declares).to[Map]
+
+            val progress: Progress = Progress(suites, forecast, declared)
+
+            val board: Optional[fume.Board] =
+              if (shown || Server.serving) && !legacyFork then fume.Board(model, title, progress)
+              else Unset
+
+            // The listing pre-pass over every suite: each runs with `--list` on the event
+            // protocol, emitting one `TestScheduled` per admitted test — with its real ref,
+            // so paths group correctly whatever characters the names contain. Listing still
+            // RUNS every suite body (only the assertions are skipped), so it is done only
+            // when a `--target` budget has to be priced from the schedule — never merely to
+            // seed the board, whose rows appear as the suites stream. The schedule also seeds
+            // the model, and decides — once, for the whole classpath — whether the suites
+            // can stream at all: `false` sends the run down the legacy path without a board.
+            //
+            // The suites stream through ONE classloader, here and in the run below, when
+            // their Probably allows it (`EventStream.reentrant`): a suite memoizing its
+            // runner on first use — and a suite that INVOKES another top-level suite as a
+            // nested one (as proscenium's does) memoizing that suite's runner too, so a later
+            // invocation in the same loader would report nothing — is what a fresh loader per
+            // suite guarded against, and older suites still get one.
+            val wantsBudget: Boolean = target.present && scaleTerm.absent
+
+            val shared: Optional[Classloader] =
+              if EventStream.reentrant(loader) then loader else Unset
+
+            // One suite's run on the event protocol: in-process, or with `--fork` in a JVM of
+            // its own.
+            def streamed(suite: Text, args: List[Text])
+              ( sink:     EventStream.Sink^,
+                abort:    () => Boolean,
+                captured: (Text, Text) => Unit )
+            :   Optional[EventStream.Outcome] =
+
+              if fork then EventStream.forked(classpath, suite, args)(sink, abort, captured)
+              else EventStream.frames(classpath, suite, args, shared)(sink, abort, captured)
+
+            val schedule: scala.collection.mutable.ListBuffer[TestEvent.TestScheduled] =
+              scala.collection.mutable.ListBuffer()
+
+            val listed: Optional[Boolean] =
+              if legacyFork || !wantsBudget then Unset else
+                Render.announce(t"pricing the budget: listing ${suites.size} suites")
+
+                def collect(event: TestEvent): Unit =
+                  model.handle(event)
+
+                  event match
+                    case scheduled: TestEvent.TestScheduled =>
+                      schedule.append(scheduled)
+                      model.listed()
+
+                    case _ =>
+                      ()
+
+                // The abort thunk is passed explicitly: the DEFAULT argument's root
+                // capability cannot flow into `safely`'s enclosing function under capture
+                // checking.
+                def recur(remaining: List[Text]): Boolean = remaining match
+                  case head :: tail =>
+                    Render.announce(t"  listing $head")
+                    model.enter(head)
+
+                    val outcome: Optional[EventStream.Outcome] =
+                      safely:
+                        streamed(head, t"--list" :: selectionArgs)
+                          ( EventStream.Sink.decoding(collect(_)), () => false, (_, _) => () )
+
+                    outcome match
+                      case EventStream.Outcome.Completed(_) => recur(tail)
+                      case _                                => false
+
+                  case _ =>
+                    true
+
+                recur(suites)
+
+            // With a budget (and no explicit factor), the schedule prices the selection and
+            // the factor is derived. A budget that buys nothing — no timed tests admitted,
+            // or no suite able to stream its schedule — changes nothing.
+            val budgetTerm: Optional[Text] =
+              if !wantsBudget then Unset else
+                target.let(Budget.parse(_)).lay(Unset: Optional[Text]): nanos =>
+                  val priced: Long = Budget.expected(schedule.toList.to(List))
+
+                  if priced == 0L then
+                    Render.announce
+                      (t"the selection has no timed measurements; ignoring --target")
+                    Unset
+                  else
+                    val factor: Text = Budget.factor(nanos, priced)
+                    Render.announce:
+                      t"the selection expects ${Budget.show(priced)} of measurement; scaling by $factor to fit ${Budget.show(nanos)}"
+                    t"--scale=$factor"
+
+            if target.present && scaleTerm.absent && budgetTerm.absent && target.let(Budget.parse(_)).absent
+            then Render.announce(t"--target must be a positive duration such as 90, 45s or 10m; ignoring it")
+
+            val scaleTerms: List[Text] =
+              scaleTerm.or(budgetTerm).lay(Nil: List[Text])(List(_))
+
+            // One worker behind the traversal, when the suites' Probably queues (see
+            // `EventStream.queued`): each suite's code between tests runs once, its rows
+            // appear as it is traversed, and declaration order is kept.
+            val workerTerms: List[Text] =
+              if !legacyFork && EventStream.queued(loader) then List(t"--workers=1") else Nil
+
+            val args: List[Text] = scaleTerms + workerTerms + selectionArgs
+
+            // The load gate, if `--max-load` asked for one. It is entered AFTER the signal
+            // trap above, so Ctrl+C during the wait sets `aborted` and the run below then
+            // finishes immediately without starting a suite. A value that does not parse
+            // (or is not positive) is reported and ignored rather than failing the run: the
+            // gate is an optimisation for measurement quality, never a precondition.
+            val threshold: Optional[Double] =
+              maxLoad.lay(Unset: Optional[Double]): text =>
+                safely(text.as[Double]).lay(Unset: Optional[Double]): value =>
+                  if value > 0.0 then value else Unset
+
+            if maxLoad.present && threshold.absent
+            then Render.announce(t"--max-load must be a positive number; not waiting")
+
+            threshold.let(Load.settle(_, width, tty, aborted)).unit
+
+            // The run is entered in the daemon's journal for its whole duration: it moves
+            // to the completed list at the end, whichever way it ends — and persisted in
+            // the runs directory from this moment, with each suite's frames beside it.
+            val journalId: Text =
+              Journal.start
+                ( workspace,
+                  summon[Resident].pid.value.show,
+                  Invoker.detect,
+                  classpath().cut(t":"),
+                  args,
+                  suites,
+                  machine.let(_.name).or(Machine.Identity.local.hostname) )
+
+            Runs.prune(retention)
+            Server.open(journalId, model)
+            board.let { board => Server.attach(journalId, board) }
+
+            // Each suite's number in the run, which names its files in the run directory.
+            val numbers: Map[Text, Int] =
+              suites.indexed.map { (suite, ordinal) => suite -> (ordinal.n0 + 1) }.to[Map]
+
+            def number(suite: Text): Int = numbers(suite).or(0)
+
+            // The frontend holds the run's monitor and its terminal-error tactic, which
+            // outlive it; it is vouched pure so it can be held and stopped from here. The
+            // board opens a moment into the run, so a run that finishes at once never
+            // flashes the alternate screen, and stays up until the LAST suite has streamed
+            // (`model.finish()` below). Leaving it (Escape, Ctrl+C or Ctrl+D) before then
+            // aborts the run.
+            val frontend: Optional[pyrocosm.TerminalFrontend] = if !shown then Unset else board.let: _ =>
+              import strategies.throwUnsafely
+              import fume.Figures.measurable
+              import tableStyles.thickTableStyle
+              import palettes.solarizedDarkGaugePalette
+              scala.caps.unsafe.unsafeAssumePure
+                (pyrocosm.TerminalFrontend(Occupancy.Fullscreen))
+
+            // Fulfilled when the board has closed and the terminal is restored, so the
+            // report below prints onto the ordinary screen.
+            val closed: Promise[Unit] = Promise()
+
+            // The board's own repaint task: ten times a second at most, whenever events have
+            // marked it, until the run is over. The event consumer only marks.
+            board.let: board =>
+              async:
+                var tick: Int = 0
+                while !model.finished do
+                  board.repaint(force = tick%10 == 0)
+                  tick += 1
+                  snooze(0.1*Second)
+
+              ()
+
+            frontend.let: frontend =>
+              async:
+                try
+                  snooze(0.3*Second)
+                  board.let: board =>
+                    if !model.finished then
+                      frontend.run(board.interface):
+                        case pyrocosm.Event.Closed => if !model.finished then aborted() = true
+                        case _                     => ()
+                finally closed.offer(())
+
+            // A handler failure (the model or the board threw) per suite, reported once the
+            // board has left the alternate screen so the trace is not lost with it.
+            val consumerFailures: scala.collection.mutable.ListBuffer[(Text, Throwable)] =
+              scala.collection.mutable.ListBuffer()
+
+            // What each suite printed through the JVM's streams, kept off the terminal
+            // while the board may be up, and logged once the run is over.
+            val captures: scala.collection.mutable.ListBuffer[Captures.Captured] =
+              scala.collection.mutable.ListBuffer()
+
+            // What a suite printed outside its report, stored in the run directory as the
+            // suite ends; whether it printed anything is recorded with the suite.
+            def captureOf(suite: Text): Boolean =
+              captures.find(_.suite == suite) match
+                case scala.Some(captured) => Runs.capture(journalId, number(suite), captured)
+                case _                    => false
+
+            // The name of a suite's frame file, once its writer was opened.
+            def eventsOf(suite: Text, writer: Optional[Runs.Writer]): Optional[Text] = writer match
+              case _: Runs.Writer => Runs.eventsFile(number(suite))
+              case _              => Unset
+
+            // The LEGACY loop: each suite runs through `Suite#invoke` in-process (or, with
+            // `--fork`, in its own JVM) and renders its own report, so only the verdict —
+            // its exit status — reaches fume. Also the tail of an event run whose classpath
+            // turned out unable to stream.
+            def legacyRun(remaining: List[Text], failures: Int, ran: Int): (Int, Int) =
+              remaining match
+                case _ if aborted() =>
+                  (failures, ran)
+
+                case head :: tail =>
+                  Render.announce(t"running $head")
+                  Journal.began(journalId, head)
+                  progress.begin(head)
+                  val suiteStarted: Instant over Unix = now()
+                  val passed: Boolean = invokeSuite(classpath, head, args, fork, journalId) == Exit.Ok
+                  Journal.record(journalId, head, passed, Unset, suiteStarted, Unset, false)
+                  progress.end(head)
+                  Render.announce(if passed then t"$head: passed" else t"$head: FAILED")
+                  val failures2 = if passed then failures else failures + 1
+
+                  if !passed && failFast then (failures2, ran + 1)
+                  else legacyRun(tail, failures2, ran + 1)
+
+                case _ =>
+                  (failures, ran)
+
+            // The EVENT loop: each suite streams, from its own classloader, into the one
+            // model. A suite's own totals — for the journal, and for the empty-selection
+            // rule — are the difference between the document before and after it ran.
+            // Yields the suites left unrun when the classpath proves unable to stream (only
+            // ever on the first suite, when no listing pass decided it earlier), for the
+            // legacy loop.
+            def eventRun(remaining: List[Text], failures: Int, ran: Int)
+            :   (Int, Int, List[Text]) =
+
+              remaining match
+                case _ if aborted() =>
+                  (failures, ran, Nil: List[Text])
+
+                case head :: tail =>
+                  // The board owns the screen while it is up; a line printed beneath it
+                  // would be lost when the screen is restored.
+                  if board.absent then Render.announce(t"running $head")
+                  Journal.began(journalId, head)
+                  progress.begin(head)
+                  val suiteStarted: Instant over Unix = now()
+                  val before: Model.State = model.state()
+                  val beforeTotals: Doc.Totals = Documenting.totals(before)
+                  model.enter(head)
+
+                  // The frames are teed into the run directory as they arrive.
+                  val writer: Optional[Runs.Writer] = Runs.writer(journalId, number(head))
+
+                  val sink: EventStream.Sink =
+                    Runs.tee
+                      ( writer,
+                        EventStream.Sink.decoding: event =>
+                          model.handle(event)
+                          board.let(_.refresh()) )
+
+                  val outcome: Optional[EventStream.Outcome] =
+                    try
+                      streamed(head, args)
+                        ( sink,
+                          () => aborted(),
+                          (out, err) => captures.append(Captures.Captured(head, out, err)) )
+                    finally writer.let(_.close())
+
+                  def next(passed: Boolean, totals: Optional[Doc.Totals]): (Int, Int, List[Text]) =
+                    Journal.record
+                      ( journalId, head, passed, totals, suiteStarted, eventsOf(head, writer),
+                        captureOf(head) )
+                    progress.end(head)
+                    val failures2 = if passed then failures else failures + 1
+
+                    if !passed && failFast then (failures2, ran + 1, Nil: List[Text])
+                    else eventRun(tail, failures2, ran + 1)
+
+                  outcome match
+                    case EventStream.Outcome.Completed(exit) =>
+                      val after: Model.State = model.state()
+                      val suiteTotals: Doc.Totals = Documenting.totals(after) - beforeTotals
+                      val suiteFatal: Boolean = after.fatals.size > before.fatals.size
+
+                      // A suite reports failure (exit 1) when NOTHING was admitted: right
+                      // when it is invoked alone, wrong when fume fans a kind filter
+                      // (`--bench`) across every suite on the classpath — a suite with no
+                      // benchmarks is not a failing suite.
+                      val emptySelection: Boolean =
+                        exit == 1 && suiteTotals.total == 0 && !suiteFatal
+
+                      next(exit == 0 || emptySelection, suiteTotals)
+
+                    case EventStream.Outcome.Failed(error) =>
+                      consumerFailures.append((head, error))
+                      next(false, Unset)
+
+                    case EventStream.Outcome.Incompatible(theirs, ours) =>
+                      Render.announce
+                        (t"the classpath was built against an incompatible Soundness; using the legacy run")
+                      Render.announce(t"  the suites' event schema is $theirs")
+                      Render.announce(t"  fume's is                   $ours")
+                      (failures, ran, remaining)
+
+                    case _ =>
+                      Render.announce(t"the classpath predates event streaming; using the legacy run")
+                      (failures, ran, remaining)
+
+                case _ =>
+                  (failures, ran, Nil: List[Text])
+
+            // The REMOTE loop: the whole selection goes to the machine's worker, which runs
+            // the suites and relays each one's event frames back; they fold into the same
+            // model, board and journal as a local suite's, the schema fingerprint checked
+            // here against fume's own Probably exactly as `EventStream` checks a local
+            // suite's. Yields as `eventRun` does, with nothing left for the legacy loop.
+            def remoteRun(machine: Machine): (Int, Int, List[Text]) =
+              Render.announce(t"connecting to ${machine.name} (${machine.hosts.join(t", ")})")
+
+              // Each entry's digest and bytes: a directory is bundled into a jar first.
+              val prepared: List[(Blobs.Entry, Data)] =
+                classpath.entries.bind:
+                  case Classpath.Entry.Jar(path)       => List(unsafely(Blobs.prepare(path.as[Path on Linux], path)))
+                  case Classpath.Entry.Directory(path) => List(unsafely(Blobs.prepare(path.as[Path on Linux], path)))
+                  case _                               => Nil
+
+              // Per-suite state as the frames arrive, in one object so the consumer task
+              // captures a single reference rather than a set of mutable locals.
+              val state: RemoteState = RemoteState(Documenting.totals(model.state()))
+
+              def began(suite: Text): Unit =
+                if board.absent then Render.announce(t"running $suite on ${machine.name}")
+                Journal.began(journalId, suite)
+                progress.begin(suite)
+                state.suiteStarted = now()
+                val before: Model.State = model.state()
+                state.beforeTotals = Documenting.totals(before)
+                state.beforeFatals = before.fatals.size
+                model.enter(suite)
+                state.current = suite
+                state.expectingFingerprint = true
+                state.incompatible = false
+                state.writer = Runs.writer(journalId, number(suite))
+
+              def frame(suite: Text, data: Data): Unit =
+                state.writer.let(_.frame(data))
+
+                if state.expectingFingerprint then
+                  state.expectingFingerprint = false
+                  if !Array.same(data, probably.Streamer.fingerprint) then
+                    state.incompatible = true
+                    Render.announce(t"$suite was built against an incompatible Soundness; its events cannot be read")
+                    Render.announce(t"  the suite's event schema is ${data.serialize[Hex]}")
+                    Render.announce(t"  fume's is                   ${probably.Streamer.fingerprint.serialize[Hex]}")
+                else if !state.incompatible then
+                  model.handle(probably.Streamer.read(data))
+                  board.let(_.refresh())
+
+              def ended(suite: Text, outcome: Text, exit: Int, detail: Text): Unit =
+                val after: Model.State = model.state()
+                val suiteTotals: Doc.Totals = Documenting.totals(after) - state.beforeTotals
+                val suiteFatal: Boolean = after.fatals.size > state.beforeFatals
+                val emptySelection: Boolean = exit == 1 && suiteTotals.total == 0 && !suiteFatal
+
+                val passed: Boolean = outcome match
+                  case Relay.completed => !state.incompatible && (exit == 0 || emptySelection)
+                  case Relay.failed =>
+                    Render.announce(t"the worker's event consumer failed while $suite was running")
+                    detail.cut(t"\n").each { (line: Text) => Render.announce(t"  $line") }
+                    false
+                  case _ =>
+                    Render.announce(t"$suite cannot stream events, so the worker did not run it")
+                    false
+
+                state.writer.let(_.close())
+
+                Journal.record
+                  ( journalId, suite, passed, suiteTotals, state.suiteStarted,
+                    eventsOf(suite, state.writer), captureOf(suite) )
+
+                state.writer = Unset
+                progress.end(suite)
+                state.current = Unset
+                state.ran += 1
+                if !passed then state.failures += 1
+                if !passed && failFast then state.stop = true
+
+              val outcome: scala.Either[Peer.Error.Reason, Unit] =
+                Peer.exchange[Relay, Unit](machine, t"fume", Fume.version, Relay.codec, Relay.port): session =>
+                    val identity = session.peer.identity
+
+                    Render.announce:
+                      t"running on ${machine.name}: ${identity.os} ${identity.arch}, ${identity.cores} cores, fume ${session.peer.version}"
+
+                    session.send(Relay.Plan(prepared.map(_(0)), suites, args, maxLoad))
+
+                    session.receive() match
+                      case Channel.Frame.Message(Relay.Need(digests)) =>
+                        val shipping: List[(Blobs.Entry, Data)] =
+                          prepared.filter { (entry, _) => digests.has(entry.digest) }
+
+                        if !shipping.nil then
+                          val bytes: Long = shipping.fold(0L) { (sum, entry) => sum + entry(1).length }
+                          Render.announce(t"shipping ${shipping.size} of ${prepared.size} classpath entries (${bytes/1024} KiB)")
+
+                        shipping.each: (entry, data) =>
+                          Blobs.chunks(data).each: (offset, chunk) =>
+                            session.send(Relay.Blob(entry.digest, offset, offset + chunk.length >= data.length), chunk)
+
+                        session.send(Relay.Start)
+
+                        // Frames are consumed on their own task, so this thread can notice
+                        // an abort and forward it while a receive blocks.
+                        val consumer = async:
+                          def recur(): Unit = session.receive() match
+                            case Channel.Frame.Message(Relay.Began(suite)) =>
+                              began(suite)
+                              recur()
+
+                            case Channel.Frame.Message(Relay.Frame(suite)) =>
+                              session.receive() match
+                                case Channel.Frame.Raw(data) =>
+                                  frame(suite, data)
+                                  recur()
+
+                                case _ =>
+                                  Render.announce(t"the connection to ${machine.name} was lost")
+
+                            case Channel.Frame.Message(Relay.Captured(suite, out, err)) =>
+                              captures.append(Captures.Captured(suite, out, err))
+                              recur()
+
+                            case Channel.Frame.Message(Relay.Ended(suite, outcome, exit, detail)) =>
+                              ended(suite, outcome, exit, detail)
+                              recur()
+
+                            case Channel.Frame.Message(Relay.Rejected(reason)) =>
+                              Render.announce(t"${machine.name} rejected the run: $reason")
+
+                            case Channel.Frame.Message(Relay.Done) =>
+                              ()
+
+                            case Channel.Frame.Closed =>
+                              Render.announce(t"the connection to ${machine.name} was lost")
+
+                            case _ =>
+                              recur()
+
+                          recur()
+
+                        def drained(): Boolean =
+                          scala.caps.unsafe.unsafeAssumeSeparate(safely(consumer.await(0.05*Second)).present)
+
+                        def spin(): Unit =
+                          if !drained() then
+                            if (aborted() || state.stop) && !state.abortSent then
+                              state.abortSent = true
+                              session.send(Relay.Abort)
+
+                            spin()
+
+                        spin()
+
+                      case Channel.Frame.Message(Relay.Rejected(reason)) =>
+                        Render.announce(t"${machine.name} rejected the run: $reason")
+
+                      case _ =>
+                        Render.announce(t"the connection to ${machine.name} was lost")
+
+              outcome match
+                case scala.Left(reason) => Render.announce(Peer.explain(reason))
+                case _                  => ()
+
+              // A suite left open by a lost connection is recorded as failed.
+              state.current.let: suite =>
+                state.writer.let(_.close())
+                Journal.record(journalId, suite, false, Unset, state.suiteStarted, Unset, false)
+                progress.end(suite)
+                state.ran += 1
+                state.failures += 1
+
+              (state.failures, state.ran, Nil: List[Text])
+
+            // The streaming decision is made ONCE per classpath: by the listing pass when it
+            // ran, otherwise by the first suite of the run. Whichever way, the event suites'
+            // report renders first and the tail runs legacy.
+            val result: (Int, Int, Optional[Doc.Totals]) =
+              if machine.present then
+                val (failures, ran, _) = machine.let(remoteRun(_)).or((0, 0, Nil: List[Text]))
+                model.finish()
+
+                frontend.let: frontend =>
+                  frontend.stop()
+                  safely(closed.attend())
+
+                val document = Documenting.document(model.state())
+
+                board.let: board =>
+                  if Server.serving then
+                    board.refresh(force = true)
+                    val blocks: List[pyrocosm.Block] = Blocks.document(document, board.figures)
+                    Server.detach(journalId, title, blocks + Captures.blocks(captures.to(List)))
+                  else
+                    Server.detach(journalId, title, Nil)
+
+                captures.each: captured =>
+                  if !captured.empty then
+                    val kept: Text = Captures.record(captured).lay(t"not kept"): path =>
+                      t"kept in ${path.encode}"
+
+                    Render.announce
+                      ( t"${captured.suite} printed ${captured.lines} lines outside its report; $kept" )
+
+                val totals: Optional[Doc.Totals] =
+                  if ran == 0 then Unset else
+                    if aborted() then Render.announce(t"aborted; the partial report follows")
+                    Render.suite(document, width, terse)
+                    document.totals
+
+                (failures, ran, totals)
+              else if legacyFork then
+                val (failures, ran) = legacyRun(suites, 0, 0)
+                (failures, ran, Unset)
+              else if listed == false then
+                Render.announce
+                  (t"the classpath cannot stream test events; using the legacy run")
+                val (failures, ran) = legacyRun(suites, 0, 0)
+                (failures, ran, Unset)
+              else
+                val (failures, ran, rest) = eventRun(suites, 0, 0)
+                model.finish()
+
+                frontend.let: frontend =>
+                  frontend.stop()
+                  safely(closed.attend())
+
+                val document = Documenting.document(model.state())
+
+                // The dashboard keeps a finished run's report; a run nobody is serving has
+                // no need of one more full paint of the board.
+                board.let: board =>
+                  if Server.serving then
+                    board.refresh(force = true)
+                    val blocks: List[pyrocosm.Block] = Blocks.document(document, board.figures)
+                    Server.detach(journalId, title, blocks + Captures.blocks(captures.to(List)))
+                  else
+                    Server.detach(journalId, title, Nil)
+
+                // A suite's stray output is a line in the report, not the output itself:
+                // the log has that, and the terminal has just been the board's.
+                captures.each: captured =>
+                  if !captured.empty then
+                    val kept: Text = Captures.record(captured).lay(t"not kept"): path =>
+                      t"kept in ${path.encode}"
+
+                    Render.announce
+                      ( t"${captured.suite} printed ${captured.lines} lines outside its report; $kept" )
+
+                consumerFailures.each: (suite, error) =>
+                  // Written to a file first: the terminal may be mid-repaint, and a trace
+                  // on stderr inside the alternate buffer is lost when the board closes.
+                  import codepages.utf8Codepage
+                  import filesystemBackends.javaBaseFilesystem
+                  import temporaryDirectories.systemTemporaryDirectory
+
+                  val trace: Text = error.stackTrace.show
+
+                  val path: Optional[Path on Linux] = safely:
+                    val file: Path on Linux = temporaryDirectory[Path on Linux] / "fume-failure.log"
+                    file.write(trace)
+                    file
+
+                  Render.announce(t"the event consumer failed while $suite was running; the suite was stopped")
+
+                  path.let: path =>
+                    Render.announce(t"the stack trace is in ${path.encode}, and follows:")
+
+                  trace.cut(t"\n").each { (line: Text) => Out.println(line) }
+
+                val totals: Optional[Doc.Totals] =
+                  if ran == 0 then Unset else
+                    if aborted() then Render.announce(t"aborted; the partial report follows")
+                    Render.suite(document, width, terse)
+                    document.totals
+
+                val (failures2, ran2) =
+                  if rest.nil then (failures, ran) else legacyRun(rest, failures, ran)
+
+                (failures2, ran2, totals)
+
+            val (failures, ran, totals) = result
+
+            val outcome: Journal.Outcome =
+              if aborted() then Journal.Outcome.Aborted
+              else if failures == 0 then Journal.Outcome.Passed
+              else Journal.Outcome.Failed
+
+            Journal.finish(journalId, outcome, totals)
+            Server.close(journalId)
+
+            // What this run taught about its suites, for the next run's forecast.
+            Journal.completed.seek(_.id == journalId).let: run =>
+              Forecasts.save(classpath(), run.record.suites, Forecasts.directory)
+
+            // The banner renders over the aggregate of every event-run suite; when every
+            // suite ran legacy (each rendered its own report already), only the summary
+            // line prints.
+            totals.let(Render.finale(_, width, terse))
+
+            // `0 of 0 suites passed` would read like a clean run; nothing ran at all. This
+            // is the shape of an abort — Ctrl+C at the load gate, or before the first suite
+            // began — and of a selection that admitted no suite.
+            Render.announce:
+              if ran == 0 then t"no tests were run"
+              else t"${ran - failures} of $ran suites passed"
+            if failures == 0 then Exit.Ok else TestsFailed
+
+        case _ =>
+          Render.announce(t"at least one --classpath must be specified")
+          NoClasspath
+
+  arguments match
+    // `fume -<flag>…` — a leading flag that `Fume.standard` did not consume (`--version` is
+    // handled there, before this dispatch is reached). This case fires only when the first
+    // token is a FLAG (`head` begins with `-`), which cannot be a subcommand.
+    //
+    // It is matched FIRST so that, when the word being completed is a flag, the subcommand
+    // patterns below are never evaluated. Matching a `Subcommand` also SUGGESTS it, and a
+    // suggestion at the cursor takes precedence over the flag list (`Completion`'s
+    // `cursorSuggestions` wins over `flagSuggestions`) — so trying the subcommands first
+    // would leave `fume --ver<TAB>` offering `run`/`list`/`watch`/`serve` and no flags at
+    // all. Ordering costs nothing at run time: a subcommand never begins with `-`, so no
+    // invocation changes meaning.
+    case Argument(head) :: _ if head.starts(t"-") =>
+      execute(usage())
+
+    // `fume run [-c CLASSPATH] [-s SUITE] [--test|--bench|--stress|--profile] [--fail-fast]
+    // [TERMS…]` — run every test, benchmark, stress test and profile admitted by the
+    // selection. The non-flag TERMS are raw Probably selection terms (6-hex-digit ids,
+    // monikers, name and path globs, `kind:` terms, and axis constraints such as
+    // `parser=jacinta`, `N=4..64` or `'N<32'` — the `<`/`>` forms need shell quoting),
+    // forwarded to each suite as written, but for a scoped path (`threads/0a48bc`), which
+    // fume resolves to the ids it leads to (`Index#resolve`); fume otherwise only prepends
+    // the `kind:` terms derived from the kind switches.
+    case ui.Run() :: rest =>
+      runSelection(rest)
+
+    // `fume list [-c CLASSPATH] [-s SUITE] [--test|--bench|--stress|--profile] [TERMS…]` —
+    // enumerate, without running anything, the tests admitted by the selection, in
+    // `probably.Suite`'s `--list` format: `<6-hex-id>  <kind>  <slash/joined/path>`, one per
+    // line. With `--axes`, two more columns follow — the tags, and the axes with the values
+    // (or bounds) the selection admits — from each suite's streamed schedule; with `--tags`,
+    // the distinct tags across the selection with how many tests carry each.
+    case ui.List() :: rest =>
+      val classpath: Optional[LocalClasspath] = classpathSetting()
+      val suite: Prospective[Text] = suiteFlag(classpath)
+      val kinds: List[Text] = selectedKinds + kindSetting().lay(Nil: List[Text])(List(_))
+      val words: List[Text] = Selection.words(rest.map { (argument: Argument) => argument() })
+      val tags: Prospective[Repeated] = tagFlag(classpath)
+      val axes: Prospective[Repeated] = axisFlag(classpath, words)
+      val excludes: Prospective[Repeated] = excludeFlag(classpath)
+      val showAxes: Boolean = ui.Axes().present
+      val showTags: Boolean = ui.Tags().present
+      val scan: Boolean = ui.Scan().present
+      val fork: Boolean = ui.Fork().present
+      val terms: List[Text] = selectionTerms(rest)
+
+      completeTerms(classpath, rest)
+
+      execute:
+        given Stdio = summon[Invocation].stdio
+        classpath match
+          case classpath: LocalClasspath =>
+            val suites: List[Text] = selectSuites(classpath, suite())
+
+            if suites.nil then
+              Render.announce(t"no test suites were found on the classpath")
+              NoSuites
+            else
               val selectionArgs: List[Text] =
                 Suites.index(classpath).resolve:
                   Selection.lower
@@ -333,967 +1145,223 @@ def runClient(): Unit =
                       excludes().lay(Nil: List[Text])(_.values),
                       terms )
 
-              // The suites to run: those the selection reaches, by the classpath's index of
-              // tests, so that a selection naming one test runs the suite declaring it and not
-              // the body of every other (see `Suites.reached`). A selection reaching no suite
-              // is the run every suite would have reported nothing for: it passes, and says so.
-              val discovered: List[Text] = Suites.discover(classpath)
-              val chosen: Optional[Text] = suite()
-              val suites: List[Text] = selectSuites(classpath, chosen, selectionArgs)
+              // The listing is read from the classpath's index of tests when it covers
+              // every suite asked for, so that nothing is run to make it: the index has
+              // every test's place, kind, moniker and tags. A test's axes are not in it,
+              // nor a test declared only as its suite runs, so `--axes` and `--scan` list
+              // by running each suite's body, as a classpath with no index always does.
+              val index: Index = Suites.index(classpath)
+              val indexed: Boolean = !scan && !showAxes && !fork && suites.all(index.knows(_))
 
-              if discovered.nil || chosen.lay(false) { chosen => !discovered.has(chosen) } then
-                Render.announce(t"no test suites were found on the classpath")
-                NoSuites
-              else if suites.nil then
-                Render.announce(t"no suite on the classpath declares a test the selection admits")
+              if indexed then
+                val tests: List[Index.Test] =
+                  suites.bind[List[Index.Test], Index.Test, List[Index.Test]]: suite =>
+                    index.tests(suite).filter(Index.admits(_, selectionArgs))
+
+                if showTags then
+                  tests.flatMap(_.tags).distinct.each: tag =>
+                    Out.println(t"$tag  ${tests.count(_.tags.has(tag))}")
+                else
+                  val listing: List[Text] = tests.map(_.listing)
+                  listing.each { line => Out.println(t"$line") }
+
+                val unlisted: Int =
+                  tests.count(_.dynamic) + suites.fold(0) { (count, suite) => count + index.open(suite) }
+
+                if unlisted > 0 then
+                  Render.announce:
+                    t"$unlisted declarations name their tests only as the suite runs; `fume list --scan` runs the suites to list them"
+
+                Exit.Ok
+              else if showAxes || showTags || scan then
+                // A suite that cannot stream its schedule lists as text: ids and paths,
+                // with no tags or axes to show.
+                val schedule: List[Suites.Scheduled] =
+                  suites.bind[List[Suites.Scheduled], Suites.Scheduled, List[Suites.Scheduled]]:
+                    suite => Suites.fetch(classpath, suite, selectionArgs)
+
+                if showTags then
+                  schedule.flatMap(_.tags).distinct.each: tag =>
+                    Out.println(t"$tag  ${schedule.count(_.tags.has(tag))}")
+
+                if showAxes then
+                  schedule.each: test =>
+                    val kind: Text = if test.kind == t"check" then t"test" else test.kind
+                    val tags: Text = if test.tags.nil then t"-" else test.tags.join(t",")
+                    val path: Text = test.ref.path.join(t"/")
+                    Out.println(t"${test.ref.id}  $kind  $path  $tags  ${Suggest.axesText(test.axes)}")
+
+                // `--scan` alone: the lines an indexed listing prints, from the run.
+                if !showTags && !showAxes then
+                  schedule.each: test =>
+                    val kind: Text = if test.kind == t"check" then t"test" else test.kind
+                    Out.println(t"${test.ref.id}  $kind  ${test.ref.path.join(t"/")}")
+
                 Exit.Ok
               else
-                // A positive factor becomes probably's `--scale=<factor>`; anything else is
-                // reported and dropped, like `--max-load` above, so that a mistyped multiplier
-                // costs a warning rather than a run. The factor is checked here but forwarded
-                // VERBATIM — the text the user wrote is what the suite parses, so no rounding
-                // or reformatting can creep in on the way.
-                val scaleTerm: Optional[Text] =
-                  durationScale.lay(Unset: Optional[Text]): text =>
-                    if safely(text.as[Double]).lay(false)(_ > 0.0) then t"--scale=$text" else Unset
-
-                if durationScale.present && scaleTerm.absent
-                then Render.announce(t"--duration-scale must be a positive number; ignoring it")
-
-                if durationScale.present && target.present
-                then Render.announce
-                       (t"--target and --duration-scale are mutually exclusive; using --duration-scale")
-
-                val width: Int = terminalWidth()
-                val terse: Boolean = fume.GithubActions.terse
-                val tty: Boolean = summon[Resident].cliInput == ethereal.Terminus.Terminal
-
-                import probates.cancelProbate
-                import denominative.dysasymptotics.linearSize
-
-                if chosen.absent && suites.size < discovered.size
-                then Render.announce(t"the selection reaches ${suites.size} of ${discovered.size} suites")
-
-                // The board's frontend drives the terminal through the invocation's console, a
-                // tracked capability sealed here for the run, as flame does for its commands.
-                given Console = scala.caps.unsafe.unsafeAssumePure(summon[Cli])
-
-                // Ctrl+C at the client arrives here as a trapped SIGINT: the current suite's
-                // event consumption stops, the partial report renders, and no further suite
-                // starts. (The suite's threads — and any measurement JVMs a staged benchmark
-                // has spawned — are cancelled, not awaited.)
-                val aborted: Atomic[Boolean] = Atomic(false)
-
-                trap:
-                  case profanity.Signal(Interrupt.Int, _, _, _) =>
-                    aborted() = true
-                    SignalResponse.Accept
-
-                // ONE model and ONE board for the whole run: every suite's events fold into the
-                // same model, so the progress gauge counts every scheduled test of the run and
-                // the report renders once, at the end, grouped by suite.
-                //
-                // The live board, shown in the terminal by Pyrocosm's frontend, is skipped in
-                // terse mode (CI, Claude Code), where events fold quietly, and for a piped
-                // invocation (the launcher reports whether the client is on a terminal), which
-                // renders once at the end instead. It is built whenever someone can see it: on
-                // this terminal, or through the dashboard `fume serve` is serving.
-                if fork && machine.present
-                then Render.announce(t"--fork does not apply to a remote run; ignoring it")
-
-                // `--fork` runs each suite in a JVM of its own, in the invocation's directory and
-                // environment, where in-process a suite sees the daemon's, which belong to no
-                // invocation. A suite whose Probably has `probably.Standalone` streams its events
-                // from there into the same model and board as an in-process one; an older one is
-                // forked the legacy way, and renders its own report, so there is no board.
-                val loader: Classloader = classpath.classloader(Classloader.Delegation.Preferential)
-                val legacyFork: Boolean = fork && !EventStream.forkable(loader)
-
-                val model = Model()
-                val shown: Boolean = !terse && tty && !legacyFork
-
-                // The run's name, as its record will have it: the invocation's directory.
-                val title: Text = RunRecord.name(workspace, t"${suites.size} suites")
-
-                // The run's progress, forecast from the last run of this classpath where it can
-                // be: the board's status line, ticking as the suites go by.
-                //
-                // Where the last run is no guide to how many tests there will be — a suite it
-                // never ran, or any suite once the selection narrows the run — the count is
-                // what the classpath's index of tests declares for the selection, which costs
-                // a read of the index and runs nothing.
-                val forecast: Forecasts.Forecast = Forecasts.load(classpath(), Forecasts.directory)
-                val narrowed: Boolean = !selectionArgs.nil
-                val index: Index = Suites.index(classpath)
-
-                def declares(suite: Text): (Text, Int) =
-                  suite -> index.tests(suite).count(Index.admits(_, selectionArgs))
-
-                val declared: Map[Text, Int] =
-                  suites.filter { suite => index.knows(suite) && (narrowed || !forecast.known(suite)) }
-                  . map(declares).to[Map]
-
-                val progress: Progress = Progress(suites, forecast, declared)
-
-                val board: Optional[fume.Board] =
-                  if (shown || Server.serving) && !legacyFork then fume.Board(model, title, progress)
-                  else Unset
-
-                // The listing pre-pass over every suite: each runs with `--list` on the event
-                // protocol, emitting one `TestScheduled` per admitted test — with its real ref,
-                // so paths group correctly whatever characters the names contain. Listing still
-                // RUNS every suite body (only the assertions are skipped), so it is done only
-                // when a `--target` budget has to be priced from the schedule — never merely to
-                // seed the board, whose rows appear as the suites stream. The schedule also seeds
-                // the model, and decides — once, for the whole classpath — whether the suites
-                // can stream at all: `false` sends the run down the legacy path without a board.
-                //
-                // The suites stream through ONE classloader, here and in the run below, when
-                // their Probably allows it (`EventStream.reentrant`): a suite memoizing its
-                // runner on first use — and a suite that INVOKES another top-level suite as a
-                // nested one (as proscenium's does) memoizing that suite's runner too, so a later
-                // invocation in the same loader would report nothing — is what a fresh loader per
-                // suite guarded against, and older suites still get one.
-                val wantsBudget: Boolean = target.present && scaleTerm.absent
-
-                val shared: Optional[Classloader] =
-                  if EventStream.reentrant(loader) then loader else Unset
-
-                // One suite's run on the event protocol: in-process, or with `--fork` in a JVM of
-                // its own.
-                def streamed(suite: Text, args: List[Text])
-                  ( sink:     EventStream.Sink^,
-                    abort:    () => Boolean,
-                    captured: (Text, Text) => Unit )
-                :   Optional[EventStream.Outcome] =
-
-                  if fork then EventStream.forked(classpath, suite, args)(sink, abort, captured)
-                  else EventStream.frames(classpath, suite, args, shared)(sink, abort, captured)
-
-                val schedule: scala.collection.mutable.ListBuffer[TestEvent.TestScheduled] =
-                  scala.collection.mutable.ListBuffer()
-
-                val listed: Optional[Boolean] =
-                  if legacyFork || !wantsBudget then Unset else
-                    Render.announce(t"pricing the budget: listing ${suites.size} suites")
-
-                    def collect(event: TestEvent): Unit =
-                      model.handle(event)
-
-                      event match
-                        case scheduled: TestEvent.TestScheduled =>
-                          schedule.append(scheduled)
-                          model.listed()
-
-                        case _ =>
-                          ()
-
-                    // The abort thunk is passed explicitly: the DEFAULT argument's root
-                    // capability cannot flow into `safely`'s enclosing function under capture
-                    // checking.
-                    def recur(remaining: List[Text]): Boolean = remaining match
-                      case head :: tail =>
-                        Render.announce(t"  listing $head")
-                        model.enter(head)
-
-                        val outcome: Optional[EventStream.Outcome] =
-                          safely:
-                            streamed(head, t"--list" :: selectionArgs)
-                              ( EventStream.Sink.decoding(collect(_)), () => false, (_, _) => () )
-
-                        outcome match
-                          case EventStream.Outcome.Completed(_) => recur(tail)
-                          case _                                => false
-
-                      case _ =>
-                        true
-
-                    recur(suites)
-
-                // With a budget (and no explicit factor), the schedule prices the selection and
-                // the factor is derived. A budget that buys nothing — no timed tests admitted,
-                // or no suite able to stream its schedule — changes nothing.
-                val budgetTerm: Optional[Text] =
-                  if !wantsBudget then Unset else
-                    target.let(Budget.parse(_)).lay(Unset: Optional[Text]): nanos =>
-                      val priced: Long = Budget.expected(schedule.toList.to(List))
-
-                      if priced == 0L then
-                        Render.announce
-                          (t"the selection has no timed measurements; ignoring --target")
-                        Unset
-                      else
-                        val factor: Text = Budget.factor(nanos, priced)
-                        Render.announce:
-                          t"the selection expects ${Budget.show(priced)} of measurement; scaling by $factor to fit ${Budget.show(nanos)}"
-                        t"--scale=$factor"
-
-                if target.present && scaleTerm.absent && budgetTerm.absent && target.let(Budget.parse(_)).absent
-                then Render.announce(t"--target must be a positive duration such as 90, 45s or 10m; ignoring it")
-
-                val scaleTerms: List[Text] =
-                  scaleTerm.or(budgetTerm).lay(Nil: List[Text])(List(_))
-
-                // One worker behind the traversal, when the suites' Probably queues (see
-                // `EventStream.queued`): each suite's code between tests runs once, its rows
-                // appear as it is traversed, and declaration order is kept.
-                val workerTerms: List[Text] =
-                  if !legacyFork && EventStream.queued(loader) then List(t"--workers=1") else Nil
-
-                val args: List[Text] = scaleTerms + workerTerms + selectionArgs
-
-                // The load gate, if `--max-load` asked for one. It is entered AFTER the signal
-                // trap above, so Ctrl+C during the wait sets `aborted` and the run below then
-                // finishes immediately without starting a suite. A value that does not parse
-                // (or is not positive) is reported and ignored rather than failing the run: the
-                // gate is an optimisation for measurement quality, never a precondition.
-                val threshold: Optional[Double] =
-                  maxLoad.lay(Unset: Optional[Double]): text =>
-                    safely(text.as[Double]).lay(Unset: Optional[Double]): value =>
-                      if value > 0.0 then value else Unset
-
-                if maxLoad.present && threshold.absent
-                then Render.announce(t"--max-load must be a positive number; not waiting")
-
-                threshold.let(Load.settle(_, width, tty, aborted)).unit
-
-                // The run is entered in the daemon's journal for its whole duration: it moves
-                // to the completed list at the end, whichever way it ends — and persisted in
-                // the runs directory from this moment, with each suite's frames beside it.
-                val journalId: Text =
-                  Journal.start
-                    ( workspace,
-                      summon[Resident].pid.value.show,
-                      Invoker.detect,
-                      classpath().cut(t":"),
-                      args,
-                      suites,
-                      machine.let(_.name).or(Machine.Identity.local.hostname) )
-
-                Runs.prune(retention)
-                Server.open(journalId, model)
-                board.let { board => Server.attach(journalId, board) }
-
-                // Each suite's number in the run, which names its files in the run directory.
-                val numbers: Map[Text, Int] =
-                  suites.indexed.map { (suite, ordinal) => suite -> (ordinal.n0 + 1) }.to[Map]
-
-                def number(suite: Text): Int = numbers(suite).or(0)
-
-                // The frontend holds the run's monitor and its terminal-error tactic, which
-                // outlive it; it is vouched pure so it can be held and stopped from here. The
-                // board opens a moment into the run, so a run that finishes at once never
-                // flashes the alternate screen, and stays up until the LAST suite has streamed
-                // (`model.finish()` below). Leaving it (Escape, Ctrl+C or Ctrl+D) before then
-                // aborts the run.
-                val frontend: Optional[pyrocosm.TerminalFrontend] = if !shown then Unset else board.let: _ =>
-                  import strategies.throwUnsafely
-                  import fume.Figures.measurable
-                  import tableStyles.thickTableStyle
-                  import palettes.solarizedDarkGaugePalette
-                  scala.caps.unsafe.unsafeAssumePure
-                    (pyrocosm.TerminalFrontend(Occupancy.Fullscreen))
-
-                // Fulfilled when the board has closed and the terminal is restored, so the
-                // report below prints onto the ordinary screen.
-                val closed: Promise[Unit] = Promise()
-
-                // The board's own repaint task: ten times a second at most, whenever events have
-                // marked it, until the run is over. The event consumer only marks.
-                board.let: board =>
-                  async:
-                    var tick: Int = 0
-                    while !model.finished do
-                      board.repaint(force = tick%10 == 0)
-                      tick += 1
-                      snooze(0.1*Second)
-
-                  ()
-
-                frontend.let: frontend =>
-                  async:
-                    try
-                      snooze(0.3*Second)
-                      board.let: board =>
-                        if !model.finished then
-                          frontend.run(board.interface):
-                            case pyrocosm.Event.Closed => if !model.finished then aborted() = true
-                            case _                     => ()
-                    finally closed.offer(())
-
-                // A handler failure (the model or the board threw) per suite, reported once the
-                // board has left the alternate screen so the trace is not lost with it.
-                val consumerFailures: scala.collection.mutable.ListBuffer[(Text, Throwable)] =
-                  scala.collection.mutable.ListBuffer()
-
-                // What each suite printed through the JVM's streams, kept off the terminal
-                // while the board may be up, and logged once the run is over.
-                val captures: scala.collection.mutable.ListBuffer[Captures.Captured] =
-                  scala.collection.mutable.ListBuffer()
-
-                // What a suite printed outside its report, stored in the run directory as the
-                // suite ends; whether it printed anything is recorded with the suite.
-                def captureOf(suite: Text): Boolean =
-                  captures.find(_.suite == suite) match
-                    case scala.Some(captured) => Runs.capture(journalId, number(suite), captured)
-                    case _                    => false
-
-                // The name of a suite's frame file, once its writer was opened.
-                def eventsOf(suite: Text, writer: Optional[Runs.Writer]): Optional[Text] = writer match
-                  case _: Runs.Writer => Runs.eventsFile(number(suite))
-                  case _              => Unset
-
-                // The LEGACY loop: each suite runs through `Suite#invoke` in-process (or, with
-                // `--fork`, in its own JVM) and renders its own report, so only the verdict —
-                // its exit status — reaches fume. Also the tail of an event run whose classpath
-                // turned out unable to stream.
-                def legacyRun(remaining: List[Text], failures: Int, ran: Int): (Int, Int) =
-                  remaining match
-                    case _ if aborted() =>
-                      (failures, ran)
-
-                    case head :: tail =>
-                      Render.announce(t"running $head")
-                      Journal.began(journalId, head)
-                      progress.begin(head)
-                      val suiteStarted: Instant over Unix = now()
-                      val passed: Boolean = invokeSuite(classpath, head, args, fork, journalId) == Exit.Ok
-                      Journal.record(journalId, head, passed, Unset, suiteStarted, Unset, false)
-                      progress.end(head)
-                      Render.announce(if passed then t"$head: passed" else t"$head: FAILED")
-                      val failures2 = if passed then failures else failures + 1
-
-                      if !passed && failFast then (failures2, ran + 1)
-                      else legacyRun(tail, failures2, ran + 1)
-
-                    case _ =>
-                      (failures, ran)
-
-                // The EVENT loop: each suite streams, from its own classloader, into the one
-                // model. A suite's own totals — for the journal, and for the empty-selection
-                // rule — are the difference between the document before and after it ran.
-                // Yields the suites left unrun when the classpath proves unable to stream (only
-                // ever on the first suite, when no listing pass decided it earlier), for the
-                // legacy loop.
-                def eventRun(remaining: List[Text], failures: Int, ran: Int)
-                :   (Int, Int, List[Text]) =
-
-                  remaining match
-                    case _ if aborted() =>
-                      (failures, ran, Nil: List[Text])
-
-                    case head :: tail =>
-                      // The board owns the screen while it is up; a line printed beneath it
-                      // would be lost when the screen is restored.
-                      if board.absent then Render.announce(t"running $head")
-                      Journal.began(journalId, head)
-                      progress.begin(head)
-                      val suiteStarted: Instant over Unix = now()
-                      val before: Model.State = model.state()
-                      val beforeTotals: Doc.Totals = Documenting.totals(before)
-                      model.enter(head)
-
-                      // The frames are teed into the run directory as they arrive.
-                      val writer: Optional[Runs.Writer] = Runs.writer(journalId, number(head))
-
-                      val sink: EventStream.Sink =
-                        Runs.tee
-                          ( writer,
-                            EventStream.Sink.decoding: event =>
-                              model.handle(event)
-                              board.let(_.refresh()) )
-
-                      val outcome: Optional[EventStream.Outcome] =
-                        try
-                          streamed(head, args)
-                            ( sink,
-                              () => aborted(),
-                              (out, err) => captures.append(Captures.Captured(head, out, err)) )
-                        finally writer.let(_.close())
-
-                      def next(passed: Boolean, totals: Optional[Doc.Totals]): (Int, Int, List[Text]) =
-                        Journal.record
-                          ( journalId, head, passed, totals, suiteStarted, eventsOf(head, writer),
-                            captureOf(head) )
-                        progress.end(head)
-                        val failures2 = if passed then failures else failures + 1
-
-                        if !passed && failFast then (failures2, ran + 1, Nil: List[Text])
-                        else eventRun(tail, failures2, ran + 1)
-
-                      outcome match
-                        case EventStream.Outcome.Completed(exit) =>
-                          val after: Model.State = model.state()
-                          val suiteTotals: Doc.Totals = Documenting.totals(after) - beforeTotals
-                          val suiteFatal: Boolean = after.fatals.size > before.fatals.size
-
-                          // A suite reports failure (exit 1) when NOTHING was admitted: right
-                          // when it is invoked alone, wrong when fume fans a kind filter
-                          // (`--bench`) across every suite on the classpath — a suite with no
-                          // benchmarks is not a failing suite.
-                          val emptySelection: Boolean =
-                            exit == 1 && suiteTotals.total == 0 && !suiteFatal
-
-                          next(exit == 0 || emptySelection, suiteTotals)
-
-                        case EventStream.Outcome.Failed(error) =>
-                          consumerFailures.append((head, error))
-                          next(false, Unset)
-
-                        case EventStream.Outcome.Incompatible(theirs, ours) =>
-                          Render.announce
-                            (t"the classpath was built against an incompatible Soundness; using the legacy run")
-                          Render.announce(t"  the suites' event schema is $theirs")
-                          Render.announce(t"  fume's is                   $ours")
-                          (failures, ran, remaining)
-
-                        case _ =>
-                          Render.announce(t"the classpath predates event streaming; using the legacy run")
-                          (failures, ran, remaining)
-
-                    case _ =>
-                      (failures, ran, Nil: List[Text])
-
-                // The REMOTE loop: the whole selection goes to the machine's worker, which runs
-                // the suites and relays each one's event frames back; they fold into the same
-                // model, board and journal as a local suite's, the schema fingerprint checked
-                // here against fume's own Probably exactly as `EventStream` checks a local
-                // suite's. Yields as `eventRun` does, with nothing left for the legacy loop.
-                def remoteRun(machine: Machine): (Int, Int, List[Text]) =
-                  Render.announce(t"connecting to ${machine.name} (${machine.hosts.join(t", ")})")
-
-                  // Each entry's digest and bytes: a directory is bundled into a jar first.
-                  val prepared: List[(Blobs.Entry, Data)] =
-                    classpath.entries.bind:
-                      case Classpath.Entry.Jar(path)       => List(unsafely(Blobs.prepare(path.as[Path on Linux], path)))
-                      case Classpath.Entry.Directory(path) => List(unsafely(Blobs.prepare(path.as[Path on Linux], path)))
-                      case _                               => Nil
-
-                  // Per-suite state as the frames arrive, in one object so the consumer task
-                  // captures a single reference rather than a set of mutable locals.
-                  val state: RemoteState = RemoteState(Documenting.totals(model.state()))
-
-                  def began(suite: Text): Unit =
-                    if board.absent then Render.announce(t"running $suite on ${machine.name}")
-                    Journal.began(journalId, suite)
-                    progress.begin(suite)
-                    state.suiteStarted = now()
-                    val before: Model.State = model.state()
-                    state.beforeTotals = Documenting.totals(before)
-                    state.beforeFatals = before.fatals.size
-                    model.enter(suite)
-                    state.current = suite
-                    state.expectingFingerprint = true
-                    state.incompatible = false
-                    state.writer = Runs.writer(journalId, number(suite))
-
-                  def frame(suite: Text, data: Data): Unit =
-                    state.writer.let(_.frame(data))
-
-                    if state.expectingFingerprint then
-                      state.expectingFingerprint = false
-                      if !data.readable.sameElements(probably.Streamer.fingerprint.readable) then
-                        state.incompatible = true
-                        Render.announce(t"$suite was built against an incompatible Soundness; its events cannot be read")
-                        Render.announce(t"  the suite's event schema is ${data.serialize[Hex]}")
-                        Render.announce(t"  fume's is                   ${probably.Streamer.fingerprint.serialize[Hex]}")
-                    else if !state.incompatible then
-                      model.handle(probably.Streamer.read(data))
-                      board.let(_.refresh())
-
-                  def ended(suite: Text, outcome: Text, exit: Int, detail: Text): Unit =
-                    val after: Model.State = model.state()
-                    val suiteTotals: Doc.Totals = Documenting.totals(after) - state.beforeTotals
-                    val suiteFatal: Boolean = after.fatals.size > state.beforeFatals
-                    val emptySelection: Boolean = exit == 1 && suiteTotals.total == 0 && !suiteFatal
-
-                    val passed: Boolean = outcome match
-                      case Relay.completed => !state.incompatible && (exit == 0 || emptySelection)
-                      case Relay.failed =>
-                        Render.announce(t"the worker's event consumer failed while $suite was running")
-                        detail.cut(t"\n").each { (line: Text) => Render.announce(t"  $line") }
-                        false
-                      case _ =>
-                        Render.announce(t"$suite cannot stream events, so the worker did not run it")
-                        false
-
-                    state.writer.let(_.close())
-
-                    Journal.record
-                      ( journalId, suite, passed, suiteTotals, state.suiteStarted,
-                        eventsOf(suite, state.writer), captureOf(suite) )
-
-                    state.writer = Unset
-                    progress.end(suite)
-                    state.current = Unset
-                    state.ran += 1
-                    if !passed then state.failures += 1
-                    if !passed && failFast then state.stop = true
-
-                  val outcome: scala.Either[Peer.Error.Reason, Unit] =
-                    Peer.exchange[Relay, Unit](machine, t"fume", Fume.version, Relay.codec, Relay.port): session =>
-                        val identity = session.peer.identity
-
-                        Render.announce:
-                          t"running on ${machine.name}: ${identity.os} ${identity.arch}, ${identity.cores} cores, fume ${session.peer.version}"
-
-                        session.send(Relay.Plan(prepared.map(_(0)), suites, args, maxLoad))
-
-                        session.receive() match
-                          case Channel.Frame.Message(Relay.Need(digests)) =>
-                            val shipping: List[(Blobs.Entry, Data)] =
-                              prepared.filter { (entry, _) => digests.has(entry.digest) }
-
-                            if !shipping.nil then
-                              val bytes: Long = shipping.fold(0L) { (sum, entry) => sum + entry(1).length }
-                              Render.announce(t"shipping ${shipping.size} of ${prepared.size} classpath entries (${bytes/1024} KiB)")
-
-                            shipping.each: (entry, data) =>
-                              Blobs.chunks(data).each: (offset, chunk) =>
-                                session.send(Relay.Blob(entry.digest, offset, offset + chunk.length >= data.length), chunk)
-
-                            session.send(Relay.Start)
-
-                            // Frames are consumed on their own task, so this thread can notice
-                            // an abort and forward it while a receive blocks.
-                            val consumer = async:
-                              def recur(): Unit = session.receive() match
-                                case Channel.Frame.Message(Relay.Began(suite)) =>
-                                  began(suite)
-                                  recur()
-
-                                case Channel.Frame.Message(Relay.Frame(suite)) =>
-                                  session.receive() match
-                                    case Channel.Frame.Raw(data) =>
-                                      frame(suite, data)
-                                      recur()
-
-                                    case _ =>
-                                      Render.announce(t"the connection to ${machine.name} was lost")
-
-                                case Channel.Frame.Message(Relay.Captured(suite, out, err)) =>
-                                  captures.append(Captures.Captured(suite, out, err))
-                                  recur()
-
-                                case Channel.Frame.Message(Relay.Ended(suite, outcome, exit, detail)) =>
-                                  ended(suite, outcome, exit, detail)
-                                  recur()
-
-                                case Channel.Frame.Message(Relay.Rejected(reason)) =>
-                                  Render.announce(t"${machine.name} rejected the run: $reason")
-
-                                case Channel.Frame.Message(Relay.Done) =>
-                                  ()
-
-                                case Channel.Frame.Closed =>
-                                  Render.announce(t"the connection to ${machine.name} was lost")
-
-                                case _ =>
-                                  recur()
-
-                              recur()
-
-                            def drained(): Boolean =
-                              scala.caps.unsafe.unsafeAssumeSeparate(safely(consumer.await(0.05*Second)).present)
-
-                            def spin(): Unit =
-                              if !drained() then
-                                if (aborted() || state.stop) && !state.abortSent then
-                                  state.abortSent = true
-                                  session.send(Relay.Abort)
-
-                                spin()
-
-                            spin()
-
-                          case Channel.Frame.Message(Relay.Rejected(reason)) =>
-                            Render.announce(t"${machine.name} rejected the run: $reason")
-
-                          case _ =>
-                            Render.announce(t"the connection to ${machine.name} was lost")
-
-                  outcome match
-                    case scala.Left(reason) => Render.announce(Peer.explain(reason))
-                    case _                  => ()
-
-                  // A suite left open by a lost connection is recorded as failed.
-                  state.current.let: suite =>
-                    state.writer.let(_.close())
-                    Journal.record(journalId, suite, false, Unset, state.suiteStarted, Unset, false)
-                    progress.end(suite)
-                    state.ran += 1
-                    state.failures += 1
-
-                  (state.failures, state.ran, Nil: List[Text])
-
-                // The streaming decision is made ONCE per classpath: by the listing pass when it
-                // ran, otherwise by the first suite of the run. Whichever way, the event suites'
-                // report renders first and the tail runs legacy.
-                val result: (Int, Int, Optional[Doc.Totals]) =
-                  if machine.present then
-                    val (failures, ran, _) = machine.let(remoteRun(_)).or((0, 0, Nil: List[Text]))
-                    model.finish()
-
-                    frontend.let: frontend =>
-                      frontend.stop()
-                      safely(closed.attend())
-
-                    val document = Documenting.document(model.state())
-
-                    board.let: board =>
-                      if Server.serving then
-                        board.refresh(force = true)
-                        val blocks: List[pyrocosm.Block] = Blocks.document(document, board.figures)
-                        Server.detach(journalId, title, blocks + Captures.blocks(captures.to(List)))
-                      else
-                        Server.detach(journalId, title, Nil)
-
-                    captures.each: captured =>
-                      if !captured.empty then
-                        val kept: Text = Captures.record(captured).lay(t"not kept"): path =>
-                          t"kept in ${path.encode}"
-
-                        Render.announce
-                          ( t"${captured.suite} printed ${captured.lines} lines outside its report; $kept" )
-
-                    val totals: Optional[Doc.Totals] =
-                      if ran == 0 then Unset else
-                        if aborted() then Render.announce(t"aborted; the partial report follows")
-                        Render.suite(document, width, terse)
-                        document.totals
-
-                    (failures, ran, totals)
-                  else if legacyFork then
-                    val (failures, ran) = legacyRun(suites, 0, 0)
-                    (failures, ran, Unset)
-                  else if listed == false then
-                    Render.announce
-                      (t"the classpath cannot stream test events; using the legacy run")
-                    val (failures, ran) = legacyRun(suites, 0, 0)
-                    (failures, ran, Unset)
-                  else
-                    val (failures, ran, rest) = eventRun(suites, 0, 0)
-                    model.finish()
-
-                    frontend.let: frontend =>
-                      frontend.stop()
-                      safely(closed.attend())
-
-                    val document = Documenting.document(model.state())
-
-                    // The dashboard keeps a finished run's report; a run nobody is serving has
-                    // no need of one more full paint of the board.
-                    board.let: board =>
-                      if Server.serving then
-                        board.refresh(force = true)
-                        val blocks: List[pyrocosm.Block] = Blocks.document(document, board.figures)
-                        Server.detach(journalId, title, blocks + Captures.blocks(captures.to(List)))
-                      else
-                        Server.detach(journalId, title, Nil)
-
-                    // A suite's stray output is a line in the report, not the output itself:
-                    // the log has that, and the terminal has just been the board's.
-                    captures.each: captured =>
-                      if !captured.empty then
-                        val kept: Text = Captures.record(captured).lay(t"not kept"): path =>
-                          t"kept in ${path.encode}"
-
-                        Render.announce
-                          ( t"${captured.suite} printed ${captured.lines} lines outside its report; $kept" )
-
-                    consumerFailures.each: (suite, error) =>
-                      // Written to a file first: the terminal may be mid-repaint, and a trace
-                      // on stderr inside the alternate buffer is lost when the board closes.
-                      import codepages.utf8Codepage
-                      import filesystemBackends.javaBaseFilesystem
-                      import temporaryDirectories.systemTemporaryDirectory
-
-                      val trace: Text = error.stackTrace.show
-
-                      val path: Optional[Path on Linux] = safely:
-                        val file: Path on Linux = temporaryDirectory[Path on Linux] / "fume-failure.log"
-                        file.write(trace)
-                        file
-
-                      Render.announce(t"the event consumer failed while $suite was running; the suite was stopped")
-
-                      path.let: path =>
-                        Render.announce(t"the stack trace is in ${path.encode}, and follows:")
-
-                      trace.cut(t"\n").each { (line: Text) => Out.println(line) }
-
-                    val totals: Optional[Doc.Totals] =
-                      if ran == 0 then Unset else
-                        if aborted() then Render.announce(t"aborted; the partial report follows")
-                        Render.suite(document, width, terse)
-                        document.totals
-
-                    val (failures2, ran2) =
-                      if rest.nil then (failures, ran) else legacyRun(rest, failures, ran)
-
-                    (failures2, ran2, totals)
-
-                val (failures, ran, totals) = result
-
-                val outcome: Journal.Outcome =
-                  if aborted() then Journal.Outcome.Aborted
-                  else if failures == 0 then Journal.Outcome.Passed
-                  else Journal.Outcome.Failed
-
-                Journal.finish(journalId, outcome, totals)
-                Server.close(journalId)
-
-                // What this run taught about its suites, for the next run's forecast.
-                Journal.completed.seek(_.id == journalId).let: run =>
-                  Forecasts.save(classpath(), run.record.suites, Forecasts.directory)
-
-                // The banner renders over the aggregate of every event-run suite; when every
-                // suite ran legacy (each rendered its own report already), only the summary
-                // line prints.
-                totals.let(Render.finale(_, width, terse))
-
-                // `0 of 0 suites passed` would read like a clean run; nothing ran at all. This
-                // is the shape of an abort — Ctrl+C at the load gate, or before the first suite
-                // began — and of a selection that admitted no suite.
-                Render.announce:
-                  if ran == 0 then t"no tests were run"
-                  else t"${ran - failures} of $ran suites passed"
-                if failures == 0 then Exit.Ok else TestsFailed
-
-            case _ =>
-              Render.announce(t"at least one --classpath must be specified")
-              NoClasspath
-
-      arguments match
-        // `fume -<flag>…` — a leading flag that `Fume.standard` did not consume (`--version` is
-        // handled there, before this dispatch is reached). This case fires only when the first
-        // token is a FLAG (`head` begins with `-`), which cannot be a subcommand.
-        //
-        // It is matched FIRST so that, when the word being completed is a flag, the subcommand
-        // patterns below are never evaluated. Matching a `Subcommand` also SUGGESTS it, and a
-        // suggestion at the cursor takes precedence over the flag list (`Completion`'s
-        // `cursorSuggestions` wins over `flagSuggestions`) — so trying the subcommands first
-        // would leave `fume --ver<TAB>` offering `run`/`list`/`watch`/`serve` and no flags at
-        // all. Ordering costs nothing at run time: a subcommand never begins with `-`, so no
-        // invocation changes meaning.
-        case Argument(head) :: _ if head.starts(t"-") =>
-          execute(usage())
-
-        // `fume run [-c CLASSPATH] [-s SUITE] [--test|--bench|--stress|--profile] [--fail-fast]
-        // [TERMS…]` — run every test, benchmark, stress test and profile admitted by the
-        // selection. The non-flag TERMS are raw Probably selection terms (6-hex-digit ids,
-        // monikers, name and path globs, `kind:` terms, and axis constraints such as
-        // `parser=jacinta`, `N=4..64` or `'N<32'` — the `<`/`>` forms need shell quoting),
-        // forwarded to each suite as written, but for a scoped path (`threads/0a48bc`), which
-        // fume resolves to the ids it leads to (`Index#resolve`); fume otherwise only prepends
-        // the `kind:` terms derived from the kind switches.
-        case ui.Run() :: rest =>
-          runSelection(rest)
-
-        // `fume list [-c CLASSPATH] [-s SUITE] [--test|--bench|--stress|--profile] [TERMS…]` —
-        // enumerate, without running anything, the tests admitted by the selection, in
-        // `probably.Suite`'s `--list` format: `<6-hex-id>  <kind>  <slash/joined/path>`, one per
-        // line. With `--axes`, two more columns follow — the tags, and the axes with the values
-        // (or bounds) the selection admits — from each suite's streamed schedule; with `--tags`,
-        // the distinct tags across the selection with how many tests carry each.
-        case ui.List() :: rest =>
-          val classpath: Optional[LocalClasspath] = classpathSetting()
-          val suite: Prospective[Text] = suiteFlag(classpath)
-          val kinds: List[Text] = selectedKinds + kindSetting().lay(Nil: List[Text])(List(_))
-          val words: List[Text] = Selection.words(rest.map { (argument: Argument) => argument() })
-          val tags: Prospective[Repeated] = tagFlag(classpath)
-          val axes: Prospective[Repeated] = axisFlag(classpath, words)
-          val excludes: Prospective[Repeated] = excludeFlag(classpath)
-          val showAxes: Boolean = ui.Axes().present
-          val showTags: Boolean = ui.Tags().present
-          val scan: Boolean = ui.Scan().present
-          val fork: Boolean = ui.Fork().present
-          val terms: List[Text] = selectionTerms(rest)
-
-          completeTerms(classpath, rest)
-
-          execute:
-            given Stdio = summon[Invocation].stdio
-            classpath match
-              case classpath: LocalClasspath =>
-                val suites: List[Text] = selectSuites(classpath, suite())
-
-                if suites.nil then
-                  Render.announce(t"no test suites were found on the classpath")
-                  NoSuites
-                else
-                  val selectionArgs: List[Text] =
-                    Suites.index(classpath).resolve:
-                      Selection.lower
-                        ( kinds,
-                          tags().lay(Nil: List[Text])(_.values),
-                          axes().lay(Nil: List[Text])(_.values),
-                          excludes().lay(Nil: List[Text])(_.values),
-                          terms )
-
-                  // The listing is read from the classpath's index of tests when it covers
-                  // every suite asked for, so that nothing is run to make it: the index has
-                  // every test's place, kind, moniker and tags. A test's axes are not in it,
-                  // nor a test declared only as its suite runs, so `--axes` and `--scan` list
-                  // by running each suite's body, as a classpath with no index always does.
-                  val index: Index = Suites.index(classpath)
-                  val indexed: Boolean = !scan && !showAxes && !fork && suites.all(index.knows(_))
-
-                  if indexed then
-                    val tests: List[Index.Test] =
-                      suites.bind[List[Index.Test], Index.Test, List[Index.Test]]: suite =>
-                        index.tests(suite).filter(Index.admits(_, selectionArgs))
-
-                    if showTags then
-                      tests.flatMap(_.tags).distinct.each: tag =>
-                        Out.println(t"$tag  ${tests.count(_.tags.has(tag))}")
-                    else
-                      val listing: List[Text] = tests.map(_.listing)
-                      listing.each { line => Out.println(t"$line") }
-
-                    val unlisted: Int =
-                      tests.count(_.dynamic) + suites.fold(0) { (count, suite) => count + index.open(suite) }
-
-                    if unlisted > 0 then
-                      Render.announce:
-                        t"$unlisted declarations name their tests only as the suite runs; `fume list --scan` runs the suites to list them"
-
-                    Exit.Ok
-                  else if showAxes || showTags || scan then
-                    // A suite that cannot stream its schedule lists as text: ids and paths,
-                    // with no tags or axes to show.
-                    val schedule: List[Suites.Scheduled] =
-                      suites.bind[List[Suites.Scheduled], Suites.Scheduled, List[Suites.Scheduled]]:
-                        suite => Suites.fetch(classpath, suite, selectionArgs)
-
-                    if showTags then
-                      schedule.flatMap(_.tags).distinct.each: tag =>
-                        Out.println(t"$tag  ${schedule.count(_.tags.has(tag))}")
-
-                    if showAxes then
-                      schedule.each: test =>
-                        val kind: Text = if test.kind == t"check" then t"test" else test.kind
-                        val tags: Text = if test.tags.nil then t"-" else test.tags.join(t",")
-                        val path: Text = test.ref.path.join(t"/")
-                        Out.println(t"${test.ref.id}  $kind  $path  $tags  ${Suggest.axesText(test.axes)}")
-
-                    // `--scan` alone: the lines an indexed listing prints, from the run.
-                    if !showTags && !showAxes then
-                      schedule.each: test =>
-                        val kind: Text = if test.kind == t"check" then t"test" else test.kind
-                        Out.println(t"${test.ref.id}  $kind  ${test.ref.path.join(t"/")}")
-
-                    Exit.Ok
-                  else
-                    val args: List[Text] = t"--list" :: selectionArgs
-
-                    def recur(remaining: List[Text], failed: Boolean): Boolean = remaining match
-                      case head :: tail =>
-                        recur(tail, invokeSuite(classpath, head, args, fork) != Exit.Ok || failed)
-
-                      case _ =>
-                        failed
-
-                    if recur(suites, false) then TestsFailed else Exit.Ok
-
-              case _ =>
-                Render.announce(t"at least one --classpath must be specified")
-                NoClasspath
-
-        // `fume watch …` — as `run`, but watch the OUTPUT jars named by `--classpath` (something
-        // else does the compiling) and rerun the selection whenever one changes.
-        // `fume serve [--port]` — serve the dashboard: every run the daemon has journalled, the
-        // ones in flight live. Runs started from any shell while it serves register their boards,
-        // so a browser and a terminal watch the same cells.
-        case ui.Serve() :: _ =>
-          val port: Int = ui.Port() match
-            case text: Text => safely(text.as[Int]).or(fume.Dashboard.web.port)
-            case _          => fume.Dashboard.web.port
-
-          execute:
-            given Stdio = summon[Invocation].stdio
-            import probates.cancelProbate
-            import webserverErrorPages.minimalErrorPage
-
-            val stdio: Stdio = summon[Stdio]
-            val tty: Boolean = summon[Resident].cliInput == ethereal.Terminus.Terminal
-            val aborted: Atomic[Boolean] = Atomic(false)
-
-            trap:
-              case profanity.Signal(Interrupt.Int, _, _, _) =>
-                aborted() = true
-                SignalResponse.Accept
-
-            val dashboard = fume.Dashboard()
-            val served: Atomic[Boolean] = Atomic(false)
-
-            // The frontend holds the monitor and the error page, which outlive it; vouched pure so
-            // it can be stopped from here.
-            val frontend: pyrocosm.WebFrontend =
-              scala.caps.unsafe.unsafeAssumePure:
-                pyrocosm.WebFrontend
-                  ( port,
-                    fallback = Answering.fallback )
-
-            Server.serving = true
-            Server.announce(t"dashboard", port)
-
-            async:
-              try frontend.run(dashboard.interface)(dashboard.handle)
-              finally served() = true
-
-            Render.announce
-              (t"serving the fume dashboard at http://localhost:$port/ (Ctrl+C to stop)")
-
-            // On a terminal the launcher forwards Ctrl+C as a byte rather than a signal, so the
-            // input is read for it here, as the load gate does.
-            val input: Live.Input = Live.Input(aborted)
-
-            def loop(): Unit =
-              if tty then while stdio.in.available() > 0 do input.offer(stdio.in.read())
-              dashboard.refresh()
-
-              if !aborted() && !served() then
-                snooze(0.25*Second)
-                loop()
-
+                val args: List[Text] = t"--list" :: selectionArgs
+
+                def recur(remaining: List[Text], failed: Boolean): Boolean = remaining match
+                  case head :: tail =>
+                    recur(tail, invokeSuite(classpath, head, args, fork) != Exit.Ok || failed)
+
+                  case _ =>
+                    failed
+
+                if recur(suites, false) then TestsFailed else Exit.Ok
+
+          case _ =>
+            Render.announce(t"at least one --classpath must be specified")
+            NoClasspath
+
+    // `fume watch …` — as `run`, but watch the OUTPUT jars named by `--classpath` (something
+    // else does the compiling) and rerun the selection whenever one changes.
+    // `fume serve [--port]` — serve the dashboard: every run the daemon has journalled, the
+    // ones in flight live. Runs started from any shell while it serves register their boards,
+    // so a browser and a terminal watch the same cells.
+    case ui.Serve() :: _ =>
+      val port: Int = ui.Port() match
+        case text: Text => safely(text.as[Int]).or(fume.Dashboard.web.port)
+        case _          => fume.Dashboard.web.port
+
+      execute:
+        given Stdio = summon[Invocation].stdio
+        import probates.cancelProbate
+        import webserverErrorPages.minimalErrorPage
+
+        val stdio: Stdio = summon[Stdio]
+        val tty: Boolean = summon[Resident].cliInput == ethereal.Terminus.Terminal
+        val aborted: Atomic[Boolean] = Atomic(false)
+
+        trap:
+          case profanity.Signal(Interrupt.Int, _, _, _) =>
+            aborted() = true
+            SignalResponse.Accept
+
+        val dashboard = fume.Dashboard()
+        val served: Atomic[Boolean] = Atomic(false)
+
+        // The frontend holds the monitor and the error page, which outlive it; vouched pure so
+        // it can be stopped from here.
+        val frontend: pyrocosm.WebFrontend =
+          scala.caps.unsafe.unsafeAssumePure:
+            pyrocosm.WebFrontend
+              ( port,
+                fallback = Answering.fallback )
+
+        Server.serving = true
+        Server.announce(t"dashboard", port)
+
+        async:
+          try frontend.run(dashboard.interface)(dashboard.handle)
+          finally served() = true
+
+        Render.announce
+          (t"serving the fume dashboard at http://localhost:$port/ (Ctrl+C to stop)")
+
+        // On a terminal the launcher forwards Ctrl+C as a byte rather than a signal, so the
+        // input is read for it here, as the load gate does.
+        val input: Live.Input = Live.Input(aborted)
+
+        def loop(): Unit =
+          if tty then while stdio.in.available() > 0 do input.offer(stdio.in.read())
+          dashboard.refresh()
+
+          if !aborted() && !served() then
+            snooze(0.25*Second)
             loop()
-            Server.serving = false
-            Server.withdraw(t"dashboard")
-            frontend.stop()
-            Render.announce(t"the dashboard has stopped")
-            Exit.Ok
 
-        // `fume mcp [--mcp-port]` — serve the MCP server until Ctrl+C, as the daemon does for as
-        // long as it lives when a config says `mcp`. An agent connects to it over HTTP:
-        // `claude mcp add --transport http fume http://localhost:8092/mcp`.
-        case ui.Mcp() :: _ =>
-          val port: Int = ui.McpPort() match
-            case text: Text => safely(text.as[Int]).or(fume.McpServer.service.port)
-            case _          => fume.McpServer.service.port
+        loop()
+        Server.serving = false
+        Server.withdraw(t"dashboard")
+        frontend.stop()
+        Render.announce(t"the dashboard has stopped")
+        Exit.Ok
 
-          execute:
-            given Stdio = summon[Invocation].stdio
-            import probates.cancelProbate
+    // `fume mcp [--mcp-port]` — serve the MCP server until Ctrl+C, as the daemon does for as
+    // long as it lives when a config says `mcp`. An agent connects to it over HTTP:
+    // `claude mcp add --transport http fume http://localhost:8092/mcp`.
+    case ui.Mcp() :: _ =>
+      val port: Int = ui.McpPort() match
+        case text: Text => safely(text.as[Int]).or(fume.McpServer.service.port)
+        case _          => fume.McpServer.service.port
 
-            val stdio: Stdio = summon[Stdio]
-            val tty: Boolean = summon[Resident].cliInput == ethereal.Terminus.Terminal
-            val aborted: Atomic[Boolean] = Atomic(false)
+      execute:
+        given Stdio = summon[Invocation].stdio
+        import probates.cancelProbate
 
-            trap:
-              case profanity.Signal(Interrupt.Int, _, _, _) =>
-                aborted() = true
-                SignalResponse.Accept
+        val stdio: Stdio = summon[Stdio]
+        val tty: Boolean = summon[Resident].cliInput == ethereal.Terminus.Terminal
+        val aborted: Atomic[Boolean] = Atomic(false)
 
-            // The runs directory is located from this invocation's environment, for the
-            // server's sake: it serves outside any invocation.
+        trap:
+          case profanity.Signal(Interrupt.Int, _, _, _) =>
+            aborted() = true
+            SignalResponse.Accept
+
+        // The runs directory is located from this invocation's environment, for the
+        // server's sake: it serves outside any invocation.
+        Runs.locate()
+        Render.announce(t"serving MCP at http://localhost:$port/mcp (Ctrl+C to stop)")
+
+        val stopped: Atomic[Boolean] = Atomic(false)
+
+        // The task may retain only what is durable, which the invocation's configurator is not;
+        // the server reads the daemon's configuration, which outlives every client, so the run
+        // is vouched pure for the task, as pyrocosm's `Tool` does for the services it launches.
+        val serve: () -> Unit = scala.caps.unsafe.unsafeAssumePure(() => Fume.run(fume.McpServer.service, port))
+
+        async:
+          try serve() finally stopped() = true
+
+        val input: Live.Input = Live.Input(aborted)
+
+        def loop(): Unit =
+          if tty then while stdio.in.available() > 0 do input.offer(stdio.in.read())
+
+          if !aborted() && !stopped() then
+            snooze(0.25*Second)
+            loop()
+
+        loop()
+        fume.McpServer.service.stop()
+        Render.announce(t"the MCP server has stopped")
+        Exit.Ok
+
+    // `fume listen [--listen-port]` — accept runs from controllers on other machines until
+    // Ctrl+C, as the daemon does for as long as it lives when a config says `listen`. The
+    // machine's identity fingerprint is printed, for the controllers' `machine` blocks.
+    case ui.Listen() :: _ =>
+      val port: Int = ui.ListenPort() match
+        case text: Text => safely(text.as[Int]).or(Relay.port)
+        case _          => Relay.port
+
+      execute:
+        given Stdio = summon[Invocation].stdio
+        import probates.cancelProbate
+
+        val stdio: Stdio = summon[Stdio]
+        val tty: Boolean = summon[Resident].cliInput == ethereal.Terminus.Terminal
+        val aborted: Atomic[Boolean] = Atomic(false)
+
+        trap:
+          case profanity.Signal(Interrupt.Int, _, _, _) =>
+            aborted() = true
+            SignalResponse.Accept
+
+        safely(Peer.identity) match
+          case identity: Peer.Identity =>
+            Render.announce(t"this machine's identity is ${Peer.render(identity.fingerprint)}")
+            Render.announce(t"listening for fume controllers on port $port (Ctrl+C to stop)")
             Runs.locate()
-            Render.announce(t"serving MCP at http://localhost:$port/mcp (Ctrl+C to stop)")
 
             val stopped: Atomic[Boolean] = Atomic(false)
 
+            // Vouched pure for the task, as above.
+            val serve: () -> Unit = scala.caps.unsafe.unsafeAssumePure(() => Fume.run(fume.Worker.service, port))
+
             async:
-              try Fume.run(fume.McpServer.service, port) finally stopped() = true
+              try serve() finally stopped() = true
 
             val input: Live.Input = Live.Input(aborted)
 
@@ -1305,109 +1373,63 @@ def runClient(): Unit =
                 loop()
 
             loop()
-            fume.McpServer.service.stop()
-            Render.announce(t"the MCP server has stopped")
+            fume.Worker.service.stop()
+            Render.announce(t"the listener has stopped")
             Exit.Ok
 
-        // `fume listen [--listen-port]` — accept runs from controllers on other machines until
-        // Ctrl+C, as the daemon does for as long as it lives when a config says `listen`. The
-        // machine's identity fingerprint is printed, for the controllers' `machine` blocks.
-        case ui.Listen() :: _ =>
-          val port: Int = ui.ListenPort() match
-            case text: Text => safely(text.as[Int]).or(Relay.port)
-            case _          => Relay.port
+          case _ =>
+            Render.announce(t"this machine's identity could not be created; is `keytool` available?")
+            RemoteFailed
 
-          execute:
-            given Stdio = summon[Invocation].stdio
-            import probates.cancelProbate
+    // `fume identity` — this machine's certificate fingerprint, for a controller's
+    // `machine` block, and where its token lives.
+    case ui.Identity() :: _ =>
+      execute:
+        given Stdio = summon[Invocation].stdio
 
-            val stdio: Stdio = summon[Stdio]
-            val tty: Boolean = summon[Resident].cliInput == ethereal.Terminus.Terminal
-            val aborted: Atomic[Boolean] = Atomic(false)
+        safely(Peer.identity) match
+          case identity: Peer.Identity =>
+            Out.println(t"identity  ${Peer.render(identity.fingerprint)}")
+            Peer.tokenFile.let { file => Out.println(t"token     ${file.encode}") }
+            Peer.token
+            Out.println(t"")
+            Out.println(t"Declare this machine to a controller as:")
+            Out.println(t"")
+            Out.println(t"  machine ${Machine.Identity.local.hostname}")
+            Out.println(t"    host      ${Machine.Identity.local.hostname}")
+            Out.println(t"    port      ${Relay.port}")
+            Out.println(t"    identity  ${Peer.render(identity.fingerprint)}")
+            Out.println(t"    token     <a file holding the token above>")
+            Exit.Ok
 
-            trap:
-              case profanity.Signal(Interrupt.Int, _, _, _) =>
-                aborted() = true
-                SignalResponse.Accept
+          case _ =>
+            Out.println(t"this machine's identity could not be created; is `keytool` available?")
+            RemoteFailed
 
-            safely(Peer.identity) match
-              case identity: Peer.Identity =>
-                Render.announce(t"this machine's identity is ${Peer.render(identity.fingerprint)}")
-                Render.announce(t"listening for fume controllers on port $port (Ctrl+C to stop)")
-                Runs.locate()
+    case ui.Watch() :: _ =>
+      val classpath: Optional[LocalClasspath] = classpathSetting()
+      val suite: Prospective[Text] = suiteFlag(classpath)
+      val kinds: List[Text] = selectedKinds
+      val failFast: Boolean = ui.FailFast().or(false)
 
-                val stopped: Atomic[Boolean] = Atomic(false)
+      execute:
+        given Stdio = summon[Invocation].stdio
+        classpath match
+          case classpath: LocalClasspath =>
+            Render.announce(t"'watch' is not yet implemented")
+            Unimplemented
 
-                async:
-                  try Fume.run(fume.Worker.service, port) finally stopped() = true
+          case _ =>
+            Render.announce(t"at least one --classpath must be specified")
+            NoClasspath
 
-                val input: Live.Input = Live.Input(aborted)
+    // A bare `fume` runs: the workspace's `.pyrocosm/fume/config.tel` supplies the
+    // classpath, so the zero-argument invocation is the everyday one.
+    case Nil =>
+      runSelection(List())
 
-                def loop(): Unit =
-                  if tty then while stdio.in.available() > 0 do input.offer(stdio.in.read())
-
-                  if !aborted() && !stopped() then
-                    snooze(0.25*Second)
-                    loop()
-
-                loop()
-                fume.Worker.service.stop()
-                Render.announce(t"the listener has stopped")
-                Exit.Ok
-
-              case _ =>
-                Render.announce(t"this machine's identity could not be created; is `keytool` available?")
-                RemoteFailed
-
-        // `fume identity` — this machine's certificate fingerprint, for a controller's
-        // `machine` block, and where its token lives.
-        case ui.Identity() :: _ =>
-          execute:
-            given Stdio = summon[Invocation].stdio
-
-            safely(Peer.identity) match
-              case identity: Peer.Identity =>
-                Out.println(t"identity  ${Peer.render(identity.fingerprint)}")
-                Peer.tokenFile.let { file => Out.println(t"token     ${file.encode}") }
-                Peer.token
-                Out.println(t"")
-                Out.println(t"Declare this machine to a controller as:")
-                Out.println(t"")
-                Out.println(t"  machine ${Machine.Identity.local.hostname}")
-                Out.println(t"    host      ${Machine.Identity.local.hostname}")
-                Out.println(t"    port      ${Relay.port}")
-                Out.println(t"    identity  ${Peer.render(identity.fingerprint)}")
-                Out.println(t"    token     <a file holding the token above>")
-                Exit.Ok
-
-              case _ =>
-                Out.println(t"this machine's identity could not be created; is `keytool` available?")
-                RemoteFailed
-
-        case ui.Watch() :: _ =>
-          val classpath: Optional[LocalClasspath] = classpathSetting()
-          val suite: Prospective[Text] = suiteFlag(classpath)
-          val kinds: List[Text] = selectedKinds
-          val failFast: Boolean = ui.FailFast().or(false)
-
-          execute:
-            given Stdio = summon[Invocation].stdio
-            classpath match
-              case classpath: LocalClasspath =>
-                Render.announce(t"'watch' is not yet implemented")
-                Unimplemented
-
-              case _ =>
-                Render.announce(t"at least one --classpath must be specified")
-                NoClasspath
-
-        // A bare `fume` runs: the workspace's `.pyrocosm/fume/config.tel` supplies the
-        // classpath, so the zero-argument invocation is the everyday one.
-        case Nil =>
-          runSelection(List())
-
-        case _ =>
-          execute(usage())
+    case _ =>
+      execute(usage())
 
 // The command bodies below take the ambient `Invocation` (a tracked capability). Its
 // `WorkingDirectory` still resolves THROUGH it automatically, via the `WorkingDirectory.Provider`

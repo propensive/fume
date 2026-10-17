@@ -129,7 +129,7 @@ object EventStream:
     // Decodes each frame with fume's own Probably, once the fingerprints agree.
     def decoding(handle: probably.TestEvent => Unit): Sink^{handle} = new Sink:
       def fingerprint(theirs: Data): Boolean =
-        theirs.readable.sameElements(probably.Streamer.fingerprint.readable)
+        Array.same(theirs, probably.Streamer.fingerprint)
 
       def frame(frame: Data): Unit = handle(probably.Streamer.read(frame))
 
@@ -171,8 +171,14 @@ object EventStream:
         // leave the invocation polling a dead task for ever while the suite runs on unobserved.
         val failure: Atomic[Optional[Throwable]] = Atomic.Ref.vacant[Throwable]
 
+        // The sink is exclusive, and the task that drains the frames into it may retain only what
+        // is durable. Nothing else touches the sink once the frames are handed over — the caller
+        // waits on the task and reads the outcome — so it is vouched pure for the task, rather
+        // than consumed with `transfer`, which would need `consume` on every caller's parameter.
+        val drain: Sink = scala.caps.unsafe.unsafeAssumePure(sink)
+
         val consumer = async:
-          try rest.each { (frame: Data) => sink.frame(frame) }
+          try rest.each { (frame: Data) => drain.frame(frame) }
           catch case error: Throwable =>
             failure() = error
             throw error

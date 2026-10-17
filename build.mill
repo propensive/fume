@@ -1,6 +1,6 @@
 //| mill-version: 1.1.5
 //| mill-jvm-version: temurin:25
-//| mill-jvm-opts: ["-XX:NonProfiledCodeHeapSize=250m", "-XX:ReservedCodeCacheSize=500m"]
+//| mill-jvm-opts: ["-Xss16m", "-XX:NonProfiledCodeHeapSize=250m", "-XX:ReservedCodeCacheSize=500m"]
 
 package build
 
@@ -16,8 +16,7 @@ object settings:
   // so fume must compile with it too. A Proscala release from 1.0.0 (`SOUNDNESS_SCALA_RELEASE`) is
   // built for several upstream Scala versions, each shipped as `proscala-<scala version>.tar.gz`
   // and versioned `<scala version>-pro-<release>`; `SOUNDNESS_SCALA_BASE` selects the Scala
-  // version. fume reads Soundness 0.71.0's TASTy, which is Scala 3.9's, so its base is 3.9.0 and
-  // the default is `3.9.0-pro-1.0.2`; the base moves to 3.10 with Soundness 0.72.0.
+  // version, so the default is `3.10.0-pro-1.0.2`, the stream Soundness 0.72.0 is compiled on.
   // `SOUNDNESS_SCALA_VERSION` overrides the composed version; a release from before 1.0.0 is a
   // single build, named by its tag, and is still accepted.
   //
@@ -25,7 +24,7 @@ object settings:
   // script is evaluated, and neither a fresh daemon nor `--no-daemon` propagates the variable. To
   // switch toolchains, edit the defaults here.
   val scalaRelease = sys.env.getOrElse("SOUNDNESS_SCALA_RELEASE", "1.0.2")
-  val scalaBase = sys.env.getOrElse("SOUNDNESS_SCALA_BASE", "3.9.0")
+  val scalaBase = sys.env.getOrElse("SOUNDNESS_SCALA_BASE", "3.10.0")
   val scalaVersion = sys.env.getOrElse("SOUNDNESS_SCALA_VERSION",
     if scalaRelease.matches("[0-9]+\\.[0-9]+\\.[0-9]+") then s"$scalaBase-pro-$scalaRelease"
     else scalaRelease)
@@ -103,6 +102,7 @@ object settings:
     "-Zinline-source-maps",
     "-Zopaque-mutability",
     "-Zpure-iarrays",
+    "-Zfrozen-pure",
     "-Zretains-bounds",
     "-Zretains-skolems",
     "-Zspreadable-varargs",
@@ -483,7 +483,7 @@ object fume extends Project:
       super.resources() ++ assets() ++ Seq(PathRef(Task.dest))
 
   // The invocation point, ALONE in its own module (`src/launcher/fume_launcher.scala` — just the
-  // `@main def fume = externalize(runClient())`). It depends on `client` NOT as a Mill `moduleDep`
+  // `object fume` whose `main` is `externalize(Client.run())`). It depends on `client` NOT as a Mill `moduleDep`
   // but as a PUBLISHED Maven coordinate, so coursier puts the byte-identical Central jar on the
   // compile classpath that `externalize` hashes; the repackager then externalizes it into an
   // on-demand download instead of inlining. Burdock is also named explicitly because the
