@@ -39,7 +39,7 @@ import pyrocosm.Machine
 import denominative.dysasymptotics.linearSize
 import environments.javaBaseEnvironment
 import probates.cancelProbate
-import threading.platformThreading
+import threads.platformThreads
 
 // A run launched from the daemon itself, by its MCP server, outside any invocation: no
 // terminal, no board, no working directory but the classpath's own. The suites stream through

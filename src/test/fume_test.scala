@@ -1180,7 +1180,7 @@ object Tests extends Suite(m"Fume tests"):
       import internetAccess.online
       import probates.cancelProbate
       import textSanitizers.skipSanitizer
-      import threading.platformThreading
+      import threads.platformThreads
 
       def record(id: Text, suites: List[RunRecord.Suite], outcome: Optional[Text]): RunRecord =
         RunRecord

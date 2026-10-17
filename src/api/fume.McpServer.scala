@@ -204,7 +204,7 @@ object McpServer extends Mcp.Server():
   // serves the tool calls and listings an agent makes by POST; the server-to-client stream a
   // GET opens, which no tool here uses, lives only as long as its request on such a host.
   def answer(request: Http.Request): Optional[Http.Response] =
-    import threading.platformThreading
+    import threads.platformThreads
     import probates.cancelProbate
     unsafely(supervise(respond(request)))
 

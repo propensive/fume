@@ -249,7 +249,7 @@ object Runs:
 
           EventStream.split(chunks) match
             case first #:: rest =>
-              if !first.readable.sameElements(fingerprint.readable) then incompatible += 1
+              if !Array.same(first, fingerprint) then incompatible += 1
               else
                 readable += 1
                 model.enter(suite.suite)
