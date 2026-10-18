@@ -36,7 +36,7 @@ package fume
 import soundness.{Relay as _, *}
 
 import probably.TestEvent
-import pyrocosm.{Blobs, Channel, Machine, Peer}
+import pyrocosm.{Advert, Blobs, Channel, Machine, Peer, Swarm}
 
 // Explicit, so that it outranks the `Tool` the `soundness.*` wildcard exports (anthology's);
 // `standard` is a package-level extension on it.
@@ -76,7 +76,7 @@ object UsageError extends Status(2, t"the command line was not understood")
 object NoClasspath extends Status(3, t"no --classpath was specified, or an entry was unreadable")
 object NoSuites extends Status(4, t"no test suites were found on the classpath")
 object Unimplemented extends Status(10, t"this subcommand is not yet implemented")
-object NoMachine extends Status(11, t"the machine named by --on is not configured")
+object NoMachine extends Status(11, t"the machine named by --machine is neither on the swarm nor declared")
 object RemoteFailed extends Status(12, t"the remote machine could not run the selection")
 
 // Fume's user interface, in one namespace: its subcommands, flags and settings. The object
@@ -92,7 +92,6 @@ object ui:
   val Watch = Subcommand("watch", "watch the classpath jars and rerun tests on change")
   val Serve = Subcommand("serve", "serve the dashboard of runs on the web until Ctrl+C")
   val Listen = Subcommand("listen", "run selections sent by fume on other machines until Ctrl+C")
-  val Identity = Subcommand("identity", "show this machine's certificate fingerprint and token")
   val Mcp = Subcommand("mcp", "serve the MCP server agents query about runs until Ctrl+C")
 
   // The classpath holding compiled test suites. Suites on it are discovered ONLY through the
@@ -196,11 +195,12 @@ object ui:
   // dashboard it serves from the daemon when a config says `serve`.
   val Port = Setting[Text](t"port", t"the port on which `fume serve` serves the dashboard")
 
-  // Remote execution: `--on <machine>` sends the selection to a machine declared in a `machine`
-  // block of the configuration (fume's, or the shared `~/.config/pyrocosm/machines.tel`), whose
-  // fume daemon is listening. `listen-port` is the port `fume listen` accepts controllers on,
-  // and the port the daemon listens on when a config says `listen`.
-  val On = Setting[Text](t"on", t"run the selection on this configured machine")
+  // Remote execution: `--machine <name>` sends the selection to another machine whose fume
+  // daemon is listening — one on the swarm, found by what its node advertises, or one declared
+  // in a `machine` block of the configuration (fume's, or the shared
+  // `~/.config/pyrocosm/machines.tel`). `listen-port` is the port `fume listen` accepts
+  // controllers on, and the port the daemon listens on when a config says `listen`.
+  val Machine = Setting[Text](t"machine", t"run the selection on this machine of the swarm")
 
   val ListenPort =
     Setting[Text](t"listenPort", t"the port on which `fume listen` accepts other machines' runs")
@@ -317,8 +317,8 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
     val target: Optional[Text] = ui.Target()
     val fork: Boolean = ui.Fork().present
     val terms: List[Text] = selectionTerms(rest)
-    val known: List[Machine] = machines()
-    val on: Optional[Text] = onSetting(known)
+    val executors: List[Executor] = Executor.all(machines())
+    val where: Optional[Text] = machineSetting(executors)
     val retention: Int = ui.Retention() match
       case text: Text => safely(text.as[Int]).or(200)
       case _          => 200
@@ -328,11 +328,13 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
 
     execute:
       given Stdio = summon[Invocation].stdio
-      val machine: Optional[Machine] = on.let { name => known.seek(_.name == name) }
+      val machine: Optional[Machine] =
+        where.let { name => executors.seek(_.machine.name == name).let(_.machine) }
 
       classpath match
-        case _ if on.present && machine.absent =>
-          Render.announce(t"no machine named ${on.or(t"")} is configured")
+        case _ if where.present && machine.absent =>
+          Render.announce(t"no machine named ${where.or(t"")} is on the swarm or declared")
+          Render.announce(t"  `fume swarm join <invitation> ${where.or(t"")}` admits this one to it")
           NoMachine
 
         case classpath: LocalClasspath =>
@@ -927,8 +929,18 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
                         Render.announce(t"the connection to ${machine.name} was lost")
 
               outcome match
-                case scala.Left(reason) => Render.announce(Peer.explain(reason))
-                case _                  => ()
+                case scala.Left(reason) =>
+                  Render.announce(Peer.explain(reason))
+
+                  // A machine on the swarm which this one did not join holds no token for
+                  // this one to present: runs go to the machine which invited.
+                  reason match
+                    case Peer.Error.Reason.NoToken(_) =>
+                      Render.announce(t"  this machine holds no token for ${machine.name}; `fume swarm join` it")
+
+                    case _ => ()
+
+                case _ => ()
 
               // A suite left open by a lost connection is recorded as failed.
               state.current.let: suite =>
@@ -1330,7 +1342,8 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
 
     // `fume listen [--listen-port]` — accept runs from controllers on other machines until
     // Ctrl+C, as the daemon does for as long as it lives when a config says `listen`. The
-    // machine's identity fingerprint is printed, for the controllers' `machine` blocks.
+    // listener is advertised on the swarm, so a machine which has joined this one finds it by
+    // name; `fume swarm invite` is how it joins.
     case ui.Listen() :: _ =>
       val port: Int = ui.ListenPort() match
         case text: Text => safely(text.as[Int]).or(Relay.port)
@@ -1353,6 +1366,7 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
           case identity: Peer.Identity =>
             Render.announce(t"this machine's identity is ${Peer.render(identity.fingerprint)}")
             Render.announce(t"listening for fume controllers on port $port (Ctrl+C to stop)")
+            Render.announce(t"`fume swarm invite` here admits another machine, which then runs with --machine")
             Runs.locate()
 
             val stopped: Atomic[Boolean] = Atomic(false)
@@ -1379,31 +1393,6 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
 
           case _ =>
             Render.announce(t"this machine's identity could not be created; is `keytool` available?")
-            RemoteFailed
-
-    // `fume identity` — this machine's certificate fingerprint, for a controller's
-    // `machine` block, and where its token lives.
-    case ui.Identity() :: _ =>
-      execute:
-        given Stdio = summon[Invocation].stdio
-
-        safely(Peer.identity) match
-          case identity: Peer.Identity =>
-            Out.println(t"identity  ${Peer.render(identity.fingerprint)}")
-            Peer.tokenFile.let { file => Out.println(t"token     ${file.encode}") }
-            Peer.token
-            Out.println(t"")
-            Out.println(t"Declare this machine to a controller as:")
-            Out.println(t"")
-            Out.println(t"  machine ${Machine.Identity.local.hostname}")
-            Out.println(t"    host      ${Machine.Identity.local.hostname}")
-            Out.println(t"    port      ${Relay.port}")
-            Out.println(t"    identity  ${Peer.render(identity.fingerprint)}")
-            Out.println(t"    token     <a file holding the token above>")
-            Exit.Ok
-
-          case _ =>
-            Out.println(t"this machine's identity could not be created; is `keytool` available?")
             RemoteFailed
 
     case ui.Watch() :: _ =>
@@ -1496,16 +1485,76 @@ private def suiteFlag(classpath: Optional[LocalClasspath])(using Cli, Interprete
 
 // The machines declared to this invocation: fume's repository configuration, then the user's,
 // then the shared `~/.config/pyrocosm/machines.tel`, a name's first declaration winning. Read
-// eagerly, in the pure section, so `--on` can complete to the names without a lambda having
-// to capture the environment.
+// eagerly, in the pure section, so `--machine` can complete to the names without a lambda
+// having to capture the environment.
 private def machines()(using cli: Cli, environment: Environment): List[Machine] =
   val directory: Text = cli.workingDirectory.directory()
   Machine.resolve(List(Fume.repoConfig(directory), Fume.userConfig, Machine.shared))
 
-// Reads `--on`, its operand completing to the configured machines' names.
-private def onSetting(known: List[Machine])(using Cli, Interpreter, Configurator): Optional[Text] =
-  given discoverable: (Text is Discoverable) = (_, _) => known.map { machine => Suggestion(machine.name) }
-  ui.On()
+// A machine a selection can be sent to, and how its completion describes it.
+private case class Executor(machine: Machine, description: Text)
+
+private object Executor:
+  // Everywhere a run can be sent: each machine on the swarm whose fume daemon is listening
+  // for runs, and then each declared in a `machine` block whose name the swarm did not offer.
+  //
+  // A machine on the swarm is reached by what its node advertises — its addresses, nearest
+  // first, its `listen` port and its identity — and by the token a `fume swarm join` recorded
+  // for it, under the name it was joined as. A machine which joined THIS one instead
+  // advertises itself too, under its hostname, but granted this one no token, which the run
+  // reports when it is chosen. A declaration of the same identity lends its name and token to
+  // the advertised machine, so a box declared by hand and later joined is one machine.
+  def all(known: List[Machine]): List[Executor] =
+    val swarm: Optional[Swarm] = Swarm.of(Fume.name)
+    val self: Text = swarm.let(_.node.identity).or(t"")
+
+    def listening(advert: Advert): Boolean =
+      advert.node.tool == Fume.name && advert.node.identity != self
+      && advert.services.exists(_.name == t"listen")
+
+    def declared(advert: Advert): Optional[Machine] =
+      known.seek { machine => machine.identity.let(_.serialize[Hex]) == advert.node.identity }
+
+    def describe(advert: Advert): Text =
+      val load: Text = advert.load.lay(t""): load =>
+        val hundredths: Long = (load*100.0).toLong
+        t", load ${(hundredths/100).show}.${(hundredths%100/10).show}${(hundredths%10).show}"
+
+      t"${advert.os} ${advert.arch}, ${advert.cores.show} cores$load; fume ${advert.node.version}"
+
+    def advertised(advert: Advert): Executor =
+      val machine: Optional[Machine] = declared(advert)
+      val hosts: List[Text] = if advert.node.hosts.nil then machine.let(_.hosts).or(Nil) else advert.node.hosts
+
+      val reached: Machine =
+        Machine
+          ( machine.let(_.name).or(advert.node.machine),
+            hosts,
+            advert.services.seek(_.name == t"listen").let(_.port),
+            Peer.parseFingerprint(advert.node.identity),
+            machine.let(_.token),
+            advert.capabilities )
+
+      Executor(reached, describe(advert))
+
+    val swarmed: List[Executor] = swarm.let(_.nodes()).or(Nil).filter(listening(_)).map(advertised(_))
+    val names: List[Text] = swarmed.map(_.machine.name)
+
+    val rest: List[Executor] =
+      known.filter { machine => !names.has(machine.name) }.map: machine =>
+        Executor(machine, t"declared in a machine block; not on the swarm")
+
+    swarmed + rest
+
+// Reads `--machine`, its operand completing to the names of the machines a run can be sent
+// to, each described by what its node advertises.
+private def machineSetting(executors: List[Executor])(using Cli, Interpreter, Configurator)
+:   Optional[Text] =
+
+  given discoverable: (Text is Discoverable) =
+    (_, _) => executors.map { executor => Suggestion(executor.machine.name, executor.description) }
+
+  ui.Machine()
 
 // Reads `--kind`, its operand completing to the kind names, comma-continued.
 private def kindSetting()(using Cli, Interpreter, Configurator): Optional[Text] =
@@ -1561,7 +1610,7 @@ private def completeTerms(classpath: Optional[LocalClasspath], rest: List[Argume
 private def selectionArguments(rest: List[Argument]): List[Argument] =
   val valueFlags: List[Flag] =
     List(ui.Classpath.flag, ui.Suite, ui.Kind.flag, ui.Tag, ui.Axis, ui.Exclude, ui.FailFast.flag,
-         ui.MaxLoad.flag, ui.DurationScale.flag, ui.Target.flag, ui.On.flag, ui.ListenPort.flag,
+         ui.MaxLoad.flag, ui.DurationScale.flag, ui.Target.flag, ui.Machine.flag, ui.ListenPort.flag,
          ui.McpPort.flag, ui.Retention.flag)
 
   def recur(args: List[Argument], terms: List[Argument]): List[Argument] = args match
@@ -1647,7 +1696,6 @@ private def usage()(using invocation: Invocation): UsageError.type =
   Out.println(t"  watch    watch the classpath jars and rerun tests on change")
   Out.println(t"  serve    serve the dashboard of runs on the web until Ctrl+C")
   Out.println(t"  listen   run selections sent by fume on other machines until Ctrl+C")
-  Out.println(t"  identity show this machine's certificate fingerprint and token")
   Out.println(t"  mcp      serve the MCP server agents query about runs until Ctrl+C")
   Out.println(t"  about    show fume's version and daemon")
   Out.println(t"  install  install shell tab-completions and the fume manpage")
