@@ -193,6 +193,8 @@ object settings:
     mvn"dev.propensive:pyrocosm-terminal:$pyrocosm",    // its terminal frontend,
     mvn"dev.propensive:pyrocosm-web:$pyrocosm",         // and its web frontend
     mvn"dev.propensive:pyrocosm-cli:$pyrocosm",         // the standard command line (Tool)
+    mvn"dev.propensive:pyrocosm-bus:$pyrocosm",         // what a node of the swarm advertises
+    mvn"dev.propensive:pyrocosm-swarm:$pyrocosm",       // the swarm, for the machines a run can go to
     mvn"dev.propensive:pyrocosm-remote:$pyrocosm")      // machines, the TLS peer, the channel, blobs
 
 // Exposes the fork compiler's `release/lib` jars (from a local build via `settings.scalaHome`, or

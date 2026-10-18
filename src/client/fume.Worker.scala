@@ -42,7 +42,7 @@ import environments.javaBaseEnvironment
 import probates.cancelProbate
 
 // This daemon as a WORKER: a `Tool.Service` that listens (on `listen-port`, 8091 by default)
-// for a controller — a fume on another machine, invoked with `--on <this machine>` — and runs
+// for a controller — a fume on another machine, invoked with `--machine <this machine>` — and runs
 // the selection it sends exactly as a local `fume run` would, except that every suite's event
 // frames are forwarded to the controller, undecoded, instead of folding into a board here. The
 // controller shows, journals and serves the run; this daemon journals it too, as a run by

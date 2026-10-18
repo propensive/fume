@@ -94,7 +94,7 @@ otherwise.
   *Landed (first cut):* `pyrocosm.Machine` declarations (`host`, `port`, `identity`, `token`,
   `capability`) read from fume's configuration and the shared
   `~/.config/pyrocosm/machines.tel`; every `Journal.Run` records the machine it ran on (the
-  `--on` name, or the local hostname). Still to do: the local machine's own `capability`
+  `--machine` name, or the local hostname). Still to do: the local machine's own `capability`
   words in the run record, and the hostname default for a machine block's name.
 
 ## Phase 1: Output modes and static reports
@@ -209,9 +209,11 @@ otherwise.
   MCP receiving each rerun as a new job.
 - **5.3 Change-driven selection.** `--changed` selects suites whose inputs differ from the
   last attested tree (uses 0.3 and 3.1).
-- **5.4 Remote execution.** *Landed (first cut):* `--on <machine>` sends the selection to a
+- **5.4 Remote execution.** *Landed (first cut):* `--machine <name>` sends the selection to a
   fume daemon listening on another machine (`fume listen`, or `listen` in its config), over
   TLS with the worker's self-signed certificate pinned by fingerprint and a shared token. The
+  machine is one of the swarm's — found by what its node advertises, and named as `fume swarm
+  join` recorded it — or, failing that, one declared by hand in a `machine` block. The
   classpath is shipped content-addressed (a directory bundled into a jar first) to the
   worker's blob store under `$XDG_CACHE_HOME/pyrocosm/blobs`, so only entries it lacks
   travel; the worker runs each suite through `EventStream.frames` with a forwarding sink and
@@ -219,7 +221,9 @@ otherwise.
   folds into the same model, board, journal and dashboard as a local run. The machines, TLS
   identity, handshake, framed channel and blob store live in Pyrocosm (`pyrocosm-remote`), so
   Fury shares them. Still to do: shipping fixture files (`input`, 0.3), more than one run at a
-  time per worker, `list --on` and `watch --on`, caching directory digests by mtime,
+  time per worker, `list --machine` and `watch --machine`, caching directory digests by
+  mtime, a run sent to a machine which joined this one (it granted no token), routing by
+  advertised load,
   retention for the blob store, and TEL acceptance so the relay schema can evolve compatibly.
   Sharding (below) and machine-gated routing (3.4) build on this.
 - **5.5 Notifications.** Desktop first: native notifiers on macOS and Linux, plus the
@@ -249,7 +253,7 @@ otherwise.
   coordinates for property cases; `requires` declarations for machine gating; coverage hooks
   reachable from a host; optional `TestEvent` additions (timeouts, flakiness, environment).
 - Sedentary: `NetworkDevice`, `NetworkDevice.Session` and `NetworkDeviceSessional` are
-  superseded by `fume --on` (a suite declaring `LocalhostDevice` stages and measures on the
+  superseded by `fume --machine` (a suite declaring `LocalhostDevice` stages and measures on the
   worker); deprecate them, and make `LocalhostDevice` the default `given`.
 - `octogenarian`: tree hashing of a filtered path set (`ls-files`/`mktree` equivalents).
 - `synesthesia`, `perihelion`, `savagery`: confirm the APIs fume needs are published in the
