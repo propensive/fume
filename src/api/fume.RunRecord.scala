@@ -47,7 +47,7 @@ import encodables.instantTelEncodable
 // the run.
 //
 // Vocabularies: `invoker` is `human`, `claude`, `codex`, `remote` or `mcp`; `outcome` is `passed`,
-// `failed` or `aborted`, and absent while the run is in flight.
+// `failed`, `aborted` or `timed-out`, and absent while the run is in flight.
 case class RunRecord
   ( id:        Text,
     version:   Text,
@@ -113,3 +113,4 @@ object RunRecord:
   val passed: Text = t"passed"
   val failed: Text = t"failed"
   val aborted: Text = t"aborted"
+  val timedOut: Text = t"timed-out"
