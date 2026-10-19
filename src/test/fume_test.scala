@@ -174,6 +174,14 @@ object Tests extends Suite(m"Fume tests"):
       read(project(t"tel 1.0\n\nfail-fast\n"), t"failFast")
     . assert(_ == t"true")
 
+    test(m"a timeout is read from the config and parsed as a duration"):
+      read(project(t"tel 1.0\n\ntimeout 10m\n"), t"timeout").let(Budget.parse(_))
+    . assert(_ == 600_000_000_000L)
+
+    test(m"a timed-out run is recorded as timed-out"):
+      Journal.Outcome.TimedOut.show
+    . assert(_ == RunRecord.timedOut)
+
     test(m"suites are discovered from a directory-form classpath entry"):
       val root = scratch()
       val services = root / "META-INF" / "services"

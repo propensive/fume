@@ -77,7 +77,7 @@ Every vocabulary is a text whose words are Probably's own:
  - a cell's `outcome` is `pass`, `fail`, `throws`, `check-throws`, `aspire-pass` or `aspire-fail`;
  - a test's `status` is its collective outcome: one of those, `mixed` when its cells disagree,
    or `bench`, `stress`, `profile` for a measurement;
- - a run's `outcome` is `passed`, `failed` or `aborted`, and absent while the run is in flight;
+ - a run's `outcome` is `passed`, `failed`, `aborted` or `timed-out`, and absent while the run is in flight;
  - a run's `invoker` is `human`, `claude`, `codex`, `remote` for a run another machine sent, or
    `mcp` for a run launched through this server;
  - a run's `results` are `available`, `partial` (some suites could not stream their events),
@@ -387,7 +387,7 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
                     "type": "string"
                   },
                   "outcome": {
-                    "description": "`passed`, `failed` or `aborted`; absent while the run is in flight",
+                    "description": "`passed`, `failed`, `aborted` or `timed-out`; absent while the run is in flight",
                     "optional": true,
                     "type": "string"
                   },
@@ -753,7 +753,7 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
           "type": "string"
         },
         "outcome": {
-          "description": "`passed`, `failed` or `aborted`; absent while the run is in flight",
+          "description": "`passed`, `failed`, `aborted` or `timed-out`; absent while the run is in flight",
           "optional": true,
           "type": "string"
         },
@@ -2289,7 +2289,7 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
               "type": "string"
             },
             "outcome": {
-              "description": "`passed`, `failed` or `aborted`; absent while the run is in flight",
+              "description": "`passed`, `failed`, `aborted` or `timed-out`; absent while the run is in flight",
               "optional": true,
               "type": "string"
             },
@@ -3027,7 +3027,7 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
               "type": "string"
             },
             "outcome": {
-              "description": "`passed`, `failed` or `aborted`; absent while the run is in flight",
+              "description": "`passed`, `failed`, `aborted` or `timed-out`; absent while the run is in flight",
               "optional": true,
               "type": "string"
             },

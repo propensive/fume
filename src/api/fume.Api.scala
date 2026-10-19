@@ -68,7 +68,7 @@ object Api:
       @memo(t"the machine the suites ran on") machine: Text,
       @memo(t"when the run started, ISO 8601 in UTC") started: Instant over Unix,
       @memo(t"when the run finished; absent while it is in flight") finished: Optional[Instant over Unix],
-      @memo(t"`passed`, `failed` or `aborted`; absent while the run is in flight") outcome: Optional[Text],
+      @memo(t"`passed`, `failed`, `aborted` or `timed-out`; absent while the run is in flight") outcome: Optional[Text],
       @memo(t"the run's length in milliseconds, once finished") duration: Optional[Long],
       @memo(t"the selection terms forwarded to each suite") selection: List[Text],
       @memo(t"how many suites the run scheduled") suites: Int,

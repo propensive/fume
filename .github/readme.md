@@ -132,6 +132,14 @@ classpath out/util.jar
 fail-fast
 ```
 
+A run can be given a deadline with `timeout` (or `--timeout`), in the same forms as `--target`:
+seconds when bare (`90`), or suffixed (`45s`, `15m`, `2h`). It bounds the whole run, from its
+start to its report. When it passes, the run stops as Ctrl+C would stop it: the suite in progress
+is cancelled (a `--fork`ed suite's JVM is killed), the partial report renders, and the run is
+recorded as `timed-out` and exits with status 5. A suite on a classpath too old to stream events
+runs through `Suite#invoke`, which cannot be interrupted safely, so the deadline takes effect when
+it returns.
+
 A missing file is fine (fume needs no configuration), and a file that fails to parse is treated
 as absent rather than aborting the command.
 

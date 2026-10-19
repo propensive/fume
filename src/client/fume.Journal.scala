@@ -51,12 +51,13 @@ import denominative.dysasymptotics.linearSize
 object Journal:
   // How a run ended. A run still in flight has no outcome.
   enum Outcome:
-    case Passed, Failed, Aborted
+    case Passed, Failed, Aborted, TimedOut
 
     def show: Text = this match
-      case Passed  => RunRecord.passed
-      case Failed  => RunRecord.failed
-      case Aborted => RunRecord.aborted
+      case Passed   => RunRecord.passed
+      case Failed   => RunRecord.failed
+      case Aborted  => RunRecord.aborted
+      case TimedOut => RunRecord.timedOut
 
   // A run as the journal holds it: its record, and — for a run in flight — the suite it is
   // executing, which is the daemon's knowledge alone and not persisted.

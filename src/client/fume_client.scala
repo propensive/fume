@@ -75,6 +75,7 @@ object TestsFailed extends Status(1, t"one or more tests failed")
 object UsageError extends Status(2, t"the command line was not understood")
 object NoClasspath extends Status(3, t"no --classpath was specified, or an entry was unreadable")
 object NoSuites extends Status(4, t"no test suites were found on the classpath")
+object RunTimedOut extends Status(5, t"the run did not finish within its --timeout")
 object Unimplemented extends Status(10, t"this subcommand is not yet implemented")
 object NoMachine extends Status(11, t"the machine named by --machine is neither on the swarm nor declared")
 object RemoteFailed extends Status(12, t"the remote machine could not run the selection")
@@ -253,6 +254,17 @@ object ui:
       ( t"target",
         t"scale benchmark, stress and profile durations to fit this total running time" )
 
+  // The whole run's deadline: wall-clock time from the run's start — the `--target` listing
+  // pre-pass and the `--max-load` wait included — to its report, in the same forms as
+  // `--target`. When it passes, the run stops as Ctrl+C stops it, with a partial report, but is
+  // recorded as `timed-out` and exits with its own status. A streaming suite is cancelled where
+  // it stands, and a forked suite's JVM is killed; a LEGACY in-process suite (`Suite#invoke`)
+  // cannot be interrupted safely, so the deadline takes effect when it returns.
+  val Timeout =
+    Setting[Text]
+      ( t"timeout",
+        t"abort the run if it has not finished within this time, such as 90, 45s or 10m" )
+
 // There is no `Boolean is Decodable in Text` given in distillate, so `Setting[Boolean]` reads
 // (from a flag operand, a system property or an environment variable) decode here: `true`,
 // `yes` and `on` — case-insensitively — are true, and anything else is false.
@@ -315,6 +327,7 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
     val maxLoad: Optional[Text] = ui.MaxLoad()
     val durationScale: Optional[Text] = ui.DurationScale()
     val target: Optional[Text] = ui.Target()
+    val timeout: Optional[Text] = ui.Timeout()
     val fork: Boolean = ui.Fork().present
     val terms: List[Text] = selectionTerms(rest)
     val executors: List[Executor] = Executor.all(machines())
@@ -404,6 +417,35 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
               case profanity.Signal(Interrupt.Int, _, _, _) =>
                 aborted() = true
                 SignalResponse.Accept
+
+            // The `--timeout` watchdog, started here so that the deadline bounds everything
+            // the run does: when it passes, it aborts the run just as Ctrl+C would, and
+            // `timedOut` records why. It polls rather than sleeping out the whole deadline,
+            // so that it ends with the run (`settled`) instead of lingering in the daemon.
+            val deadline: Optional[Long] = timeout.let(Budget.parse(_))
+
+            if timeout.present && deadline.absent
+            then Render.announce(t"--timeout must be a positive duration such as 90, 45s or 10m; ignoring it")
+
+            val timedOut: Atomic[Boolean] = Atomic(false)
+            val settled: Atomic[Boolean] = Atomic(false)
+
+            deadline.let: nanos =>
+              val expiry: Instant over Unix = now() + (nanos.toDouble/1e9)*Second
+
+              async:
+                while !settled() && now() < expiry do snooze(0.1*Second)
+
+                if !settled() then
+                  timedOut() = true
+                  aborted() = true
+
+              ()
+
+            // What an aborted run's partial report is headed with.
+            def stopped(): Text =
+              if timedOut() then t"timed out after ${Budget.show(deadline.or(0L))}; the partial report follows"
+              else t"aborted; the partial report follows"
 
             // ONE model and ONE board for the whole run: every suite's events fold into the
             // same model, so the progress gauge counts every scheduled test of the run and
@@ -508,6 +550,9 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
                 // capability cannot flow into `safely`'s enclosing function under capture
                 // checking.
                 def recur(remaining: List[Text]): Boolean = remaining match
+                  case _ if aborted() =>
+                    true
+
                   case head :: tail =>
                     Render.announce(t"  listing $head")
                     model.enter(head)
@@ -515,7 +560,7 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
                     val outcome: Optional[EventStream.Outcome] =
                       safely:
                         streamed(head, t"--list" :: selectionArgs)
-                          ( EventStream.Sink.decoding(collect(_)), () => false, (_, _) => () )
+                          ( EventStream.Sink.decoding(collect(_)), () => aborted(), (_, _) => () )
 
                     outcome match
                       case EventStream.Outcome.Completed(_) => recur(tail)
@@ -673,7 +718,8 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
                   Journal.began(journalId, head)
                   progress.begin(head)
                   val suiteStarted: Instant over Unix = now()
-                  val passed: Boolean = invokeSuite(classpath, head, args, fork, journalId) == Exit.Ok
+                  val passed: Boolean =
+                    invokeSuite(classpath, head, args, fork, () => aborted(), journalId) == Exit.Ok
                   Journal.record(journalId, head, passed, Unset, suiteStarted, Unset, false)
                   progress.end(head)
                   Render.announce(if passed then t"$head: passed" else t"$head: FAILED")
@@ -984,7 +1030,7 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
 
                 val totals: Optional[Doc.Totals] =
                   if ran == 0 then Unset else
-                    if aborted() then Render.announce(t"aborted; the partial report follows")
+                    if aborted() then Render.announce(stopped())
                     Render.suite(document, width, terse)
                     document.totals
 
@@ -1050,7 +1096,7 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
 
                 val totals: Optional[Doc.Totals] =
                   if ran == 0 then Unset else
-                    if aborted() then Render.announce(t"aborted; the partial report follows")
+                    if aborted() then Render.announce(stopped())
                     Render.suite(document, width, terse)
                     document.totals
 
@@ -1060,9 +1106,11 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
                 (failures2, ran2, totals)
 
             val (failures, ran, totals) = result
+            settled() = true
 
             val outcome: Journal.Outcome =
-              if aborted() then Journal.Outcome.Aborted
+              if timedOut() then Journal.Outcome.TimedOut
+              else if aborted() then Journal.Outcome.Aborted
               else if failures == 0 then Journal.Outcome.Passed
               else Journal.Outcome.Failed
 
@@ -1084,7 +1132,12 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
             Render.announce:
               if ran == 0 then t"no tests were run"
               else t"${ran - failures} of $ran suites passed"
-            if failures == 0 then Exit.Ok else TestsFailed
+
+            // Last, so that it is the line a CI log ends on.
+            if timedOut()
+            then Render.announce(t"the run did not finish within ${Budget.show(deadline.or(0L))}")
+
+            if timedOut() then RunTimedOut else if failures == 0 then Exit.Ok else TestsFailed
 
         case _ =>
           Render.announce(t"at least one --classpath must be specified")
@@ -1611,7 +1664,7 @@ private def selectionArguments(rest: List[Argument]): List[Argument] =
   val valueFlags: List[Flag] =
     List(ui.Classpath.flag, ui.Suite, ui.Kind.flag, ui.Tag, ui.Axis, ui.Exclude, ui.FailFast.flag,
          ui.MaxLoad.flag, ui.DurationScale.flag, ui.Target.flag, ui.Machine.flag, ui.ListenPort.flag,
-         ui.McpPort.flag, ui.Retention.flag)
+         ui.McpPort.flag, ui.Retention.flag, ui.Timeout.flag)
 
   def recur(args: List[Argument], terms: List[Argument]): List[Argument] = args match
     case head :: tail =>
@@ -1643,9 +1696,11 @@ private def selectSuites(classpath: LocalClasspath, suite: Optional[Text], terms
 
 // Runs one suite in a fresh JVM — `java -cp <classpath> <suite> <terms…>` — forwarding its
 // output and yielding its exit status. The `java` executable is the daemon's own
-// (`java.home`), so no PATH lookup is involved.
-private def forkSuite(classpath: LocalClasspath, suite: Text, args: List[Text], run: Text)
-   (using Stdio, WorkingDirectory, Environment)
+// (`java.home`), so no PATH lookup is involved. The JVM is killed if `abort` turns true
+// before it exits — on Ctrl+C, or when the run's `--timeout` passes.
+private def forkSuite
+   (classpath: LocalClasspath, suite: Text, args: List[Text], abort: () => Boolean, run: Text)
+   (using Stdio, WorkingDirectory, Monitor, Environment)
 :   Exit =
 
   val java: Text =
@@ -1657,7 +1712,14 @@ private def forkSuite(classpath: LocalClasspath, suite: Text, args: List[Text], 
     val job = command.fork[Text]()
     // The suite's own JVM is a process of the run, for as long as it lives.
     Server.fork(run, job.pid.value)
-    val output: Text = try job.await() finally Server.unfork(run)
+
+    val output: Text =
+      try
+        while job.alive && !abort() do snooze(0.1*Second)
+        if job.alive then job.abort()
+        job.await()
+      finally Server.unfork(run)
+
     Out.print(output)
     job.exitStatus()
 
@@ -1670,16 +1732,21 @@ private def forkSuite(classpath: LocalClasspath, suite: Text, args: List[Text], 
 // whole story for `--fork` and for `--list`, whose selection the event protocol deliberately
 // rejects (the stable text output belongs to the legacy path).
 private def invokeSuite
-   (classpath: LocalClasspath, suite: Text, args: List[Text], fork: Boolean, run: Text = t"")
+   ( classpath: LocalClasspath,
+     suite:     Text,
+     args:      List[Text],
+     fork:      Boolean,
+     abort:     () => Boolean = () => false,
+     run:       Text          = t"" )
    (using Stdio, WorkingDirectory, Monitor, Environment)
 :   Exit =
 
-  if fork then forkSuite(classpath, suite, args, run)
+  if fork then forkSuite(classpath, suite, args, abort, run)
   else
     // The suite renders its own report through the JVM's streams; here they are the terminal's.
     Stdio.divert(summon[Stdio])(Suites.invoke(classpath, suite, args)).or:
       Render.announce(t"$suite could not be run in-process; running it in a separate JVM")
-      forkSuite(classpath, suite, args, run)
+      forkSuite(classpath, suite, args, abort, run)
 
 // The terminal's width from the invocation's `COLUMNS`, or 120. A method of its own, outside
 // the inlined dispatch: read there, the `safely` region's tactic and the inlined `Environment`
