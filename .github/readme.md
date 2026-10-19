@@ -324,4 +324,4 @@ classes.
 ## License
 
 Fume is copyright &copy; 2026 Jon Pretty & Propensive O&Uuml;, and is made available under the
-[Apache 2.0 License](/.github/license.md).
+[Apache 2.0 License](/LICENSE).
