@@ -590,7 +590,7 @@ object Tests extends Suite(m"Fume tests"):
           case Block.Group(content) => kinds(content)
           case Block.Figure(_)      => List(t"figure")
           case Block.Table(_, _, _) => List(t"table")
-          case Block.Heading(_, _)  => List(t"heading")
+          case Block.Heading(_, _, _)  => List(t"heading")
           case Block.Chart(_, _)    => List(t"chart")
           case _                    => List(t"other")
 
