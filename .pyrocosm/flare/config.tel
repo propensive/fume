@@ -1,7 +1,7 @@
 tel 1.0
 
-# Flair checks Fume: every source, against Consequent Style, with the licence header every
-# file begins with. The rules below are measured by `flair metrics` commit by commit; `cast` is
+# Flare checks Fume: every source, against Consequent Style, with the licence header every
+# file begins with. The rules below are measured by `flare metrics` commit by commit; `cast` is
 # enforced too. `make check` runs the profile; CI runs the same command.
 
 rule cast
@@ -18,7 +18,7 @@ rule imperative
 profile default
   source src/**/*.scala
 
-  # The `-language` features the build compiles with, so flair parses the sources exactly as
+  # The `-language` features the build compiles with, so flare parses the sources exactly as
   # the build does.
   language implicitConversions
   language experimental.modularity

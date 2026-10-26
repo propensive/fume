@@ -74,7 +74,7 @@ added as `doc/notes/<version>.md`, which is optional and ungated.
 What a repository *runs* (fume, for most of them; fume itself runs its tests in-process) is pinned in `etc/tools`, not in
 `etc/refs`. A tool is always a release, never a snapshot; it is not walked transitively and does
 not gate a release, because a release of it exists by definition. That distinction is what keeps
-the release graph free of cycles (Soundness runs flair, flair depends on Pyrocosm, Pyrocosm
+the release graph free of cycles (Soundness runs flare, flare depends on Pyrocosm, Pyrocosm
 depends on Soundness). `make tools` installs the pinned commands. Never pin a tool in `etc/refs`
 to get an unreleased build of it: release the tool instead.
 
