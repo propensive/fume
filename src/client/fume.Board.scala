@@ -70,7 +70,7 @@ final class Board(model: Model, val title: Text, progress0: Optional[Progress] =
     interface.activities() = List(Blocks.progress(state, progress0))
 
   // The run's progress so far, for the dashboard's card of it.
-  def activity: Optional[Activity] = interface.activities().prim
+  def activity: Optional[Activity] = interface.activities().head
 
   val interface: Interface =
     Interface

@@ -130,7 +130,7 @@ object Answering extends McpServer.Answers:
     val words: List[Text] = terms.cut(t" ").filter(_ != t"")
 
     val workspace: Text =
-      classpath.cut(t":").filter(_ != t"").prim.lay(t"/") { entry => entry.cut(t"/").skip(1, Rtl).join(t"/") }
+      classpath.cut(t":").filter(_ != t"").head.lay(t"/") { entry => entry.cut(t"/").skip(1, Rtl).join(t"/") }
 
     Headless.launch(parsed, words, workspace) match
       case id: Text =>

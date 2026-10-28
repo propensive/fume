@@ -237,7 +237,7 @@ object Blocks:
 
             val count: List[Inline] = if entry.completions.nil then Nil else List(Inline.Figure(entry.completions.size.toDouble, 0))
 
-            val timing: List[Inline] = entry.benches.prim.lay(averageTime(entry)) { bench => List(time(bench.mean.toLong)) }
+            val timing: List[Inline] = entry.benches.head.lay(averageTime(entry)) { bench => List(time(bench.mean.toLong)) }
             val text = t"${t"  "*Documenting.depth(entry.ref)}${entry.ref.name}"
 
             Block.Row(List(Block.Cell(mark0), Block.Cell(List(Inline.Reference(entry.ref.id))), Block.Cell(Inline.text(text)), Block.Cell(count), Block.Cell(timing)),

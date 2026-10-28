@@ -261,7 +261,7 @@ final class Dashboard():
     val active = Journal.active
     val completed = Journal.completed
 
-    if selected.absent then (active + completed).prim.let { run => selected = run.id }
+    if selected.absent then (active + completed).head.let { run => selected = run.id }
 
     val items: List[Block.Item] = (active + completed).map(runItem)
     val listing: List[Block] = if items.nil then List(Block.paragraph(t"No runs yet.")) else List(Block.Listing(false, items))
