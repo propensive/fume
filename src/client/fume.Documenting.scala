@@ -469,14 +469,14 @@ object Documenting:
 
           // As many blanks as there are metric columns, so a placeholder row is never shorter
           // than the header it sits under.
-          entry.benches.prim.lay(lead + blankCells(benchMetricColumns(sized).size)): bench =>
+          entry.benches.head.lay(lead + blankCells(benchMetricColumns(sized).size)): bench =>
             lead + benchMetricCells(bench, sized)
 
       // The winner is marked only once EVERY scheduled row has its result: a leader among
       // stragglers is not yet the best.
       val highlight: List[Int] =
         if plain.nil || plain.exists(_.benches.nil) then Nil else
-          val rates: List[Long] = plain.map { entry => entry.benches.prim.lay(0L)(throughput(_)) }
+          val rates: List[Long] = plain.map { entry => entry.benches.head.lay(0L)(throughput(_)) }
           val best: Long = rates.maximum.or(0L)
 
           if best == 0L then Nil

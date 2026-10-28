@@ -261,7 +261,7 @@ final class Dashboard():
     val active = Journal.active
     val completed = Journal.completed
 
-    if selected.absent then (active + completed).prim.let { run => selected = run.id }
+    if selected.absent then (active + completed).head.let { run => selected = run.id }
 
     val items: List[Block.Item] = (active + completed).map(runItem)
     val listing: List[Block] = if items.nil then List(Block.paragraph(t"No runs yet.")) else List(Block.Listing(false, items))
@@ -301,8 +301,8 @@ final class Dashboard():
               case _             => Inline.Toned(Tone.Warning, Inline.text(t"aborted"))
 
             val totals: List[Inline] = entry.record.totals.lay(Nil: List[Inline]): totals =>
-              List(Inline.Textual(t"  "), Inline.Figure(totals.passed.toDouble, 0), Inline.Textual(t" passed, "),
-                  Inline.Figure(totals.failed.toDouble, 0), Inline.Textual(t" failed"))
+              List(Inline.Textual(t"  "), Inline.Numeral(totals.passed.toDouble, 0), Inline.Textual(t" passed, "),
+                  Inline.Numeral(totals.failed.toDouble, 0), Inline.Textual(t" failed"))
 
             List(Block.Paragraph(outcome :: totals))
 

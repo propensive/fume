@@ -206,7 +206,7 @@ object Index:
               tags.cut(t",").filter(_ != t""),
               file,
               safely(number.as[Int]).or(0),
-              rest.prim.or(t"") == t"spread" ) )
+              rest.head.or(t"") == t"spread" ) )
 
       case t"nest" :: topic :: method :: groups :: nested :: _ =>
         List(Line.Nest(topicOf(topic, method), name(method).text, path(groups), name(nested).text))
@@ -396,7 +396,7 @@ object Index:
       else safely(Glob.parse(term)).lay(false): glob =>
         // A suite's id may hold a `-`, which makes it a glob rather than an identifier.
         test.links.exists { link => glob.matches(link.name) }
-        || test.links.prim.let(_.moniker).lay(false)(glob.matches(_))
+        || test.links.head.let(_.moniker).lay(false)(glob.matches(_))
         || glob.matches(test.links.map(_.name).join(t"/"))
         || glob.matches(test.path.join(t"/"))
 
@@ -459,7 +459,7 @@ object Index:
 
     if parts.size == 1 then safely(Glob.parse(glob)).lay(false)(_.matches(text))
     else safely(Glob.parse(glob)).present && {
-      val first: Text = parts.prim.or(t"")
+      val first: Text = parts.head.or(t"")
       val last: Text = parts.last.or(t"")
       val before: Text = literalPrefix(glob)
       val after: Text = literalSuffix(glob)
@@ -477,7 +477,7 @@ object Index:
         link.id == term || link.moniker == term || (hex(term) && link.id == t"")
     else
       test.links.exists { link => compatible(term, holed(link)) }
-      || test.links.prim.let(_.moniker).lay(false) { moniker => compatible(term, moniker) }
+      || test.links.head.let(_.moniker).lay(false) { moniker => compatible(term, moniker) }
       || compatible(term, test.links.map(holed).join(t"/"))
       || compatible(term, test.links.map { link => link.moniker.or(holed(link)) }.join(t"/"))
 
@@ -492,7 +492,7 @@ object Index:
       then fixed.exists { link => link.id == term || link.moniker == term }
       else safely(Glob.parse(term)).lay(false): glob =>
         fixed.exists { link => glob.matches(link.name) }
-        || fixed.prim.let(_.moniker).lay(false)(glob.matches(_))
+        || fixed.head.let(_.moniker).lay(false)(glob.matches(_))
 
   // Whether the terms COULD admit the test: `admits`, except that a dynamic test — whose id
   // and full name exist only at runtime — is admitted by any identity term its fixed parts do
@@ -668,7 +668,7 @@ final class Index private[fume] (private[fume] val lines: List[Index.Line]):
     val path: List[Text] = Index.segments(term)
 
     def target(test: Test): List[Text] =
-      Index.locate(test.links, path).let(_.prim).lay(Nil: List[Text]) { link => List(link.id) }
+      Index.locate(test.links, path).let(_.head).lay(Nil: List[Text]) { link => List(link.id) }
 
     val ids: List[Text] = all.flatMap(target).distinct
     if ids.nil || ids.has(t"") then List(term) else ids

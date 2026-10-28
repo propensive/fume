@@ -543,8 +543,8 @@ object Render:
         else t"A fatal error occurred while $activeNames ${if active.size == 1 then t"was" else t"were"} running."
 
       if github then
-        val className = trace.components.prim.let(_.className).or(t"")
-        val message = trace.components.prim.let(_.message).or(t"")
+        val className = trace.components.head.let(_.className).or(t"")
+        val message = trace.components.head.let(_.message).or(t"")
 
         GithubActions.error
           ( message = Figures.abbreviate(t"Fatal error: $className: $message"),
@@ -565,10 +565,10 @@ object Render:
   // ---------------------------------------------------------------- annotations
 
   private def describeFailure(details: List[TestEvent]): Text =
-    details.prim.lay(t"Test failed"):
+    details.head.lay(t"Test failed"):
       case TestEvent.DetailThrows(_, check, trace) =>
-        val className = trace.components.prim.let(_.className).or(t"")
-        val message = trace.components.prim.let(_.message).or(t"")
+        val className = trace.components.head.let(_.className).or(t"")
+        val message = trace.components.head.let(_.message).or(t"")
         if check then Figures.abbreviate(t"Check threw $className: $message")
         else Figures.abbreviate(t"Threw $className: $message")
 

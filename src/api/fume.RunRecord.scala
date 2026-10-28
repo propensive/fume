@@ -77,7 +77,7 @@ case class RunRecord
 object RunRecord:
   // The last segment of a working directory, or the fallback where it has none.
   def name(workspace: Text, fallback: Text): Text =
-    workspace.cut(t"/").filter(_ != t"").reverse.prim.or(fallback)
+    workspace.cut(t"/").filter(_ != t"").reverse.head.or(fallback)
 
   // The counts of a run, or of one suite's share of it.
   case class Totals(passed: Int, failed: Int, aspirePassed: Int, aspireFailed: Int):

@@ -64,22 +64,22 @@ object Blocks:
 
   def time(nanos: Long): Inline = Inline.Amount(nanos.toDouble/1e9, t"s")
   def memory(bytes: Long): Inline = Inline.Amount(bytes.toDouble, t"B")
-  def rate(perSecond: Long): List[Inline] = List(Inline.Figure(perSecond.toDouble, 0), toned(Tone.Accent, t" op/s"))
+  def rate(perSecond: Long): List[Inline] = List(Inline.Numeral(perSecond.toDouble, 0), toned(Tone.Accent, t" op/s"))
 
   def datum(value: Datum): List[Inline] = value match
     case Datum.Blank                 => Nil
     case Datum.Gap                   => List(toned(Tone.Muted, t"–"))
     case Datum.Str(text)             => Inline.text(text)
     case Datum.Title(name, depth)    => Inline.text(t"${t"  "*depth}$name")
-    case Datum.Num(number)           => List(Inline.Figure(number.toDouble, 0))
+    case Datum.Num(number)           => List(Inline.Numeral(number.toDouble, 0))
     case Datum.Time(nanos)           => List(time(nanos))
     case Datum.Memory(bytes)         => List(memory(bytes))
     case Datum.Hash(id)              => List(Inline.Reference(id))
     case Datum.Mark(status)          => mark(status)
     case Datum.Rate(perSecond)       => rate(perSecond)
-    case Datum.Percent(fraction)     => List(Inline.Figure(fraction*100, 1), Inline.Textual(t"%"))
+    case Datum.Percent(fraction)     => List(Inline.Numeral(fraction*100, 1), Inline.Textual(t"%"))
     case Datum.Conf(percentile, bp)  => Inline.text(t"P$percentile ±${Figures.percent(bp)}%")
-    case Datum.Ratio(factor)         => if factor == 1.0 then List(Inline.Symbol(Glyph.Star)) else List(Inline.Figure(factor, 2))
+    case Datum.Ratio(factor)         => if factor == 1.0 then List(Inline.Symbol(Glyph.Star)) else List(Inline.Numeral(factor, 2))
     case Datum.Delta(inner, negative) => toned(Tone.Accent, if negative then t"-" else t"+") :: datum(inner)
 
   private def column(column: Column): Block.Column =
@@ -123,7 +123,7 @@ object Blocks:
 
       val sustained: List[Block] = sequence.bind: (spark: Spark) =>
         spark.sustained.lay(Nil: List[Block]): (n, throughput) =>
-          List(Block.Paragraph(List(Inline.Textual(t"${spark.label}: sustained "), Inline.Figure(n.toDouble, 0), Inline.Textual(t" @ ")) + rate(throughput)))
+          List(Block.Paragraph(List(Inline.Textual(t"${spark.label}: sustained "), Inline.Numeral(n.toDouble, 0), Inline.Textual(t" @ ")) + rate(throughput)))
 
       legend :: Block.Chart(Block.Chart.Kind.Sparkline, series) :: sustained
 
@@ -177,7 +177,7 @@ object Blocks:
               ( Block.Cell(mark(row.status)),
                 Block.Cell(List(Inline.Reference(row.ref.id))),
                 Block.Cell(title(row)),
-                Block.Cell(if row.count == 0 then Nil else List(Inline.Figure(row.count.toDouble, 0))),
+                Block.Cell(if row.count == 0 then Nil else List(Inline.Numeral(row.count.toDouble, 0))),
                 Block.Cell(timing(row.min, row.count >= 2)),
                 Block.Cell(timing(row.avg, true)),
                 Block.Cell(timing(row.max, row.count >= 2)) )) )
@@ -235,9 +235,9 @@ object Blocks:
               else if idle then List(glyph(Tone.Muted, Glyph.Pending))
               else mark(Documenting.entryStatus(entry))
 
-            val count: List[Inline] = if entry.completions.nil then Nil else List(Inline.Figure(entry.completions.size.toDouble, 0))
+            val count: List[Inline] = if entry.completions.nil then Nil else List(Inline.Numeral(entry.completions.size.toDouble, 0))
 
-            val timing: List[Inline] = entry.benches.prim.lay(averageTime(entry)) { bench => List(time(bench.mean.toLong)) }
+            val timing: List[Inline] = entry.benches.head.lay(averageTime(entry)) { bench => List(time(bench.mean.toLong)) }
             val text = t"${t"  "*Documenting.depth(entry.ref)}${entry.ref.name}"
 
             Block.Row(List(Block.Cell(mark0), Block.Cell(List(Inline.Reference(entry.ref.id))), Block.Cell(Inline.text(text)), Block.Cell(count), Block.Cell(timing)),

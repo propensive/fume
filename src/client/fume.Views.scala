@@ -156,10 +156,10 @@ object Views:
       val events: List[TestEvent] = details(state, entry.ref)
 
       val message: Optional[Text] =
-        events.sweep { case TestEvent.DetailMessage(_, message) => message }.prim
+        events.sweep { case TestEvent.DetailMessage(_, message) => message }.head
 
       val thrown: Optional[TestEvent.Trace] =
-        events.sweep { case TestEvent.DetailThrows(_, _, stack) => stack }.prim
+        events.sweep { case TestEvent.DetailThrows(_, _, stack) => stack }.head
 
       val completed: List[TestEvent.Trace] =
         entry.completions.bind[List[TestEvent.Trace], TestEvent.Trace, List[TestEvent.Trace]]:
@@ -174,7 +174,7 @@ object Views:
             Nil
 
       val compare: Optional[TestEvent.DetailCompare] =
-        events.sweep { case compare: TestEvent.DetailCompare => compare }.prim
+        events.sweep { case compare: TestEvent.DetailCompare => compare }.head
 
       def comparison(row: TestEvent.CompareRow): Api.Comparison =
         Api.Comparison(row.depth, row.label, row.kind, row.left, row.right, row.difference)
@@ -185,7 +185,7 @@ object Views:
 
       val stack: Optional[TestEvent.Trace] = thrown match
         case stack: TestEvent.Trace => stack
-        case _                      => completed.prim
+        case _                      => completed.head
 
       val traced: Optional[Api.Trace] = stack match
         case stack: TestEvent.Trace => trace(stack)

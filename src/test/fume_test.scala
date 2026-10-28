@@ -610,7 +610,7 @@ object Tests extends Suite(m"Fume tests"):
 
       test(m"a benchmark over one axis has a bar per value"):
         val model = benchModel(bench(testA1, 40000.0, 1, 0.0, List(integral(t"N", 8))), bench(testA1, 60000.0, 1, 0.0, List(integral(t"N", 64))))
-        members(model, t"bench").prim.let(Charts.axial(_))
+        members(model, t"bench").head.let(Charts.axial(_))
       . assert(_ == Charts.BarData(List(Charts.Slice(t"a1", List(Charts.Bar(t"8", 40.0, 40.0, 40.0), Charts.Bar(t"64", 60.0, 60.0, 60.0)))), Charts.Timebase(t"µs", 1e3)))
 
       test(m"a benchmark over two axes has a group per value of the first and a bar per value of the second"):
@@ -620,7 +620,7 @@ object Tests extends Suite(m"Fume tests"):
             bench(testA1, 30000.0, 1, 0.0, List(integral(t"N", 8), discrete(t"parser", t"jacinta"))),
             bench(testA1, 40000.0, 1, 0.0, List(integral(t"N", 8), discrete(t"parser", t"circe"))) )
 
-        members(model, t"bench").prim.let(Charts.axial(_)).let(_.slices)
+        members(model, t"bench").head.let(Charts.axial(_)).let(_.slices)
       . assert:
           _ == List
             ( Charts.Slice(t"jacinta", List(Charts.Bar(t"4", 10.0, 10.0, 10.0), Charts.Bar(t"8", 30.0, 30.0, 30.0))),
@@ -632,7 +632,7 @@ object Tests extends Suite(m"Fume tests"):
 
       test(m"a scheduled crosstab is prefilled with empty bars, in the schedule's order"):
         val model = benchModel(scheduledGrid)
-        members(model, t"bench").prim.let(Charts.axial(_)).let(_.slices)
+        members(model, t"bench").head.let(Charts.axial(_)).let(_.slices)
       . assert:
           _ == List
             ( Charts.Slice(t"jacinta", List(Charts.Bar(t"4", 0.0, 0.0, 0.0), Charts.Bar(t"8", 0.0, 0.0, 0.0))),
@@ -650,13 +650,13 @@ object Tests extends Suite(m"Fume tests"):
           case pyrocosm.Figure.Revision.Replace(part, _) => part
           case _                                         => t"none"
 
-        (part, members(model, t"bench").prim.let(Charts.axial(_)).let(_.slices.map(_.bars.map(_.mean))))
+        (part, members(model, t"bench").head.let(Charts.axial(_)).let(_.slices.map(_.bars.map(_.mean))))
       . assert(_ == (t"series-1", List(List(0.2, 0.0), List(0.0, 0.1))))
 
       test(m"a scheduled axial benchmark's table lists its values blank until they record"):
         val model = benchModel(TestEvent.TestScheduled(testA1, t"bench", Unset, Nil, List(axis(t"N", t"integral", List(t"4", t"8")))), TestEvent.TestStarted(testA1, 0L))
         val document = Documenting.document(model.state())
-        document.groups.bind(_.blocks).sweep { case Doc.Block.Table(title, _, rows, _) => (title.let(_.id), rows.size, rows.map(_.prim.or(Doc.Datum.Blank))) }
+        document.groups.bind(_.blocks).sweep { case Doc.Block.Table(title, _, rows, _) => (title.let(_.id), rows.size, rows.map(_.head.or(Doc.Datum.Blank))) }
       . assert(_ == List((testA1.id, 2, List(Doc.Datum.Str(t"4"), Doc.Datum.Str(t"8")))))
 
       test(m"a recorded bar replaces only the bars when it fits the axes"):
@@ -908,7 +908,7 @@ object Tests extends Suite(m"Fume tests"):
 
       val index: Index = Index.parse(document)
       val tests: List[Index.Test] = index.tests(t"jacinta.Tests")
-      def nth(count: Int): Optional[Index.Test] = tests.skip(count).prim
+      def nth(count: Int): Optional[Index.Test] = tests.skip(count).head
 
       // `probably.Test.Id#id`, from the names alone.
       def id(above: List[Text], name: Text): Text =
@@ -950,7 +950,7 @@ object Tests extends Suite(m"Fume tests"):
                        t"other-tests / nested" ))
 
       test(m"a test's id is computed from its name and the names above it"):
-        (tests.prim.let(_.id), nth(1).let(_.id))
+        (tests.head.let(_.id), nth(1).let(_.id))
       . assert(_ == ( id(List(t"Jacinta tests"), t"parses a number"),
                       id(List(t"Jacinta tests", t"Parsing and/or printing"), t"parse a document") ))
 
@@ -990,7 +990,7 @@ object Tests extends Suite(m"Fume tests"):
         ( admitted(t"json").size,
           admitted(t"other-tests"),
           admitted(t"json/parsing/*").size,
-          tests.prim.let(_.links.prim.let { link => (link.name, link.moniker) }) )
+          tests.head.let(_.links.head.let { link => (link.name, link.moniker) }) )
       . assert(_ == (4, List(t"nested"), 3, (t"Jacinta tests", t"json")))
 
       def admitted(terms: Text*): List[Text] =
@@ -1027,8 +1027,8 @@ object Tests extends Suite(m"Fume tests"):
       test(m"a suite's id is its moniker unless it is what its title derives"):
         ( Index.derive(t"Honeycomb Tests"),
           Index.derive(t" — "),
-          chains.prim.let(_.links.prim.let(_.written)),
-          chains.last.let(_.links.prim.let(_.written)).absent )
+          chains.head.let(_.links.head.let(_.written)),
+          chains.last.let(_.links.head.let(_.written)).absent )
       . assert(_ == (t"honeycomb-tests", t"suite", t"threads", true))
 
       test(m"a bare word completes to the monikers alone"):
@@ -1042,7 +1042,7 @@ object Tests extends Suite(m"Fume tests"):
       . assert(_ == (List(t"threads", t"timing"), List(t"honeycomb-tests"), true))
 
       test(m"a test is described by every name down to it"):
-        Suggest.terms(cancelled, chains).prim.let(_.description)
+        Suggest.terms(cancelled, chains).head.let(_.description)
       . assert(_ == t"Parasite Tests → Pooled supervisor → Task error handling → $awaiting")
 
       test(m"a scope completes to what is below it, described from there"):
@@ -1232,7 +1232,7 @@ object Tests extends Suite(m"Fume tests"):
         val frames: List[Data] = List(t"first".in[Data], t"second frame".in[Data], t"".in[Data])
         val writer: Optional[Runs.Writer] = Runs.writer(id, 1)
         val sink: EventStream.Sink = Runs.tee(writer, EventStream.Sink.forwarding { _ => () })
-        sink.fingerprint(frames.prim.or(t"".in[Data]))
+        sink.fingerprint(frames.head.or(t"".in[Data]))
         frames.skip(1).each(sink.frame)
         writer.let(_.close())
 
@@ -1366,5 +1366,5 @@ object Tests extends Suite(m"Fume tests"):
 
       test(m"the server serves the schema resource"):
         val result: Json = rpc(t"resources/read", t"""{"uri":"fume://schema"}""").result
-        result.contents.as[List[Json]].prim.let(_.text.as[Text].starts(t"{"))
+        result.contents.as[List[Json]].head.let(_.text.as[Text].starts(t"{"))
       . assert(_ == true)

@@ -187,7 +187,7 @@ object Journal:
   def find(id: Text): Optional[Run] = mutex:
     val known: List[Run] = active0 + completedRuns()
 
-    if id == t"last" then known.prim else
+    if id == t"last" then known.head else
       val found: Optional[Run] = known.seek(_.id == id)
 
       found match

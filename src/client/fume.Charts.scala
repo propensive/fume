@@ -120,7 +120,7 @@ object Charts:
 
     val bars: List[Bar] =
       entries.map: entry =>
-        entry.benches.prim.lay(Bar(entry.ref.name, 0.0, 0.0, 0.0))(bar(entry.ref.name, _, base))
+        entry.benches.head.lay(Bar(entry.ref.name, 0.0, 0.0, 0.0))(bar(entry.ref.name, _, base))
 
     BarData(List(Slice(t"mean", bars)), base)
 
