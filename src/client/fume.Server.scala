@@ -301,8 +301,8 @@ final class Dashboard():
               case _             => Inline.Toned(Tone.Warning, Inline.text(t"aborted"))
 
             val totals: List[Inline] = entry.record.totals.lay(Nil: List[Inline]): totals =>
-              List(Inline.Textual(t"  "), Inline.Figure(totals.passed.toDouble, 0), Inline.Textual(t" passed, "),
-                  Inline.Figure(totals.failed.toDouble, 0), Inline.Textual(t" failed"))
+              List(Inline.Textual(t"  "), Inline.Numeral(totals.passed.toDouble, 0), Inline.Textual(t" passed, "),
+                  Inline.Numeral(totals.failed.toDouble, 0), Inline.Textual(t" failed"))
 
             List(Block.Paragraph(outcome :: totals))
 
