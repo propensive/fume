@@ -143,11 +143,12 @@ it returns.
 A missing file is fine (fume needs no configuration), and a file that fails to parse is treated
 as absent rather than aborting the command.
 
-Some keywords are read by the daemon itself rather than by a subcommand: `port` is the port the
-dashboard serves on (8090 by default), and a bare `serve` asks the daemon to serve the dashboard
-from the moment it starts, for as long as it lives, without a `fume serve` ever being run — so
-`serve` in `~/.config/fume/config.tel` keeps a dashboard at `http://localhost:8090/` whenever fume
-is in use. Likewise a bare `mcp` serves the MCP server from the daemon's start, on `mcp-port`
+Some keywords are read by the daemon itself rather than by a subcommand: a bare `serve` asks the
+daemon to serve the dashboard from the moment it starts, for as long as it lives, without a
+`fume serve` ever being run — so `serve` in `~/.config/fume/config.tel` keeps a dashboard at
+`http://localhost:8090/fume/` whenever fume is in use. That address is the machine's Pyrocosm
+hub, which serves every Pyrocosm tool's front-end under one origin; `port` serves the dashboard
+on a port of its own as well. Likewise a bare `mcp` serves the MCP server from the daemon's start, on `mcp-port`
 (8092 by default). `fume quit` stops them all.
 
 ## Runs are kept

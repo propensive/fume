@@ -1322,7 +1322,7 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
           finally served() = true
 
         Render.announce
-          (t"serving the fume dashboard at http://localhost:$port/ (Ctrl+C to stop)")
+          (t"serving the fume dashboard at ${fume.Dashboard.address(port)} (Ctrl+C to stop)")
 
         // On a terminal the launcher forwards Ctrl+C as a byte rather than a signal, so the
         // input is read for it here, as the load gate does.
