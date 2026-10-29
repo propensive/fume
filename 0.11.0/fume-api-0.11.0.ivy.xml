@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ivy-module version="2.0" xmlns:e="http://ant.apache.org/ivy/extra">
+    <info organisation="dev.propensive" module="fume-api" revision="0.11.0" status="release">
+        <description/>
+    </info>
+    <configurations>
+        <conf name="pom" visibility="public" description=""/>
+        <conf extends="runtime" name="test" visibility="public" description=""/>
+        <conf name="provided" visibility="public" description=""/>
+        <conf name="optional" visibility="public" description=""/>
+        <conf name="compile" visibility="public" description=""/>
+        <conf extends="compile" name="runtime" visibility="public" description=""/>
+    </configurations>
+    <publications>
+        <artifact name="fume-api" type="pom" ext="pom" conf="pom"/>
+        <artifact name="fume-api" type="jar" ext="jar" conf="compile"/>
+    </publications>
+    <dependencies>
+        <dependency org="dev.propensive" name="aviation-core" rev="0.74.0" conf="compile->compile;runtime->runtime"/>
+        <dependency org="dev.propensive" name="coaxial-jvm" rev="0.74.0" conf="compile->compile;runtime->runtime"/>
+        <dependency org="dev.propensive" name="gastronomy-core" rev="0.74.0" conf="compile->compile;runtime->runtime"/>
+        <dependency org="dev.propensive" name="zeppelin-core" rev="0.74.0" conf="compile->compile;runtime->runtime"/>
+        <dependency org="dev.propensive" name="burdock-core" rev="0.74.0" conf="compile->compile;runtime->runtime"/>
+        <dependency org="dev.propensive" name="digression-ansi" rev="0.74.0" conf="compile->compile;runtime->runtime"/>
+        <dependency org="dev.propensive" name="escapade-io" rev="0.74.0" conf="compile->compile;runtime->runtime"/>
+        <dependency org="dev.propensive" name="escritoire-core" rev="0.74.0" conf="compile->compile;runtime->runtime"/>
+        <dependency org="dev.propensive" name="ethereal-core" rev="0.74.0" conf="compile->compile;runtime->runtime"/>
+        <dependency org="dev.propensive" name="eucalyptus-core" rev="0.74.0" conf="compile->compile;runtime->runtime"/>
+        <dependency 
+        org="dev.propensive" name="exoskeleton-completions" rev="0.74.0" conf="compile->compile;runtime->runtime">
+</dependency>
+        <dependency 
+        org="dev.propensive" name="exoskeleton-manpage" rev="0.74.0" conf="compile->compile;runtime->runtime">
+</dependency>
+        <dependency org="dev.propensive" name="galilei-jvm" rev="0.74.0" conf="compile->compile;runtime->runtime"/>
+        <dependency org="dev.propensive" name="guillotine-core" rev="0.74.0" conf="compile->compile;runtime->runtime"/>
+        <dependency org="dev.propensive" name="hellenism-jvm" rev="0.74.0" conf="compile->compile;runtime->runtime"/>
+        <dependency org="dev.propensive" name="iridescence-core" rev="0.74.0" conf="compile->compile;runtime->runtime"/>
+        <dependency org="dev.propensive" name="jacinta-schema" rev="0.74.0" conf="compile->compile;runtime->runtime"/>
+        <dependency org="dev.propensive" name="jacinta-time" rev="0.74.0" conf="compile->compile;runtime->runtime"/>
+        <dependency org="dev.propensive" name="probably-cli" rev="0.74.0" conf="compile->compile;runtime->runtime"/>
+        <dependency org="dev.propensive" name="probably-events" rev="0.74.0" conf="compile->compile;runtime->runtime"/>
+        <dependency org="dev.propensive" name="sedentary-core" rev="0.74.0" conf="compile->compile;runtime->runtime"/>
+        <dependency org="dev.propensive" name="stratiform-core" rev="0.74.0" conf="compile->compile;runtime->runtime"/>
+        <dependency org="dev.propensive" name="stratiform-time" rev="0.74.0" conf="compile->compile;runtime->runtime"/>
+        <dependency org="dev.propensive" name="synesthesia-core" rev="0.74.0" conf="compile->compile;runtime->runtime"/>
+        <dependency org="dev.propensive" name="scintillate-server" rev="0.74.0" conf="compile->compile;runtime->runtime">
+        </dependency>
+        <dependency org="dev.propensive" name="tasseomancy-core" rev="0.74.0" conf="compile->compile;runtime->runtime"/>
+        <dependency org="dev.propensive" name="tessellate-core" rev="0.74.0" conf="compile->compile;runtime->runtime"/>
+        <dependency org="dev.propensive" name="ultimatum-core" rev="0.74.0" conf="compile->compile;runtime->runtime"/>
+        <dependency org="dev.propensive" name="pyrocosm-model" rev="0.10.0" conf="compile->compile;runtime->runtime"/>
+        <dependency org="dev.propensive" name="pyrocosm-terminal" rev="0.10.0" conf="compile->compile;runtime->runtime"/>
+        <dependency org="dev.propensive" name="pyrocosm-web" rev="0.10.0" conf="compile->compile;runtime->runtime"/>
+        <dependency org="dev.propensive" name="pyrocosm-cli" rev="0.10.0" conf="compile->compile;runtime->runtime"/>
+        <dependency org="dev.propensive" name="pyrocosm-bus" rev="0.10.0" conf="compile->compile;runtime->runtime"/>
+        <dependency org="dev.propensive" name="pyrocosm-swarm" rev="0.10.0" conf="compile->compile;runtime->runtime"/>
+        <dependency org="dev.propensive" name="pyrocosm-remote" rev="0.10.0" conf="compile->compile;runtime->runtime"/>
+        <dependency 
+        org="org.scala-lang" name="scala-library" rev="3.10.0-pro-1.0.2" conf="compile->compile;runtime->runtime">
+</dependency>
+        <dependency 
+        org="org.scala-lang" name="proscala-library_3" rev="3.10.0-pro-1.0.2" conf="compile->compile;runtime->runtime">
+</dependency>
+    </dependencies>
+</ivy-module>
