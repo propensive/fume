@@ -37,7 +37,6 @@ import soundness.*
 import charsets.utf8Charset
 import codepages.utf8Codepage
 import denominative.dysasymptotics.linearAccess
-import logging.silentLogging
 import textSanitizers.skipSanitizer
 
 // The static files the dashboard serves beyond pyrocosm's own: the invokers' icons, read from
@@ -59,7 +58,7 @@ object Assets:
   // note on `ui.Classpath`).
   private def read(resource: Text): Optional[Text] =
     given Classloader = Classloader.threadContext
-    safely(resource.as[Path on Classpath]).let { path => safely(path.read[Text]) }
+    safely(resource.as[Path on Classpath]).let: path => safely(path.read[Text])
 
   // An icon by the path it is served at. Only a path naming an invoker's icon is answered, so
   // no other resource can be reached through the dashboard.

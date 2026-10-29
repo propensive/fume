@@ -77,9 +77,9 @@ object Forecasts:
     case suite :: tests :: millis :: Nil =>
       val observation: Optional[Observation] =
         safely(tests.as[Int]).let: tests =>
-          safely(millis.as[Long]).let { millis => Observation(tests, Duration(millis)) }
+          safely(millis.as[Long]).let: millis => Observation(tests, Duration(millis))
 
-      observation.lay(Nil: List[(Text, Observation)]) { observation => List(suite -> observation) }
+      observation.lay(Nil: List[(Text, Observation)]): observation => List(suite -> observation)
 
     case _ =>
       Nil

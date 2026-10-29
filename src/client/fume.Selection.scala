@@ -38,11 +38,11 @@ import denominative.dysasymptotics.linearSize
 
 // Every operand of a REPEATABLE flag (`--tag a --tag b`), where the `Text` topic reads only
 // the first occurrence's.
-case class Repeated(values: List[Text])
-
 object Repeated:
   given interpretable: Repeated is Interpretable = arguments =>
     Repeated(arguments.map { (argument: Argument) => argument() })
+
+case class Repeated(values: List[Text])
 
 // The selection vocabulary fume adds over Probably's positional terms: flag spellings that
 // give tab-completion a clear anchor, each LOWERED to the positional wire term the suite
@@ -55,19 +55,19 @@ object Selection:
   // verbatim, `not:` terms (one per `--exclude`), then the positional terms as written.
   // Identity terms union; kinds, tags and constraints intersect; exclusions subtract last.
   def lower
-     ( kinds:    List[Text],
-       tags:     List[Text],
-       axes:     List[Text],
-       excludes: List[Text],
-       terms:    List[Text] )
+    ( kinds:    List[Text],
+      tags:     List[Text],
+      axes:     List[Text],
+      excludes: List[Text],
+      terms:    List[Text] )
   :   List[Text] =
 
     val kindTerms: List[Text] =
-      kinds.flatMap(_.cut(t",")).filter(_ != t"").distinct.map { (kind: Text) => t"kind:$kind" }
+      kinds.flatMap(_.cut(t",")).filter(_ != t"").distinct.map: (kind: Text) => t"kind:$kind"
 
-    val tagTerms: List[Text] = tags.filter(_ != t"").map { (tag: Text) => t"tag:$tag" }
+    val tagTerms: List[Text] = tags.filter(_ != t"").map: (tag: Text) => t"tag:$tag"
     val axisTerms: List[Text] = axes.filter(_ != t"")
-    val exclusions: List[Text] = excludes.filter(_ != t"").map { (term: Text) => t"not:$term" }
+    val exclusions: List[Text] = excludes.filter(_ != t"").map: (term: Text) => t"not:$term"
 
     kindTerms + tagTerms + axisTerms + exclusions + terms
 
@@ -87,17 +87,19 @@ object Selection:
       flag == t"--$long" || flag.starts(t"--$long=") || flag == t"-$short"
 
     def recur
-       ( remaining: List[Text],
-         kinds:     List[Text],
-         tags:      List[Text],
-         axes:      List[Text],
-         excludes:  List[Text],
-         terms:     List[Text] )
+      ( remaining: List[Text],
+        kinds:     List[Text],
+        tags:      List[Text],
+        axes:      List[Text],
+        excludes:  List[Text],
+        terms:     List[Text] )
     :   List[Text] =
 
       remaining match
         case flag :: tail if flag.starts(t"-") =>
-          if kindNames.exists { (kind: Text) => flag == t"--$kind" }
+          val switch: Boolean = kindNames.exists: kind => flag == t"--$kind"
+
+          if switch
           then recur(tail, kinds :+ flag.skip(2), tags, axes, excludes, terms)
           else if named(flag, t"kind", t"k") then
             val (operand, rest) = value(flag, tail)
@@ -111,9 +113,14 @@ object Selection:
           else if named(flag, t"exclude", t"x") then
             val (operand, rest) = value(flag, tail)
             recur(rest, kinds, tags, axes, excludes + operand.lay(Nil: List[Text])(List(_)), terms)
-          else if skipped.has(flag)
-          then recur(tail match { case _ :: rest => rest; case _ => Nil }, kinds, tags, axes, excludes, terms)
-          else recur(tail, kinds, tags, axes, excludes, terms)
+          else if skipped.has(flag) then
+            val following: List[Text] = tail match
+              case _ :: rest => rest
+              case _         => Nil
+
+            recur(following, kinds, tags, axes, excludes, terms)
+          else
+            recur(tail, kinds, tags, axes, excludes, terms)
 
         case term :: tail =>
           recur(tail, kinds, tags, axes, excludes, terms :+ term)

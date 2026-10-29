@@ -35,17 +35,15 @@ package fume
 // `Relay` is fume's own message enum, not turbulence's `Relay`.
 import soundness.{Relay as _, *}
 
-import probably.TestEvent
-import pyrocosm.{Advert, Blobs, Channel, Machine, Peer, Swarm}
-
-// Explicit, so that it outranks the `Tool` the `soundness.*` wildcard exports (anthology's);
-// `standard` is a package-level extension on it.
-import pyrocosm.Tool
-
 import alphabets.hexLowerCase
 import backstops.silentBackstop
 import interpreters.posixInterpreter
 import logging.silentLogging
+import probably.TestEvent
+// Explicit, so that it outranks the `Tool` the `soundness.*` wildcard exports (anthology's);
+// `standard` is a package-level extension on it.
+import pyrocosm.Tool
+import pyrocosm.{Advert, Blobs, Channel, Machine, Peer, Swarm}
 import systems.javaBaseSystem
 import threads.platformThreads
 
@@ -60,9 +58,9 @@ val Fume: Tool =
 
   Tool
     ( t"fume",
-      prose = t"Fume is the test runner for the Soundness ecosystem: it runs Probably tests "
-            + t"and Sedentary benchmarks from a prebuilt classpath, discovering suites "
-            + t"through the META-INF/services/probably.Suite index.",
+      prose = t"Fume is the test runner for the Soundness ecosystem: it runs Probably tests " +
+        t"and Sedentary benchmarks from a prebuilt classpath, discovering suites " +
+        t"through the META-INF/services/probably.Suite index.",
       web   = fume.Dashboard.web,
       services = List(fume.Worker.service, fume.McpServer.service) )
 
@@ -77,7 +75,10 @@ object NoClasspath extends Status(3, t"no --classpath was specified, or an entry
 object NoSuites extends Status(4, t"no test suites were found on the classpath")
 object RunTimedOut extends Status(5, t"the run did not finish within its --timeout")
 object Unimplemented extends Status(10, t"this subcommand is not yet implemented")
-object NoMachine extends Status(11, t"the machine named by --machine is neither on the swarm nor declared")
+
+object NoMachine
+extends Status(11, t"the machine named by --machine is neither on the swarm nor declared")
+
 object RemoteFailed extends Status(12, t"the remote machine could not run the selection")
 
 // Fume's user interface, in one namespace: its subcommands, flags and settings. The object
@@ -127,9 +128,14 @@ object ui:
   // The kind restriction, one switch per kind. Each present flag adds its kind as a `kind:`
   // selection term for `probably.Selection.parse`, so combinations union (`--test --bench`
   // runs both), exactly as Probably's own `kind:` terms do; none present runs every kind.
-  val Test = Flag[Unit]("test", false, Nil, "run ordinary unit tests; all kinds run when none is given")
+  val Test =
+    Flag[Unit]("test", false, Nil, "run ordinary unit tests; all kinds run when none is given")
+
   val Bench = Flag[Unit]("bench", false, Nil, "run benchmarks; all kinds run when none is given")
-  val Stress = Flag[Unit]("stress", false, Nil, "run stress tests; all kinds run when none is given")
+
+  val Stress =
+    Flag[Unit]("stress", false, Nil, "run stress tests; all kinds run when none is given")
+
   val Profile = Flag[Unit]("profile", false, Nil, "run profiles; all kinds run when none is given")
 
   // The flag spellings of the selection grammar. Each lowers (`Selection.lower`) to the
@@ -171,18 +177,23 @@ object ui:
   val Axes = Flag[Unit]("axes", false, Nil, "with list: show each test's tags and axes")
 
   val Tags =
-    Flag[Unit]("tags", false, Nil, "with list: show the distinct tags and how many tests carry each")
+    Flag[Unit]
+      ( "tags", false, Nil, "with list: show the distinct tags and how many tests carry each" )
 
   val Scan =
     Flag[Unit]
       ( "scan",
         false,
         Nil,
-        "with list: run each suite's body to list its tests, rather than read the index of them" )
+        "with list: run each suite's body to list its tests, rather than read the index of " +
+          "them" )
 
   val Fork =
     Flag[Unit]
-      ( "fork", false, Nil, "run each suite in a JVM of its own, in this directory and environment" )
+      ( "fork",
+        false,
+        Nil,
+        "run each suite in a JVM of its own, in this directory and environment" )
 
   // Single-valued options are `Setting`s rather than `Flag`s, so each is also configurable
   // through the `Configurator` cascade `Fume.standard` provides; the camelCase name derives the
@@ -271,7 +282,6 @@ object ui:
 given decodable: (Boolean is Decodable in Text) = value =>
   value.lower == t"true" || value.lower == t"yes" || value.lower == t"on"
 
-
 // Reads all four kind switches — unconditionally, so that every one of them registers for
 // tab-completion (see the note in `runClient`) — and yields the `kind:` terms they select.
 private def selectedKinds(using Cli, Interpreter): List[Text] =
@@ -312,7 +322,10 @@ object Client uses parasite.threads, surveillance.Watcher:
 // The dispatch is a method rather than the body of the `cli` block: that block runs on a
 // connection's task and may retain only what is durable, a rule the inline body's closures (every
 // `safely`, the tasks a run spawns) fail under, where a method's are typed on their own.
-private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, Configurator): Execution =
+private def dispatch()
+  ( using Cli, Resident, Monitor, Environment, Interpreter, Configurator )
+:   Execution =
+
   // The run command's whole body, shared by `fume run …` and the BARE `fume …` (running is
   // the default when no subcommand is given).
   def runSelection(rest: List[Argument]) =
@@ -332,22 +345,28 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
     val terms: List[Text] = selectionTerms(rest)
     val executors: List[Executor] = Executor.all(machines())
     val where: Optional[Text] = machineSetting(executors)
+
     val retention: Int = ui.Retention() match
       case text: Text => safely(text.as[Int]).or(200)
       case _          => 200
+
     val workspace: Text = summon[Cli].workingDirectory.directory()
 
     completeTerms(classpath, rest)
 
     execute:
       given Stdio = summon[Invocation].stdio
+
       val machine: Optional[Machine] =
-        where.let { name => executors.seek(_.machine.name == name).let(_.machine) }
+        where.let: name => executors.seek(_.machine.name == name).let(_.machine)
 
       classpath match
         case _ if where.present && machine.absent =>
           Render.announce(t"no machine named ${where.or(t"")} is on the swarm or declared")
-          Render.announce(t"  `fume swarm join <invitation> ${where.or(t"")}` admits this one to it")
+
+          Render.announce
+            ( t"  `fume swarm join <invitation> ${where.or(t"")}` admits this one to it" )
+
           NoMachine
 
         case classpath: LocalClasspath =>
@@ -391,7 +410,7 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
 
             if durationScale.present && target.present
             then Render.announce
-                   (t"--target and --duration-scale are mutually exclusive; using --duration-scale")
+              ( t"--target and --duration-scale are mutually exclusive; using --duration-scale" )
 
             val width: Int = terminalWidth()
             val terse: Boolean = fume.GithubActions.terse
@@ -401,7 +420,8 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
             import denominative.dysasymptotics.linearSize
 
             if chosen.absent && suites.size < discovered.size
-            then Render.announce(t"the selection reaches ${suites.size} of ${discovered.size} suites")
+            then Render.announce
+              ( t"the selection reaches ${suites.size} of ${discovered.size} suites" )
 
             // The board's frontend drives the terminal through the invocation's console, a
             // tracked capability sealed here for the run, as flame does for its commands.
@@ -425,7 +445,8 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
             val deadline: Optional[Long] = timeout.let(Budget.parse(_))
 
             if timeout.present && deadline.absent
-            then Render.announce(t"--timeout must be a positive duration such as 90, 45s or 10m; ignoring it")
+            then Render.announce
+              ( t"--timeout must be a positive duration such as 90, 45s or 10m; ignoring it" )
 
             val timedOut: Atomic[Boolean] = Atomic(false)
             val settled: Atomic[Boolean] = Atomic(false)
@@ -444,7 +465,8 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
 
             // What an aborted run's partial report is headed with.
             def stopped(): Text =
-              if timedOut() then t"timed out after ${Budget.show(deadline.or(0L))}; the partial report follows"
+              if timedOut()
+              then t"timed out after ${Budget.show(deadline.or(0L))}; the partial report follows"
               else t"aborted; the partial report follows"
 
             // ONE model and ONE board for the whole run: every suite's events fold into the
@@ -488,7 +510,7 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
               suite -> index.tests(suite).count(Index.admits(_, selectionArgs))
 
             val declared: Map[Text, Int] =
-              suites.filter { suite => index.knows(suite) && (narrowed || !forecast.known(suite)) }
+              suites.filter: suite => index.knows(suite) && (narrowed || !forecast.known(suite))
               . map(declares).to[Map]
 
             val progress: Progress = Progress(suites, forecast, declared)
@@ -580,17 +602,21 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
                   val priced: Long = Budget.expected(schedule.toList.to(List))
 
                   if priced == 0L then
-                    Render.announce
-                      (t"the selection has no timed measurements; ignoring --target")
+                    Render.announce(t"the selection has no timed measurements; ignoring --target")
                     Unset
                   else
                     val factor: Text = Budget.factor(nanos, priced)
+
                     Render.announce:
-                      t"the selection expects ${Budget.show(priced)} of measurement; scaling by $factor to fit ${Budget.show(nanos)}"
+                      t"the selection expects ${Budget.show(priced)} of measurement; " +
+                        t"scaling by $factor to fit ${Budget.show(nanos)}"
+
                     t"--scale=$factor"
 
-            if target.present && scaleTerm.absent && budgetTerm.absent && target.let(Budget.parse(_)).absent
-            then Render.announce(t"--target must be a positive duration such as 90, 45s or 10m; ignoring it")
+            if target.present && scaleTerm.absent && budgetTerm.absent &&
+              target.let(Budget.parse(_)).absent
+            then Render.announce
+              ( t"--target must be a positive duration such as 90, 45s or 10m; ignoring it" )
 
             val scaleTerms: List[Text] =
               scaleTerm.or(budgetTerm).lay(Nil: List[Text])(List(_))
@@ -633,7 +659,7 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
 
             Runs.prune(retention)
             Server.open(journalId, model)
-            board.let { board => Server.attach(journalId, board) }
+            board.let: board => Server.attach(journalId, board)
 
             // Each suite's number in the run, which names its files in the run directory.
             val numbers: Map[Text, Int] =
@@ -647,13 +673,13 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
             // flashes the alternate screen, and stays up until the LAST suite has streamed
             // (`model.finish()` below). Leaving it (Escape, Ctrl+C or Ctrl+D) before then
             // aborts the run.
-            val frontend: Optional[pyrocosm.TerminalFrontend] = if !shown then Unset else board.let: _ =>
-              import strategies.throwUnsafely
-              import fume.Figures.measurable
-              import tableStyles.thickTableStyle
-              import palettes.solarizedDarkGaugePalette
-              scala.caps.unsafe.unsafeAssumePure
-                (pyrocosm.TerminalFrontend(Occupancy.Fullscreen))
+            val frontend: Optional[pyrocosm.TerminalFrontend] =
+              if !shown then Unset else board.let: _ =>
+                import strategies.throwUnsafely
+                import fume.Figures.measurable
+                import tableStyles.thickTableStyle
+                import palettes.solarizedDarkGaugePalette
+                scala.caps.unsafe.unsafeAssumePure(pyrocosm.TerminalFrontend(Occupancy.Fullscreen))
 
             // Fulfilled when the board has closed and the terminal is restored, so the
             // report below prints onto the ordinary screen.
@@ -664,6 +690,7 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
             board.let: board =>
               async:
                 var tick: Int = 0
+
                 while !model.finished do
                   board.repaint(force = tick%10 == 0)
                   tick += 1
@@ -675,6 +702,7 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
               async:
                 try
                   snooze(0.3*Second)
+
                   board.let: board =>
                     if !model.finished then
                       frontend.run(board.interface):
@@ -718,8 +746,10 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
                   Journal.began(journalId, head)
                   progress.begin(head)
                   val suiteStarted: Instant over Unix = now()
+
                   val passed: Boolean =
                     invokeSuite(classpath, head, args, fork, () => aborted(), journalId) == Exit.Ok
+
                   Journal.record(journalId, head, passed, Unset, suiteStarted, Unset, false)
                   progress.end(head)
                   Render.announce(if passed then t"$head: passed" else t"$head: FAILED")
@@ -777,6 +807,7 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
                     Journal.record
                       ( journalId, head, passed, totals, suiteStarted, eventsOf(head, writer),
                         captureOf(head) )
+
                     progress.end(head)
                     val failures2 = if passed then failures else failures + 1
 
@@ -803,14 +834,18 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
                       next(false, Unset)
 
                     case EventStream.Outcome.Incompatible(theirs, ours) =>
-                      Render.announce
-                        (t"the classpath was built against an incompatible Soundness; using the legacy run")
+                      Render.announce:
+                        t"the classpath was built against an incompatible Soundness; " +
+                          t"using the legacy run"
+
                       Render.announce(t"  the suites' event schema is $theirs")
                       Render.announce(t"  fume's is                   $ours")
                       (failures, ran, remaining)
 
                     case _ =>
-                      Render.announce(t"the classpath predates event streaming; using the legacy run")
+                      Render.announce:
+                        t"the classpath predates event streaming; using the legacy run"
+
                       (failures, ran, remaining)
 
                 case _ =>
@@ -825,10 +860,13 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
               Render.announce(t"connecting to ${machine.name} (${machine.hosts.join(t", ")})")
 
               // Each entry's digest and bytes: a directory is bundled into a jar first.
+              def blob(path: Text): List[(Blobs.Entry, Data)] =
+                List(unsafely(Blobs.prepare(path.as[Path on Linux], path)))
+
               val prepared: List[(Blobs.Entry, Data)] =
                 classpath.entries.bind:
-                  case Classpath.Entry.Jar(path)       => List(unsafely(Blobs.prepare(path.as[Path on Linux], path)))
-                  case Classpath.Entry.Directory(path) => List(unsafely(Blobs.prepare(path.as[Path on Linux], path)))
+                  case Classpath.Entry.Jar(path)       => blob(path)
+                  case Classpath.Entry.Directory(path) => blob(path)
                   case _                               => Nil
 
               // Per-suite state as the frames arrive, in one object so the consumer task
@@ -854,11 +892,17 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
 
                 if state.expectingFingerprint then
                   state.expectingFingerprint = false
+
                   if !Array.same(data, probably.Streamer.fingerprint) then
                     state.incompatible = true
-                    Render.announce(t"$suite was built against an incompatible Soundness; its events cannot be read")
+
+                    Render.announce:
+                      t"$suite was built against an incompatible Soundness; " +
+                        t"its events cannot be read"
+
+                    val ours: Text = probably.Streamer.fingerprint.serialize[Hex]
                     Render.announce(t"  the suite's event schema is ${data.serialize[Hex]}")
-                    Render.announce(t"  fume's is                   ${probably.Streamer.fingerprint.serialize[Hex]}")
+                    Render.announce(t"  fume's is                   $ours")
                 else if !state.incompatible then
                   model.handle(probably.Streamer.read(data))
                   board.let(_.refresh())
@@ -871,10 +915,12 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
 
                 val passed: Boolean = outcome match
                   case Relay.completed => !state.incompatible && (exit == 0 || emptySelection)
+
                   case Relay.failed =>
                     Render.announce(t"the worker's event consumer failed while $suite was running")
-                    detail.cut(t"\n").each { (line: Text) => Render.announce(t"  $line") }
+                    detail.cut(t"\n").each: (line: Text) => Render.announce(t"  $line")
                     false
+
                   case _ =>
                     Render.announce(t"$suite cannot stream events, so the worker did not run it")
                     false
@@ -893,26 +939,32 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
                 if !passed && failFast then state.stop = true
 
               val outcome: scala.Either[Peer.Error.Reason, Unit] =
-                Peer.exchange[Relay, Unit](machine, t"fume", Fume.version, Relay.codec, Relay.port): session =>
+                Peer.exchange[Relay, Unit](machine, t"fume", Fume.version, Relay.codec, Relay.port):
+                  session =>
                     val identity = session.peer.identity
 
                     Render.announce:
-                      t"running on ${machine.name}: ${identity.os} ${identity.arch}, ${identity.cores} cores, fume ${session.peer.version}"
+                      t"running on ${machine.name}: ${identity.os} ${identity.arch}, " +
+                        t"${identity.cores} cores, fume ${session.peer.version}"
 
                     session.send(Relay.Plan(prepared.map(_(0)), suites, args, maxLoad))
 
                     session.receive() match
                       case Channel.Frame.Message(Relay.Need(digests)) =>
                         val shipping: List[(Blobs.Entry, Data)] =
-                          prepared.filter { (entry, _) => digests.has(entry.digest) }
+                          prepared.filter: (entry, _) => digests.has(entry.digest)
 
                         if !shipping.nil then
-                          val bytes: Long = shipping.fold(0L) { (sum, entry) => sum + entry(1).length }
-                          Render.announce(t"shipping ${shipping.size} of ${prepared.size} classpath entries (${bytes/1024} KiB)")
+                          val bytes: Long = shipping.fold(0L): (sum, entry) => sum + entry(1).length
+
+                          Render.announce:
+                            t"shipping ${shipping.size} of ${prepared.size} classpath entries " +
+                              t"(${bytes/1024} KiB)"
 
                         shipping.each: (entry, data) =>
                           Blobs.chunks(data).each: (offset, chunk) =>
-                            session.send(Relay.Blob(entry.digest, offset, offset + chunk.length >= data.length), chunk)
+                            val last: Boolean = offset + chunk.length >= data.length
+                            session.send(Relay.Blob(entry.digest, offset, last), chunk)
 
                         session.send(Relay.Start)
 
@@ -956,7 +1008,8 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
                           recur()
 
                         def drained(): Boolean =
-                          scala.caps.unsafe.unsafeAssumeSeparate(safely(consumer.await(0.05*Second)).present)
+                          scala.caps.unsafe.unsafeAssumeSeparate:
+                            safely(consumer.await(0.05*Second)).present
 
                         def spin(): Unit =
                           if !drained() then
@@ -982,7 +1035,8 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
                   // this one to present: runs go to the machine which invited.
                   reason match
                     case Peer.Error.Reason.NoToken(_) =>
-                      Render.announce(t"  this machine holds no token for ${machine.name}; `fume swarm join` it")
+                      Render.announce:
+                        t"  this machine holds no token for ${machine.name}; `fume swarm join` it"
 
                     case _ => ()
 
@@ -1025,8 +1079,9 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
                     val kept: Text = Captures.record(captured).lay(t"not kept"): path =>
                       t"kept in ${path.encode}"
 
-                    Render.announce
-                      ( t"${captured.suite} printed ${captured.lines} lines outside its report; $kept" )
+                    Render.announce:
+                      t"${captured.suite} printed ${captured.lines} lines outside its report; " +
+                        t"$kept"
 
                 val totals: Optional[Doc.Totals] =
                   if ran == 0 then Unset else
@@ -1039,8 +1094,7 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
                 val (failures, ran) = legacyRun(suites, 0, 0)
                 (failures, ran, Unset)
               else if listed == false then
-                Render.announce
-                  (t"the classpath cannot stream test events; using the legacy run")
+                Render.announce(t"the classpath cannot stream test events; using the legacy run")
                 val (failures, ran) = legacyRun(suites, 0, 0)
                 (failures, ran, Unset)
               else
@@ -1070,14 +1124,14 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
                     val kept: Text = Captures.record(captured).lay(t"not kept"): path =>
                       t"kept in ${path.encode}"
 
-                    Render.announce
-                      ( t"${captured.suite} printed ${captured.lines} lines outside its report; $kept" )
+                    Render.announce:
+                      t"${captured.suite} printed ${captured.lines} lines outside its report; " +
+                        t"$kept"
 
                 consumerFailures.each: (suite, error) =>
                   // Written to a file first: the terminal may be mid-repaint, and a trace
                   // on stderr inside the alternate buffer is lost when the board closes.
                   import codepages.utf8Codepage
-                  import filesystemBackends.javaBaseFilesystem
                   import temporaryDirectories.systemTemporaryDirectory
 
                   val trace: Text = error.stackTrace.show
@@ -1087,12 +1141,13 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
                     file.write(trace)
                     file
 
-                  Render.announce(t"the event consumer failed while $suite was running; the suite was stopped")
+                  Render.announce:
+                    t"the event consumer failed while $suite was running; the suite was stopped"
 
                   path.let: path =>
                     Render.announce(t"the stack trace is in ${path.encode}, and follows:")
 
-                  trace.cut(t"\n").each { (line: Text) => Out.println(line) }
+                  trace.cut(t"\n").each: (line: Text) => Out.println(line)
 
                 val totals: Optional[Doc.Totals] =
                   if ran == 0 then Unset else
@@ -1130,8 +1185,7 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
             // is the shape of an abort — Ctrl+C at the load gate, or before the first suite
             // began — and of a selection that admitted no suite.
             Render.announce:
-              if ran == 0 then t"no tests were run"
-              else t"${ran - failures} of $ran suites passed"
+              if ran == 0 then t"no tests were run" else t"${ran - failures} of $ran suites passed"
 
             // Last, so that it is the line a CI log ends on.
             if timedOut()
@@ -1193,6 +1247,7 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
 
       execute:
         given Stdio = summon[Invocation].stdio
+
         classpath match
           case classpath: LocalClasspath =>
             val suites: List[Text] = selectSuites(classpath, suite())
@@ -1228,14 +1283,16 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
                     Out.println(t"$tag  ${tests.count(_.tags.has(tag))}")
                 else
                   val listing: List[Text] = tests.map(_.listing)
-                  listing.each { line => Out.println(t"$line") }
+                  listing.each: line => Out.println(t"$line")
 
                 val unlisted: Int =
-                  tests.count(_.dynamic) + suites.fold(0) { (count, suite) => count + index.open(suite) }
+                  tests.count(_.dynamic) +
+                    suites.fold(0): (count, suite) => count + index.open(suite)
 
                 if unlisted > 0 then
                   Render.announce:
-                    t"$unlisted declarations name their tests only as the suite runs; `fume list --scan` runs the suites to list them"
+                    t"$unlisted declarations name their tests only as the suite runs; " +
+                      t"`fume list --scan` runs the suites to list them"
 
                 Exit.Ok
               else if showAxes || showTags || scan then
@@ -1254,7 +1311,8 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
                     val kind: Text = if test.kind == t"check" then t"test" else test.kind
                     val tags: Text = if test.tags.nil then t"-" else test.tags.join(t",")
                     val path: Text = test.ref.path.join(t"/")
-                    Out.println(t"${test.ref.id}  $kind  $path  $tags  ${Suggest.axesText(test.axes)}")
+                    val axes = Suggest.axesText(test.axes)
+                    Out.println(t"${test.ref.id}  $kind  $path  $tags  $axes")
 
                 // `--scan` alone: the lines an indexed listing prints, from the run.
                 if !showTags && !showAxes then
@@ -1318,11 +1376,10 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
         Server.announce(t"dashboard", port)
 
         async:
-          try frontend.run(dashboard.interface)(dashboard.handle)
-          finally served() = true
+          try frontend.run(dashboard.interface)(dashboard.handle) finally served() = true
 
-        Render.announce
-          (t"serving the fume dashboard at ${fume.Dashboard.address(port)} (Ctrl+C to stop)")
+        Render.announce:
+          t"serving the fume dashboard at ${fume.Dashboard.address(port)} (Ctrl+C to stop)"
 
         // On a terminal the launcher forwards Ctrl+C as a byte rather than a signal, so the
         // input is read for it here, as the load gate does.
@@ -1374,7 +1431,9 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
         // The task may retain only what is durable, which the invocation's configurator is not;
         // the server reads the daemon's configuration, which outlives every client, so the run
         // is vouched pure for the task, as pyrocosm's `Tool` does for the services it launches.
-        val serve: () -> Unit = scala.caps.unsafe.unsafeAssumePure(() => Fume.run(fume.McpServer.service, port))
+        val serve: () -> Unit =
+          scala.caps.unsafe.unsafeAssumePure:
+            () => Fume.run(fume.McpServer.service, port)
 
         async:
           try serve() finally stopped() = true
@@ -1419,13 +1478,18 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
           case identity: Peer.Identity =>
             Render.announce(t"this machine's identity is ${Peer.render(identity.fingerprint)}")
             Render.announce(t"listening for fume controllers on port $port (Ctrl+C to stop)")
-            Render.announce(t"`fume swarm invite` here admits another machine, which then runs with --machine")
+
+            Render.announce:
+              t"`fume swarm invite` here admits another machine, which then runs with --machine"
+
             Runs.locate()
 
             val stopped: Atomic[Boolean] = Atomic(false)
 
             // Vouched pure for the task, as above.
-            val serve: () -> Unit = scala.caps.unsafe.unsafeAssumePure(() => Fume.run(fume.Worker.service, port))
+            val serve: () -> Unit =
+              scala.caps.unsafe.unsafeAssumePure:
+                () => Fume.run(fume.Worker.service, port)
 
             async:
               try serve() finally stopped() = true
@@ -1445,7 +1509,9 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
             Exit.Ok
 
           case _ =>
-            Render.announce(t"this machine's identity could not be created; is `keytool` available?")
+            Render.announce:
+              t"this machine's identity could not be created; is `keytool` available?"
+
             RemoteFailed
 
     case ui.Watch() :: _ =>
@@ -1456,6 +1522,7 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
 
       execute:
         given Stdio = summon[Invocation].stdio
+
         classpath match
           case classpath: LocalClasspath =>
             Render.announce(t"'watch' is not yet implemented")
@@ -1490,7 +1557,7 @@ private def dispatch()(using Cli, Resident, Monitor, Environment, Interpreter, C
 // directory, and descent into a directory as it is typed, exactly as a positional path
 // argument completes.
 private def classpathSetting()
-   (using cli: Cli, interpreter: Interpreter, configurator: Configurator)
+  ( using cli: Cli, interpreter: Interpreter, configurator: Configurator )
 :   Optional[LocalClasspath] =
 
   // Only the (pure) directory name is captured by the lambdas below, not the `Cli` capability
@@ -1511,8 +1578,7 @@ private def classpathSetting()
 
     val entries: List[Classpath.Entry.Directory | Classpath.Entry.Jar] =
       expanded.map: (entry: Text) =>
-        if entry.ends(t".jar") then Classpath.Entry.Jar(entry)
-        else Classpath.Entry.Directory(entry)
+        if entry.ends(t".jar") then Classpath.Entry.Jar(entry) else Classpath.Entry.Directory(entry)
 
     LocalClasspath(entries*)
 
@@ -1531,8 +1597,9 @@ private def classpathSetting()
 // nothing.
 private def suiteFlag(classpath: Optional[LocalClasspath])(using Cli, Interpreter)
 :   Prospective[Text] =
+
   given discoverable: (Text is Discoverable) = (_, _) =>
-    classpath.lay(List()) { cp => Suites.discover(cp).map(Suggestion(_)) }
+    classpath.lay(List()): cp => Suites.discover(cp).map(Suggestion(_))
 
   ui.Suite()
 
@@ -1543,9 +1610,6 @@ private def suiteFlag(classpath: Optional[LocalClasspath])(using Cli, Interprete
 private def machines()(using cli: Cli, environment: Environment): List[Machine] =
   val directory: Text = cli.workingDirectory.directory()
   Machine.resolve(List(Fume.repoConfig(directory), Fume.userConfig, Machine.shared))
-
-// A machine a selection can be sent to, and how its completion describes it.
-private case class Executor(machine: Machine, description: Text)
 
 private object Executor:
   // Everywhere a run can be sent: each machine on the swarm whose fume daemon is listening
@@ -1562,11 +1626,11 @@ private object Executor:
     val self: Text = swarm.let(_.node.identity).or(t"")
 
     def listening(advert: Advert): Boolean =
-      advert.node.tool == Fume.name && advert.node.identity != self
-      && advert.services.exists(_.name == t"listen")
+      advert.node.tool == Fume.name && advert.node.identity != self &&
+        advert.services.exists(_.name == t"listen")
 
     def declared(advert: Advert): Optional[Machine] =
-      known.seek { machine => machine.identity.let(_.serialize[Hex]) == advert.node.identity }
+      known.seek: machine => machine.identity.let(_.serialize[Hex]) == advert.node.identity
 
     def describe(advert: Advert): Text =
       val load: Text = advert.load.lay(t""): load =>
@@ -1577,7 +1641,9 @@ private object Executor:
 
     def advertised(advert: Advert): Executor =
       val machine: Optional[Machine] = declared(advert)
-      val hosts: List[Text] = if advert.node.hosts.nil then machine.let(_.hosts).or(Nil) else advert.node.hosts
+
+      val hosts: List[Text] =
+        if advert.node.hosts.nil then machine.let(_.hosts).or(Nil) else advert.node.hosts
 
       val reached: Machine =
         Machine
@@ -1590,7 +1656,9 @@ private object Executor:
 
       Executor(reached, describe(advert))
 
-    val swarmed: List[Executor] = swarm.let(_.nodes()).or(Nil).filter(listening(_)).map(advertised(_))
+    val swarmed: List[Executor] =
+      swarm.let(_.nodes()).or(Nil).filter(listening(_)).map(advertised(_))
+
     val names: List[Text] = swarmed.map(_.machine.name)
 
     val rest: List[Executor] =
@@ -1599,13 +1667,16 @@ private object Executor:
 
     swarmed + rest
 
+// A machine a selection can be sent to, and how its completion describes it.
+private case class Executor(machine: Machine, description: Text)
+
 // Reads `--machine`, its operand completing to the names of the machines a run can be sent
 // to, each described by what its node advertises.
 private def machineSetting(executors: List[Executor])(using Cli, Interpreter, Configurator)
 :   Optional[Text] =
 
   given discoverable: (Text is Discoverable) =
-    (_, _) => executors.map { executor => Suggestion(executor.machine.name, executor.description) }
+    (_, _) => executors.map: executor => Suggestion(executor.machine.name, executor.description)
 
   ui.Machine()
 
@@ -1621,18 +1692,17 @@ private def tagFlag(classpath: Optional[LocalClasspath])(using Cli, Interpreter)
 :   Prospective[Repeated] =
 
   given discoverable: (Repeated is Discoverable) = (operand, _) =>
-    classpath.lay(List()) { cp => Suggest.tags(operand, Suites.cached(cp)) }
+    classpath.lay(List()): cp => Suggest.tags(operand, Suites.cached(cp))
 
   ui.Tag()
 
 // Reads `--axis`, its operand completing to the axes of the tests the other arguments
 // (`words`, already lowered) identify, then to the values of the axis once its `=` is typed.
-private def axisFlag(classpath: Optional[LocalClasspath], words: List[Text])
-   (using Cli, Interpreter)
+private def axisFlag(classpath: Optional[LocalClasspath], words: List[Text])(using Cli, Interpreter)
 :   Prospective[Repeated] =
 
   given discoverable: (Repeated is Discoverable) = (operand, _) =>
-    classpath.lay(List()) { cp => Suggest.axes(operand, words, Suites.axial(cp, words)) }
+    classpath.lay(List()): cp => Suggest.axes(operand, words, Suites.axial(cp, words))
 
   ui.Axis()
 
@@ -1641,7 +1711,7 @@ private def excludeFlag(classpath: Optional[LocalClasspath])(using Cli, Interpre
 :   Prospective[Repeated] =
 
   given discoverable: (Repeated is Discoverable) = (operand, _) =>
-    classpath.lay(List()) { cp => Suggest.terms(operand, Suites.catalogue(cp).tests) }
+    classpath.lay(List()): cp => Suggest.terms(operand, Suites.catalogue(cp).tests)
 
   ui.Exclude()
 
@@ -1663,8 +1733,8 @@ private def completeTerms(classpath: Optional[LocalClasspath], rest: List[Argume
 private def selectionArguments(rest: List[Argument]): List[Argument] =
   val valueFlags: List[Flag] =
     List(ui.Classpath.flag, ui.Suite, ui.Kind.flag, ui.Tag, ui.Axis, ui.Exclude, ui.FailFast.flag,
-         ui.MaxLoad.flag, ui.DurationScale.flag, ui.Target.flag, ui.Machine.flag, ui.ListenPort.flag,
-         ui.McpPort.flag, ui.Retention.flag, ui.Timeout.flag)
+         ui.MaxLoad.flag, ui.DurationScale.flag, ui.Target.flag, ui.Machine.flag,
+         ui.ListenPort.flag, ui.McpPort.flag, ui.Retention.flag, ui.Timeout.flag)
 
   def recur(args: List[Argument], terms: List[Argument]): List[Argument] = args match
     case head :: tail =>
@@ -1676,7 +1746,8 @@ private def selectionArguments(rest: List[Argument]): List[Argument] =
 
         recur(if operand then tail match { case _ :: tail2 => tail2; case _ => tail } else tail,
               terms)
-      else recur(tail, head :: terms)
+      else
+        recur(tail, head :: terms)
 
     case _ =>
       terms.reverse
@@ -1684,7 +1755,7 @@ private def selectionArguments(rest: List[Argument]): List[Argument] =
   recur(rest, List())
 
 private def selectionTerms(rest: List[Argument]): List[Text] =
-  selectionArguments(rest).map { (argument: Argument) => argument() }
+  selectionArguments(rest).map: (argument: Argument) => argument()
 
 // The suites the selection admits: those on the classpath the terms reach (every suite, for
 // no terms), narrowed to `--suite` when given. Empty means nothing to run.
@@ -1692,19 +1763,19 @@ private def selectSuites(classpath: LocalClasspath, suite: Optional[Text], terms
 :   List[Text] =
 
   val all: List[Text] = Suites.reached(classpath, terms)
-  suite.lay(all) { chosen => all.filter(_ == chosen) }
+  suite.lay(all): chosen => all.filter(_ == chosen)
 
 // Runs one suite in a fresh JVM — `java -cp <classpath> <suite> <terms…>` — forwarding its
 // output and yielding its exit status. The `java` executable is the daemon's own
 // (`java.home`), so no PATH lookup is involved. The JVM is killed if `abort` turns true
 // before it exits — on Ctrl+C, or when the run's `--timeout` passes.
 private def forkSuite
-   (classpath: LocalClasspath, suite: Text, args: List[Text], abort: () => Boolean, run: Text)
-   (using Stdio, WorkingDirectory, Monitor, Environment)
+  ( classpath: LocalClasspath, suite: Text, args: List[Text], abort: () => Boolean, run: Text )
+  ( using Stdio, WorkingDirectory, Monitor, Environment )
 :   Exit =
 
   val java: Text =
-    safely(System.properties.java.home[Text]()).lay(t"java") { home => t"$home/bin/java" }
+    safely(System.properties.java.home[Text]()).lay(t"java"): home => t"$home/bin/java"
 
   val command = sh"$java -cp ${classpath()} $suite $args"
 
@@ -1732,13 +1803,13 @@ private def forkSuite
 // whole story for `--fork` and for `--list`, whose selection the event protocol deliberately
 // rejects (the stable text output belongs to the legacy path).
 private def invokeSuite
-   ( classpath: LocalClasspath,
-     suite:     Text,
-     args:      List[Text],
-     fork:      Boolean,
-     abort:     () => Boolean = () => false,
-     run:       Text          = t"" )
-   (using Stdio, WorkingDirectory, Monitor, Environment)
+  ( classpath: LocalClasspath,
+    suite:     Text,
+    args:      List[Text],
+    fork:      Boolean,
+    abort:     () => Boolean = () => false,
+    run:       Text          = t"" )
+  ( using Stdio, WorkingDirectory, Monitor, Environment )
 :   Exit =
 
   if fork then forkSuite(classpath, suite, args, abort, run)
@@ -1777,24 +1848,34 @@ private def usage()(using invocation: Invocation): UsageError.type =
 private final class RemoteState(totals: Doc.Totals):
   @scala.caps.unsafe.untrackedCaptures
   @volatile var failures: Int = 0
+
   @scala.caps.unsafe.untrackedCaptures
   @volatile var ran: Int = 0
+
   @scala.caps.unsafe.untrackedCaptures
   @volatile var current: Optional[Text] = Unset
+
   @scala.caps.unsafe.untrackedCaptures
   @volatile var suiteStarted: Instant over Unix = now()
+
   @scala.caps.unsafe.untrackedCaptures
   @volatile var beforeTotals: Doc.Totals = totals
+
   @scala.caps.unsafe.untrackedCaptures
   @volatile var beforeFatals: Int = 0
+
   @scala.caps.unsafe.untrackedCaptures
   @volatile var expectingFingerprint: Boolean = true
+
   @scala.caps.unsafe.untrackedCaptures
   @volatile var incompatible: Boolean = false
+
   @scala.caps.unsafe.untrackedCaptures
   @volatile var stop: Boolean = false
+
   @scala.caps.unsafe.untrackedCaptures
   @volatile var abortSent: Boolean = false
+
   // The open suite's frame file in the run directory.
   @scala.caps.unsafe.untrackedCaptures
   @volatile var writer: Optional[Runs.Writer] = Unset

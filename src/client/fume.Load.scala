@@ -37,7 +37,6 @@ import java.lang.management as jlm
 import soundness.*
 
 import denominative.dysasymptotics.linearAccess
-
 import fume.Figures.measurable
 
 // The load gate: `--max-load` holds a run back until the machine is quiet enough to measure
@@ -72,6 +71,12 @@ object Load:
     val hundredths: Long = (load*100.0).toLong
     t"${hundredths/100}.${(hundredths%100).show.pad(2, Rtl, '0')}"
 
+  object Scale:
+    def apply(target: Double, span: Int): Scale =
+      val lower: Double = exp2(log2(target.max(0.0625)).floor - 1.0)
+      val upper: Double = exp2(log2((cores*2).toDouble.max(target*4.0)).ceiling)
+      Scale(lower, upper.max(lower*2.0), span)
+
   // The bar's horizontal mapping: `lower` and `upper` are the loads at its two ends, both
   // powers of two, and `span` is its width in cells. The range starts an octave below the
   // target — so the target itself is never flush against the left edge, and a machine that
@@ -88,12 +93,6 @@ object Load:
 
     def eighths(load: Double): Long = (position(load)*span*8.0).toLong
     def column(load: Double): Int = (position(load)*span).toInt
-
-  object Scale:
-    def apply(target: Double, span: Int): Scale =
-      val lower: Double = exp2(log2(target.max(0.0625)).floor - 1.0)
-      val upper: Double = exp2(log2((cores*2).toDouble.max(target*4.0)).ceiling)
-      Scale(lower, upper.max(lower*2.0), span)
 
   private val subscripts: List[Text] =
     List(t"₀", t"₁", t"₂", t"₃", t"₄", t"₅", t"₆", t"₇", t"₈", t"₉")
@@ -176,7 +175,7 @@ object Load:
   // `0.2*Second`, NOT a bare `0.2` or `200L`: `snooze`'s `Long` overload is in NANOSECONDS,
   // so `snooze(200L)` would spin, repainting as fast as the terminal could take it.
   def settle(target: Double, width: Int, tty: Boolean, aborted: Atomic[Boolean])
-     (using Stdio, Monitor, Environment)
+    ( using Stdio, Monitor, Environment )
   :   Unit =
 
     average.lay(Render.announce(t"this platform reports no load average; not waiting")):

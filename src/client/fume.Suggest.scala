@@ -35,7 +35,6 @@ package fume
 import soundness.*
 
 import denominative.dysasymptotics.linearSize
-
 import probably.TestEvent
 
 // Tab-completion for selection terms, as PURE logic over the classpath's cached index and
@@ -62,15 +61,15 @@ object Suggest:
 
   // Whether a term identifies tests (an id, a moniker or a glob) rather than narrowing them.
   def identity(term: Text): Boolean =
-    term != t"" && !term.starts(t"-") && !term.starts(t"kind:") && !term.starts(t"tag:")
-    && !term.starts(t"not:") && axisOf(term).absent
+    term != t"" && !term.starts(t"-") && !term.starts(t"kind:") && !term.starts(t"tag:") &&
+      !term.starts(t"not:") && axisOf(term).absent
 
   // The axis of an axis-constraint term (`N=4`, `N<32`, `N>=4`), or `Unset` if the term is not
   // one: a non-empty label followed by a comparison.
   def axisOf(term: Text): Optional[Text] =
     val index: Int =
-      List('=', '<', '>').map { (char: Char) => term.s.indexOf(char.toInt) }
-      . filter(_ >= 0).fold(-1) { (least, next) => if least < 0 || next < least then next else least }
+      List('=', '<', '>').map: (char: Char) => term.s.indexOf(char.toInt)
+      . filter(_ >= 0).fold(-1): (least, next) => if least < 0 || next < least then next else least
 
     if index <= 0 then Unset else term.keep(index)
 
@@ -78,9 +77,9 @@ object Suggest:
   // the wire ref: its id, its moniker, any segment of its path (a suite moniker or name), or a
   // glob over a segment or the slash-joined path.
   def matches(ref: TestEvent.Ref, term: Text): Boolean =
-    ref.id == term || ref.moniker == term || ref.path.has(term)
-    || safely(Glob.parse(term)).lay(false): glob =>
-         ref.path.exists(glob.matches(_)) || glob.matches(ref.path.join(t"/"))
+    ref.id == term || ref.moniker == term || ref.path.has(term) ||
+      safely(Glob.parse(term)).lay(false): glob =>
+        ref.path.exists(glob.matches(_)) || glob.matches(ref.path.join(t"/"))
 
   // The tests the other arguments identify: those matched by any identity term, narrowed by
   // the `kind:` and `tag:` terms among them. Empty when no identity term is present.
@@ -88,15 +87,14 @@ object Suggest:
     val identities: List[Text] = others.filter(identity)
 
     if identities.nil then Nil else
-      val kinds: List[Text] = others.filter(_.starts(t"kind:")).map { term => kindOf(term.skip(5)) }
+      val kinds: List[Text] = others.filter(_.starts(t"kind:")).map: term => kindOf(term.skip(5))
 
       val tags: List[List[Text]] =
-        others.filter(_.starts(t"tag:")).map { term => term.skip(4).cut(t",").filter(_ != t"") }
+        others.filter(_.starts(t"tag:")).map: term => term.skip(4).cut(t",").filter(_ != t"")
 
       schedule.filter: test =>
-        identities.exists(matches(test.ref, _))
-        && (kinds.nil || kinds.has(test.kind))
-        && tags.all { alternatives => alternatives.exists(test.tags.has(_)) }
+        identities.exists(matches(test.ref, _)) && (kinds.nil || kinds.has(test.kind)) &&
+          tags.all: alternatives => alternatives.exists(test.tags.has(_))
 
   // One candidate for a term: the handle to type for a link, and where the link is among
   // those below the scope, which is what describes it.
@@ -104,7 +102,8 @@ object Suggest:
 
   // The handles by which the link at `depth` answers to the typed text: its moniker, and its
   // ids — a suite's derived one, at the top level, and anything's hex.
-  private def handles(link: Index.Link, depth: Int, links: List[Index.Link], typed: Text, top: Boolean)
+  private def handles
+    ( link: Index.Link, depth: Int, links: List[Index.Link], typed: Text, top: Boolean )
   :   List[Candidate] =
 
     val written: List[Text] = link.written.lay(Nil: List[Text])(List(_))
@@ -122,7 +121,7 @@ object Suggest:
   private def nearest(links: List[Index.Link], top: Boolean): List[Candidate] =
     def recur(todo: List[Index.Link], depth: Int): List[Candidate] = todo match
       case link :: tail =>
-        link.written.lay(recur(tail, depth + 1)) { moniker => List(Candidate(moniker, depth, links)) }
+        link.written.lay(recur(tail, depth + 1)): moniker => List(Candidate(moniker, depth, links))
 
       case _ =>
         links.last.lay(Nil: List[Candidate]): leaf =>
@@ -164,14 +163,16 @@ object Suggest:
 
     def below(test: Index.Test): List[List[Index.Link]] =
       if top then List(test.links)
-      else Index.locate(test.links, path).lay(Nil: List[List[Index.Link]]) { found => List(found.skip(1)) }
+      else
+        Index.locate(test.links, path).lay(Nil: List[List[Index.Link]]): found =>
+          List(found.skip(1))
 
     def candidates(links: List[Index.Link]): List[Candidate] =
       if typed == t"" then nearest(links, top) else matching(links, typed, top)
 
     val seen: scala.collection.mutable.HashSet[Text] = scala.collection.mutable.HashSet()
 
-    tests.flatMap(below).flatMap(candidates).filter { candidate => seen.add(candidate.handle) }
+    tests.flatMap(below).flatMap(candidates).filter: candidate => seen.add(candidate.handle)
     . map(suggestion(scope))
 
   // The comma-continued names for the `--kind` and `--tag` operands: what remains after the
@@ -262,13 +263,13 @@ object Suggest:
       val templates: List[Suggestion] =
         if discrete || prefix != t"" then Nil else
           val numbers: List[Double] =
-            labels.flatMap { label => numeric(label).lay(Nil: List[Double])(List(_)) }
-            + axes.flatMap { axis => axis.least.lay(Nil: List[Double])(List(_)) }
-            + axes.flatMap { axis => axis.most.lay(Nil: List[Double])(List(_)) }
+            labels.flatMap { label => numeric(label).lay(Nil: List[Double])(List(_)) } +
+              axes.flatMap { axis => axis.least.lay(Nil: List[Double])(List(_)) } +
+              axes.flatMap: axis => axis.most.lay(Nil: List[Double])(List(_))
 
           if numbers.nil then Nil else
-            val least: Double = numbers.fold(Double.MaxValue) { (a, b) => if b < a then b else a }
-            val most: Double = numbers.fold(Double.MinValue) { (a, b) => if b > a then b else a }
+            val least: Double = numbers.fold(Double.MaxValue): (a, b) => if b < a then b else a
+            val most: Double = numbers.fold(Double.MinValue): (a, b) => if b > a then b else a
             val lo: Text = render(least, integral)
             val hi: Text = render(most, integral)
             val stem: Text = t"$axis="

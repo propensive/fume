@@ -49,9 +49,10 @@ object Answering extends McpServer.Answers:
     Journal.find(id).or(throw Api.Error(unknown))
 
   private def summaries(runs: List[Journal.Run]): List[Api.RunSummary] =
-    def recur(todo: List[Journal.Run], done: List[Api.RunSummary]): List[Api.RunSummary] = todo match
-      case run :: tail => recur(tail, Views.summary(run) :: done)
-      case _           => done.reverse
+    def recur(todo: List[Journal.Run], done: List[Api.RunSummary]): List[Api.RunSummary] =
+      todo match
+        case run :: tail => recur(tail, Views.summary(run) :: done)
+        case _           => done.reverse
 
     recur(runs, Nil)
 
@@ -63,13 +64,14 @@ object Answering extends McpServer.Answers:
   // absolute, since no invocation's directory applies here.
   private def classpath(text: Text): LocalClasspath =
     val expanded: List[Text] =
-      text.cut(t":").filter(_ != t"").bind[List[Text], Text, List[Text]] { entry => Suites.expand(t"/", entry) }
+      text.cut(t":").filter(_ != t"").bind[List[Text], Text, List[Text]](Suites.expand(t"/", _))
 
     val entries: List[Classpath.Entry.Directory | Classpath.Entry.Jar] =
       expanded.map: entry =>
         if entry.ends(t".jar") then Classpath.Entry.Jar(entry) else Classpath.Entry.Directory(entry)
 
-    if entries.nil then throw Api.Error(t"the classpath names no entries") else LocalClasspath(entries*)
+    if entries.nil then throw Api.Error(t"the classpath names no entries")
+    else LocalClasspath(entries*)
 
   def runs(limit: Int): List[Api.RunSummary] = summaries(Journal.all(limit.max(1)))
 
@@ -114,7 +116,8 @@ object Answering extends McpServer.Answers:
 
   def processes(): Api.Processes = Views.processes(Fume.version)
 
-  def suites(classpath: Text): List[Api.IndexedSuite] = Views.indexedSuites(this.classpath(classpath))
+  def suites(classpath: Text): List[Api.IndexedSuite] =
+    Views.indexedSuites(this.classpath(classpath))
 
   def tests(classpath: Text, terms: Text): List[Api.IndexedTest] =
     Views.indexedTests(this.classpath(classpath), terms.cut(t" ").filter(_ != t""))
@@ -130,7 +133,7 @@ object Answering extends McpServer.Answers:
     val words: List[Text] = terms.cut(t" ").filter(_ != t"")
 
     val workspace: Text =
-      classpath.cut(t":").filter(_ != t"").head.lay(t"/") { entry => entry.cut(t"/").skip(1, Rtl).join(t"/") }
+      classpath.cut(t":").filter(_ != t"").head.lay(t"/")(_.cut(t"/").skip(1, Rtl).join(t"/"))
 
     Headless.launch(parsed, words, workspace) match
       case id: Text =>

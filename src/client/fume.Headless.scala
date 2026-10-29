@@ -34,11 +34,9 @@ package fume
 
 import soundness.*
 
-import pyrocosm.Machine
-
 import denominative.dysasymptotics.linearSize
 import environments.javaBaseEnvironment
-import probates.cancelProbate
+import pyrocosm.Machine
 import threads.platformThreads
 
 // A run launched from the daemon itself, by its MCP server, outside any invocation: no
@@ -80,13 +78,9 @@ object Headless:
   def cancel(id: Text): Boolean =
     val found: Optional[Atomic[Boolean]] = aborts.getOrElse(id, Unset)
 
-    found match
-      case aborted: Atomic[Boolean] =>
-        aborted() = true
-        true
-
-      case _ =>
-        false
+    found.lay(false): aborted =>
+      aborted() = true
+      true
 
   private def entryPath(entry: Classpath.Entry): Text = entry match
     case Classpath.Entry.Jar(path)       => path
@@ -94,7 +88,11 @@ object Headless:
     case _                               => t""
 
   private def execute
-    ( id: Text, classpath: LocalClasspath, suites: List[Text], terms: List[Text], aborted: Atomic[Boolean] )
+    ( id:        Text,
+      classpath: LocalClasspath,
+      suites:    List[Text],
+      terms:     List[Text],
+      aborted:   Atomic[Boolean] )
     ( using Monitor )
   :   Unit =
 
@@ -136,7 +134,9 @@ object Headless:
       val passed: Boolean = outcome match
         case EventStream.Outcome.Completed(exit) =>
           // As a run from a shell: a suite admitting nothing is not a failing suite.
-          val emptySelection: Boolean = exit == 1 && totals.total == 0 && after.fatals.size == before.fatals.size
+          val emptySelection: Boolean =
+            exit == 1 && totals.total == 0 && after.fatals.size == before.fatals.size
+
           exit == 0 || emptySelection
 
         case _ =>

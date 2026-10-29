@@ -37,20 +37,17 @@ import java.io as ji
 import soundness.*
 
 import alphabets.hexLowerCase
-
 import probates.cancelProbate
 import systems.javaBaseSystem
 
 // Consumes a suite's `TestEvent` stream: fume calls `probably.Streamer.stream` in the SUITE'S
-// classloader world through a structural type (JDK-typed signature only), hands it a
+// classloader world by reflection (a JDK-typed signature only), hands it a
 // `StreamOutputStream`, and reads back a lazy chain of chunks which it splits into
 // length-prefixed frames and decodes — with ITS OWN bundles' BinTEL codec — into its own
 // `probably.TestEvent`s. The first frame is the producer's schema fingerprint, compared with
 // this side's before anything is decoded: a mismatch means the suite was built against a
 // Soundness whose event layout differs, and the caller falls back to the legacy run.
 object EventStream:
-  private type Streamable = { def stream(suite: Text, arguments: Text, output: ji.OutputStream): Int }
-
   enum Outcome:
     case Completed(exit: Int)
     // The two schema fingerprints, the suite's and fume's own, as hex: the notice names both.
@@ -84,8 +81,10 @@ object EventStream:
         if buffer.length >= 4 + length then
           val frame: Data = slice(buffer, 4, 4 + length)
           Chain.cons(frame, recur(slice(buffer, 4 + length, buffer.length), rest))
-        else pull(buffer, rest)
-      else pull(buffer, rest)
+        else
+          pull(buffer, rest)
+      else
+        pull(buffer, rest)
 
     def pull(buffer: Data, rest: Chain[Data]): Chain[Data] = rest match
       case chunk #:: more => recur(join(buffer, chunk), more)
@@ -108,23 +107,19 @@ object EventStream:
   // this with `Streamer.reentrant` (an older Probably, whose suites memoize their first runner,
   // lacks the method and needs a fresh loader per invocation).
   def reentrant(loader: Classloader): Boolean =
-    safely(loader.on(t"probably.Streamer$$")).let { streamer => safely(streamer.getMethod("reentrant")) }.present
+    safely(loader.on(t"probably.Streamer$$").let(_.getMethod("reentrant"))).present
 
   // Whether the suites `loader` sees understand `--workers=<n>` (Probably's `Streamer.queued`):
   // a queued runner traverses each suite once and executes its pure assertions behind the
   // traversal. To an older Probably the term is a name glob admitting nothing, so it is only
   // passed when advertised.
   def queued(loader: Classloader): Boolean =
-    safely(loader.on(t"probably.Streamer$$")).let { streamer => safely(streamer.getMethod("queued")) }.present
+    safely(loader.on(t"probably.Streamer$$").let(_.getMethod("queued"))).present
 
   // A consumer of a suite's frames: shown the first (fingerprint) frame, which it may reject,
   // and then every event frame. The decoding sink is the local run's; a worker relaying a run
   // to another fume forwards every frame, the fingerprint included, and rejects nothing, so
   // the controller makes the compatibility decision against its OWN Probably.
-  trait Sink:
-    def fingerprint(theirs: Data): Boolean
-    def frame(frame: Data): Unit
-
   object Sink:
     // Decodes each frame with fume's own Probably, once the fingerprints agree.
     def decoding(handle: probably.TestEvent => Unit): Sink^{handle} = new Sink:
@@ -140,6 +135,10 @@ object EventStream:
         true
 
       def frame(frame: Data): Unit = forward(frame)
+
+  trait Sink:
+    def fingerprint(theirs: Data): Boolean
+    def frame(frame: Data): Unit
 
   // The producer of a run's frames, as `consume` controls it: `exit` awaits its exit status,
   // and `stop` stops it. One handle rather than two thunks, since both close over the same
@@ -178,7 +177,7 @@ object EventStream:
         val drain: Sink = scala.caps.unsafe.unsafeAssumePure(sink)
 
         val consumer = async:
-          try rest.each { (frame: Data) => drain.frame(frame) }
+          try rest.each: (frame: Data) => drain.frame(frame)
           catch case error: Throwable =>
             failure() = error
             throw error
@@ -227,11 +226,12 @@ object EventStream:
   :   Optional[Outcome] =
 
     val java: Text =
-      safely(System.properties.java.home[Text]()).lay(t"java") { home => t"$home/bin/java" }
+      safely(System.properties.java.home[Text]()).lay(t"java"): home => t"$home/bin/java"
 
     safely:
       val job = sh"$java -cp ${classpath()} probably.Standalone $suite $args".fork[Unit]()
       val errors = async(job.errorText())
+
       val producer: Producer^{job} = new Producer:
         def exit(): Int = job.status()
         def stop(): Unit = job.abort()
@@ -266,8 +266,6 @@ object EventStream:
     ( using monitor: Monitor )
   :   Optional[Outcome] =
 
-    import scala.reflect.Selectable.reflectiveSelectable
-
     // One loader for a whole run, when the suites allow it; otherwise a fresh, isolating one.
     val loader: Classloader = shared.or(classpath.classloader(Classloader.Delegation.Preferential))
 
@@ -277,13 +275,22 @@ object EventStream:
     safely(loader.on(t"probably.Streamer$$")).let: moduleClass =>
       safely:
         val instance = moduleClass.getField("MODULE$").nn.get(null).nn
+
+        // `stream(String, String, OutputStream): int`, as the suite's own Probably declares it:
+        // a `Text` is a `String` once erased.
+        val string = classOf[String]
+        val stream = moduleClass.getMethod("stream", string, string, classOf[ji.OutputStream]).nn
+
         val output = StreamOutputStream()
 
         val capture: Stdio.Capture[Outcome] = Stdio.capture:
           val arguments: Text = args.join(t"\n")
 
+          // `stream` answers the suite's exit status; anything else is taken as a failure.
           val task = async:
-            loader.use(instance.asInstanceOf[Streamable].stream(suite, arguments, output))
+            loader.use(stream.invoke(instance, suite.s, arguments.s, output): Any) match
+              case exit: Int => exit
+              case _         => 1
 
           // The task is single-owner and awaited exactly once after the frame chain is
           // exhausted; the separation checker cannot see that through the capture-polymorphic

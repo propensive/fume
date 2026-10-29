@@ -35,7 +35,6 @@ package fume
 import soundness.*
 
 import denominative.dysasymptotics.linearSize
-
 import pyrocosm.{Action, Activity, Block, Event, Hints, Inline, Interface, Panel, Tone, Tool, hints}
 
 // The runs the daemon has seen, for the web front-end: the board of every suite in flight,
@@ -73,7 +72,9 @@ object Server:
   def serving: Boolean = serving0()
   def serving_=(value: Boolean): Unit = serving0() = value
 
-  def announce(service: Text, port: Int): Unit = mutex { services0 = services0.define(service, port) }
+  def announce(service: Text, port: Int): Unit = mutex:
+    services0 = services0.define(service, port)
+
   def withdraw(service: Text): Unit = mutex { services0 = services0.omit(service) }
   def services: List[(Text, Int)] = mutex(services0.to[List])
 
@@ -112,7 +113,8 @@ object Dashboard:
   // Where the dashboard on `port` is found: under the hub's origin for port 0, which the hub
   // holds, and at the port itself otherwise.
   def address(port: Int): Text =
-    if port == 0 then t"http://localhost:${pyrocosm.Hubs.port}/fume/" else t"http://localhost:$port/"
+    if port == 0 then t"http://localhost:${pyrocosm.Hubs.port}/fume/"
+    else t"http://localhost:$port/"
 
   val web: Tool.Web = new Tool.Web:
     def port: Int = 0
@@ -189,7 +191,9 @@ final class Dashboard():
   // Lays a two-axis benchmark out the other way round: its second axis as the rows and the
   // bar groups, its first as the columns and the bars within a group.
   val transpose: pyrocosm.Toggle = pyrocosm.Toggle(t"transpose")
-  val transposeControl: pyrocosm.Control = pyrocosm.Control.Toggle(transpose, Inline.text(t"Transpose axes"))
+
+  val transposeControl: pyrocosm.Control =
+    pyrocosm.Control.Toggle(transpose, Inline.text(t"Transpose axes"))
 
   private def action(run: Text): Action = mutex:
     actions(run).or:
@@ -205,7 +209,10 @@ final class Dashboard():
 
     case Event.Pressed(action) =>
       val found: Optional[Text] = mutex(actions.to[List]).seek(_(1) == action).let(_(0))
-      found.let { run => selected = run; refresh() }
+
+      found.let: run =>
+        selected = run
+        refresh()
 
     case _ =>
       ()
@@ -235,17 +242,22 @@ final class Dashboard():
     val status: pyrocosm.Status = board.let(_.status).or(pyrocosm.Status.Reckoning(0L, Unset))
 
     val state: List[Inline] =
-      board.lay(Inline.text(t"starting")) { activity => activity.title + List(Inline.Textual(t" · ")) + activity.state }
+      board.lay(Inline.text(t"starting")): activity =>
+        activity.title + List(Inline.Textual(t" · ")) + activity.state
 
-    Activity(run.id, Inline.text(nameOf(run)), status, Inline.Destination.Internal(action(run.id)), state)
+    val destination: Inline.Destination = Inline.Destination.Internal(action(run.id))
+    Activity(run.id, Inline.text(nameOf(run)), status, destination, state)
 
   private def runItem(run: Journal.Run): Block.Item =
     val record: RunRecord = run.record
 
-    val standing: Inline = record.outcome.lay(Inline.Toned(Tone.Accent, List(Inline.Symbol(pyrocosm.Glyph.Running)))):
-      case RunRecord.passed => Inline.Toned(Tone.Success, List(Inline.Symbol(pyrocosm.Glyph.Check)))
-      case RunRecord.failed => Inline.Toned(Tone.Failure, List(Inline.Symbol(pyrocosm.Glyph.Cross)))
-      case _             => Inline.Toned(Tone.Warning, List(Inline.Symbol(pyrocosm.Glyph.Warning)))
+    def glyph(tone: Tone, symbol: pyrocosm.Glyph): Inline =
+      Inline.Toned(tone, List(Inline.Symbol(symbol)))
+
+    val standing: Inline = record.outcome.lay(glyph(Tone.Accent, pyrocosm.Glyph.Running)):
+      case RunRecord.passed => glyph(Tone.Success, pyrocosm.Glyph.Check)
+      case RunRecord.failed => glyph(Tone.Failure, pyrocosm.Glyph.Cross)
+      case _                => glyph(Tone.Warning, pyrocosm.Glyph.Warning)
 
     // An agent's run carries the agent's icon, served by `Assets`; a human's carries nothing.
     val invoker: Invoker = Invoker.of(record.invoker)
@@ -253,14 +265,28 @@ final class Dashboard():
     val agent: List[Inline] = invoker.icon.lay(Nil: List[Inline]): icon =>
       List(Inline.Icon(Assets.location(icon), invoker.name), Inline.Textual(t" "))
 
+    val provenance: Text = t"${when(record.started)} · ${record.client} · ${record.machine}"
+
     val detail: List[Inline] =
-      List(Inline.Emphasis(Inline.text(nameOf(run))), Inline.Textual(t" "),
-          Inline.Toned(Tone.Muted, Inline.text(t"${when(record.started)} · ${record.client} · ${record.machine}")))
+      List
+        ( Inline.Emphasis(Inline.text(nameOf(run))),
+          Inline.Textual(t" "),
+          Inline.Toned(Tone.Muted, Inline.text(provenance)) )
 
     val label: List[Inline] = List(standing, Inline.Textual(t" ")) + agent + detail
 
-    val selectedMark: List[Inline] = if selected == run.id then List(Inline.Toned(Tone.Accent, List(Inline.Symbol(pyrocosm.Glyph.ArrowRight))), Inline.Textual(t" ")) else Nil
+    val selectedMark: List[Inline] =
+      if selected == run.id
+      then List(glyph(Tone.Accent, pyrocosm.Glyph.ArrowRight), Inline.Textual(t" "))
+      else Nil
+
     Block.Item(List(Block.Paragraph(selectedMark + label)), action(run.id))
+
+  // Whether two references are the same object, or both absent: how a board's published blocks
+  // are known to be unchanged without comparing them.
+  private def identical(left: AnyRef | Null, right: AnyRef | Null): Boolean = (left, right) match
+    case (left: AnyRef, right: AnyRef) => left eq right
+    case _                             => left == null && right == null
 
   // Rebuild what has changed. Called by the serving loop a few times a second, and after a
   // selection.
@@ -268,10 +294,13 @@ final class Dashboard():
     val active = Journal.active
     val completed = Journal.completed
 
-    if selected.absent then (active + completed).head.let { run => selected = run.id }
+    if selected.absent then (active + completed).head.let: run => selected = run.id
 
     val items: List[Block.Item] = (active + completed).map(runItem)
-    val listing: List[Block] = if items.nil then List(Block.paragraph(t"No runs yet.")) else List(Block.Listing(false, items))
+
+    val listing: List[Block] =
+      if items.nil then List(Block.paragraph(t"No runs yet."))
+      else List(Block.Listing(false, items))
 
     if listing != lastRuns then
       lastRuns = listing
@@ -287,8 +316,13 @@ final class Dashboard():
     selected.let: run =>
       val board = Server.board(run)
       val finished = Server.done(run)
-      val live: AnyRef | Null = board.lay(null: AnyRef | Null) { board => board.webResults().asInstanceOf[AnyRef] }
-      val changed = lastRun != run || finished.size != lastFinished || !(live.asInstanceOf[AnyRef] eq lastLive.asInstanceOf[AnyRef])
+
+      val live: AnyRef | Null = board.lay(null: AnyRef | Null): board =>
+        board.webResults() match
+          case results: AnyRef => results
+          case _               => null
+
+      val changed = lastRun != run || finished.size != lastFinished || !identical(live, lastLive)
       lastRun = run
       lastFinished = finished.size
       lastLive = live
@@ -297,19 +331,27 @@ final class Dashboard():
         val past: List[Block] = finished.bind: entry =>
           Block.Heading(2, Inline.text(entry.suite)) :: entry.blocks
 
-        val current: List[Block] = board.lay(Nil: List[Block]) { board => Block.Heading(2, Inline.text(board.title)) :: board.webResults() }
+        val current: List[Block] = board.lay(Nil: List[Block]): board =>
+          Block.Heading(2, Inline.text(board.title)) :: board.webResults()
+
         // A finished run's report opens with its outcome and totals; a run in flight has its
         // card in the masthead instead.
         val summary: List[Block] = if board.present then Nil else
           (active + completed).seek(_.id == run).lay(Nil: List[Block]): entry =>
-            val outcome: Inline = entry.record.outcome.lay(Inline.Toned(Tone.Accent, Inline.text(t"running"))):
+            val running: Inline = Inline.Toned(Tone.Accent, Inline.text(t"running"))
+
+            val outcome: Inline = entry.record.outcome.lay(running):
               case RunRecord.passed => Inline.Toned(Tone.Success, Inline.text(t"passed"))
               case RunRecord.failed => Inline.Toned(Tone.Failure, Inline.text(t"failed"))
-              case _             => Inline.Toned(Tone.Warning, Inline.text(t"aborted"))
+              case _                => Inline.Toned(Tone.Warning, Inline.text(t"aborted"))
 
             val totals: List[Inline] = entry.record.totals.lay(Nil: List[Inline]): totals =>
-              List(Inline.Textual(t"  "), Inline.Numeral(totals.passed.toDouble, 0), Inline.Textual(t" passed, "),
-                  Inline.Numeral(totals.failed.toDouble, 0), Inline.Textual(t" failed"))
+              List
+                ( Inline.Textual(t"  "),
+                  Inline.Numeral(totals.passed.toDouble, 0),
+                  Inline.Textual(t" passed, "),
+                  Inline.Numeral(totals.failed.toDouble, 0),
+                  Inline.Textual(t" failed") )
 
             List(Block.Paragraph(outcome :: totals))
 
@@ -320,5 +362,17 @@ final class Dashboard():
     Interface
       ( Inline.text(t"fume"),
         List
-          ( Panel(Panel.Id(t"runs"), Panel.Role.Navigation, Inline.text(t"Runs"), runs, Panel.Priority.Important),
-            Panel(Panel.Id(t"run"), Panel.Role.Primary, Unset, content, Panel.Priority.Essential, controls = List(transposeControl), hints = Hints(hints.Follow)) ) )
+          ( Panel
+              ( Panel.Id(t"runs"),
+                Panel.Role.Navigation,
+                Inline.text(t"Runs"),
+                runs,
+                Panel.Priority.Important ),
+            Panel
+              ( Panel.Id(t"run"),
+                Panel.Role.Primary,
+                Unset,
+                content,
+                Panel.Priority.Essential,
+                controls = List(transposeControl),
+                hints    = Hints(hints.Follow) ) ) )

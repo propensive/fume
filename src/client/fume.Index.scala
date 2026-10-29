@@ -35,7 +35,6 @@ package fume
 import soundness.*
 
 import denominative.dysasymptotics.linearSize
-
 import probably.TestEvent
 
 // The STATIC index of tests: what the beneficence compiler plugin records, from the typed
@@ -61,25 +60,25 @@ object Index:
   // says whether this link's own name has such a hole, shown as `*` in it. A suite's moniker is
   // its id, and `derived` says that nobody wrote it: it is the title's own slug.
   case class Link
-     ( name:    Text,
-       moniker: Optional[Text],
-       id:      Text,
-       dynamic: Boolean = false,
-       derived: Boolean = false ):
+    ( name:    Text,
+      moniker: Optional[Text],
+      id:      Text,
+      dynamic: Boolean = false,
+      derived: Boolean = false ):
 
     // The name its author chose for it, if they chose one.
     def written: Optional[Text] = if derived then Unset else moniker
 
   case class Test
-     ( links:   List[Link],
-       kind:    Text,
-       tags:    List[Text],
-       spread:  Boolean,
-       dynamic: Boolean,
-       file:    Text,
-       line:    Int ):
+    ( links:   List[Link],
+      kind:    Text,
+      tags:    List[Text],
+      spread:  Boolean,
+      dynamic: Boolean,
+      file:    Text,
+      line:    Int ):
 
-    def path: List[Text] = links.map { link => link.moniker.or(link.name) }
+    def path: List[Text] = links.map: link => link.moniker.or(link.name)
 
     // The test's own id, empty if its name or its place is only known at runtime.
     def id: Text = links.last.let(_.id).or(t"")
@@ -92,7 +91,8 @@ object Index:
 
     def scheduled: Suites.Scheduled =
       val leaf: Link = links.last.or(Link(t"", Unset, t""))
-      Suites.Scheduled(TestEvent.Ref(leaf.id, leaf.name, leaf.moniker, path, file, line), kind, tags, Nil)
+      val ref: TestEvent.Ref = TestEvent.Ref(leaf.id, leaf.name, leaf.moniker, path, file, line)
+      Suites.Scheduled(ref, kind, tags, Nil)
 
   // A test known only by its wire ref, from a suite the index does not cover: the links are
   // its path, whose first segment is the suite's id — written or derived, which the ref cannot
@@ -104,7 +104,7 @@ object Index:
     val above: List[Link] = ref.path.reverse match
       case _ :: outer => outer.reverse match
         case suite :: groups =>
-          Link(suite, suite, t"", derived = true) :: groups.map { group => Link(group, Unset, t"") }
+          Link(suite, suite, t"", derived = true) :: groups.map: group => Link(group, Unset, t"")
 
         case _ =>
           Nil
@@ -112,7 +112,8 @@ object Index:
       case _ =>
         Nil
 
-    Test(above :+ leaf, scheduled.kind, scheduled.tags, !scheduled.axes.nil, false, ref.file, ref.line)
+    val spread: Boolean = !scheduled.axes.nil
+    Test(above :+ leaf, scheduled.kind, scheduled.tags, spread, false, ref.file, ref.line)
 
   // A name as the index holds it, with whether any part of it was a hole.
   private[fume] case class Name(text: Text, dynamic: Boolean)
@@ -122,16 +123,16 @@ object Index:
     case Group(topic: Text, method: Text, path: List[Name], name: Name, moniker: Optional[Text])
 
     case Declaration
-       ( topic:   Text,
-         method:  Text,
-         path:    List[Name],
-         kind:    Text,
-         name:    Name,
-         moniker: Optional[Text],
-         tags:    List[Text],
-         file:    Text,
-         line:    Int,
-         spread:  Boolean )
+      ( topic:   Text,
+        method:  Text,
+        path:    List[Name],
+        kind:    Text,
+        name:    Name,
+        moniker: Optional[Text],
+        tags:    List[Text],
+        file:    Text,
+        line:    Int,
+        spread:  Boolean )
 
     case Nest(topic: Text, method: Text, path: List[Name], nested: Text)
     case Call(topic: Text, method: Text, path: List[Name], callee: Text)
@@ -146,8 +147,8 @@ object Index:
       if index >= source.length then dynamic
       else if source.charAt(index) == '\\' && index + 1 < source.length then
         source.charAt(index + 1) match
-          case 't' => builder.append('\t')
-          case 'n' => builder.append('\n')
+          case 't'  => builder.append('\t')
+          case 'n'  => builder.append('\n')
           case char => builder.append(char)
 
         recur(index + 2, dynamic || source.charAt(index + 1) == '*')
@@ -190,23 +191,22 @@ object Index:
         List(Line.Suite(name(className).text, name(topic).text, name(title).text))
 
       case t"group" :: topic :: method :: groups :: group :: moniker :: _ =>
-        List
-         ( Line.Group
-            ( topicOf(topic, method), name(method).text, path(groups), name(group), optional(moniker) ) )
+        val scope: Text = topicOf(topic, method)
+        List(Line.Group(scope, name(method).text, path(groups), name(group), optional(moniker)))
 
-      case t"test" :: topic :: method :: groups :: kind :: test :: moniker :: tags :: number :: rest =>
+      case t"test" :: topic :: method :: groups :: kind :: test :: moniker :: tags :: num :: rest =>
         List
-         ( Line.Declaration
-            ( topicOf(topic, method),
-              name(method).text,
-              path(groups),
-              kind,
-              name(test),
-              optional(moniker),
-              tags.cut(t",").filter(_ != t""),
-              file,
-              safely(number.as[Int]).or(0),
-              rest.head.or(t"") == t"spread" ) )
+          ( Line.Declaration
+              ( topicOf(topic, method),
+                name(method).text,
+                path(groups),
+                kind,
+                name(test),
+                optional(moniker),
+                tags.cut(t",").filter(_ != t""),
+                file,
+                safely(num.as[Int]).or(0),
+                rest.head.or(t"") == t"spread" ) )
 
       case t"nest" :: topic :: method :: groups :: nested :: _ =>
         List(Line.Nest(topicOf(topic, method), name(method).text, path(groups), name(nested).text))
@@ -227,7 +227,7 @@ object Index:
     val lines: List[Text] = document.cut(t"\n")
 
     val file: Text =
-      lines.seek(_.starts(t"# source: ")).lay(t"") { header => header.skip(10).trim }
+      lines.seek(_.starts(t"# source: ")).lay(t""): header => header.skip(10).trim
 
     def recur(todo: List[Text], within: Text, done: List[Line]): List[Line] = todo match
       case line :: tail =>
@@ -296,7 +296,7 @@ object Index:
   def read(classpath: LocalClasspath): Index =
     Index:
       classpath.entries.bind[List[Line], Line, List[Line]]: entry =>
-        documents(entry).bind[List[Line], Line, List[Line]] { document => parse(document).lines }
+        documents(entry).bind[List[Line], Line, List[Line]]: document => parse(document).lines
 
   private def hash(name: Text): Int = name.s.hashCode
 
@@ -348,41 +348,41 @@ object Index:
 
   // A term which is a scoped path: slashed, and neither a glob nor anything but an identity.
   private def scoped(term: Text): Boolean =
-    term.contains(t"/") && !setting(term) && !narrowing(term)
-    && !term.s.exists { char => "*?[]{}\\".indexOf(char.toInt) >= 0 }
+    term.contains(t"/") && !setting(term) && !narrowing(term) &&
+      !term.s.exists: char => "*?[]{}\\".indexOf(char.toInt) >= 0
 
   // A term which is not a selection: a Probably setting such as `--workers=1`, or nothing.
   private def setting(term: Text): Boolean = term == t"" || term.starts(t"--")
 
   // A term which narrows a selection rather than identifying tests.
   private def narrowing(term: Text): Boolean =
-    term.starts(t"kind:") || term.starts(t"tag:") || term.starts(t"not:")
-    || Suggest.axisOf(term).present
+    term.starts(t"kind:") || term.starts(t"tag:") || term.starts(t"not:") ||
+      Suggest.axisOf(term).present
 
   // Whether the terms select nothing in particular: every test is admitted.
   def trivial(terms: List[Text]): Boolean = terms.all(setting)
 
   private def hex(term: Text): Boolean =
-    term.length == 6 && term.s.forall { char => char.isDigit || (char >= 'a' && char <= 'f') }
+    term.length == 6 && term.s.forall: char => char.isDigit || (char >= 'a' && char <= 'f')
 
   private def identifier(term: Text): Boolean =
-    term.length > 0 && Character.isJavaIdentifierStart(term.s.charAt(0))
-    && term.s.forall(Character.isJavaIdentifierPart(_))
+    term.length > 0 && Character.isJavaIdentifierStart(term.s.charAt(0)) &&
+      term.s.forall(Character.isJavaIdentifierPart(_))
 
   // A selection's terms sorted by what they do: the identities union; the kinds, and each
   // `tag:` term's alternatives, intersect; the exclusions subtract.
   private case class Terms
-     ( identities: List[Text], kinds: List[Text], tags: List[List[Text]], exclusions: List[Text] )
+    ( identities: List[Text], kinds: List[Text], tags: List[List[Text]], exclusions: List[Text] )
 
   private def sort(terms: List[Text]): Terms =
     def kind(term: Text): Text = if term.skip(5) == t"test" then t"check" else term.skip(5)
     val selections: List[Text] = terms.filter(!setting(_))
 
     Terms
-     ( selections.filter(!narrowing(_)),
-       selections.filter(_.starts(t"kind:")).map(kind),
-       selections.filter(_.starts(t"tag:")).map { term => term.skip(4).cut(t",").filter(_ != t"") },
-       selections.filter(_.starts(t"not:")).map(_.skip(4)).filter { term => !setting(term) } )
+      ( selections.filter(!narrowing(_)),
+        selections.filter(_.starts(t"kind:")).map(kind),
+        selections.filter(_.starts(t"tag:")).map(_.skip(4).cut(t",").filter(_ != t"")),
+        selections.filter(_.starts(t"not:")).map(_.skip(4)).filter { term => !setting(term) } )
 
   // Whether a selection's terms admit the test, by Probably's own rules (`Selection#admits`)
   // for everything the index can know: identity terms (an id, a moniker, or a glob over a
@@ -392,20 +392,23 @@ object Index:
   def admits(test: Test, terms: List[Text]): Boolean =
     def identified(term: Text): Boolean =
       if identifier(term) || hex(term)
-      then test.links.exists { link => link.id == term || link.moniker == term }
+      then test.links.exists: link => link.id == term || link.moniker == term
       else safely(Glob.parse(term)).lay(false): glob =>
         // A suite's id may hold a `-`, which makes it a glob rather than an identifier.
-        test.links.exists { link => glob.matches(link.name) }
-        || test.links.head.let(_.moniker).lay(false)(glob.matches(_))
-        || glob.matches(test.links.map(_.name).join(t"/"))
-        || glob.matches(test.path.join(t"/"))
+        test.links.exists { link => glob.matches(link.name) } ||
+          test.links.head.let(_.moniker).lay(false)(glob.matches(_)) ||
+          glob.matches(test.links.map(_.name).join(t"/")) ||
+          glob.matches(test.path.join(t"/"))
 
     val sorted: Terms = sort(terms)
 
-    (sorted.identities.nil || sorted.identities.exists(identified))
-    && (sorted.kinds.nil || sorted.kinds.has(test.kind))
-    && sorted.tags.all { alternatives => alternatives.nil || alternatives.exists(test.tags.has(_)) }
-    && !sorted.exclusions.exists { term => Suggest.axisOf(term).absent && admits(test, List(term)) }
+    val tagged: Boolean =
+      sorted.tags.all: alternatives => alternatives.nil || alternatives.exists(test.tags.has(_))
+
+    (sorted.identities.nil || sorted.identities.exists(identified)) &&
+      (sorted.kinds.nil || sorted.kinds.has(test.kind)) &&
+      tagged &&
+      !sorted.exclusions.exists: term => Suggest.axisOf(term).absent && admits(test, List(term))
 
   // A hole in a name only known at runtime, standing in for any text, in the strings below.
   private val hole: Text = t"\u0000"
@@ -464,8 +467,7 @@ object Index:
       val before: Text = literalPrefix(glob)
       val after: Text = literalSuffix(glob)
 
-      (first.starts(before) || before.starts(first))
-      && (last.ends(after) || after.ends(last))
+      (first.starts(before) || before.starts(first)) && (last.ends(after) || after.ends(last))
     }
 
   // Whether an identity term could match a dynamic test once its holes are filled: a hex
@@ -476,10 +478,10 @@ object Index:
       test.links.exists: link =>
         link.id == term || link.moniker == term || (hex(term) && link.id == t"")
     else
-      test.links.exists { link => compatible(term, holed(link)) }
-      || test.links.head.let(_.moniker).lay(false) { moniker => compatible(term, moniker) }
-      || compatible(term, test.links.map(holed).join(t"/"))
-      || compatible(term, test.links.map { link => link.moniker.or(holed(link)) }.join(t"/"))
+      test.links.exists { link => compatible(term, holed(link)) } ||
+        test.links.head.let(_.moniker).lay(false) { moniker => compatible(term, moniker) } ||
+        compatible(term, test.links.map(holed).join(t"/")) ||
+        compatible(term, test.links.map { link => link.moniker.or(holed(link)) }.join(t"/"))
 
   // Whether an exclusion certainly applies to a dynamic test: a kind or tag, which is fixed,
   // or an identity term matching a link above its first hole, by id, moniker or name — never
@@ -489,10 +491,10 @@ object Index:
       val fixed: List[Link] = test.links.filter(_.id != t"")
 
       if identifier(term) || hex(term)
-      then fixed.exists { link => link.id == term || link.moniker == term }
+      then fixed.exists: link => link.id == term || link.moniker == term
       else safely(Glob.parse(term)).lay(false): glob =>
-        fixed.exists { link => glob.matches(link.name) }
-        || fixed.head.let(_.moniker).lay(false)(glob.matches(_))
+        fixed.exists { link => glob.matches(link.name) } ||
+          fixed.head.let(_.moniker).lay(false)(glob.matches(_))
 
   // Whether the terms COULD admit the test: `admits`, except that a dynamic test — whose id
   // and full name exist only at runtime — is admitted by any identity term its fixed parts do
@@ -502,10 +504,13 @@ object Index:
     if !test.dynamic then admits(test, terms) else
       val sorted: Terms = sort(terms)
 
-      (sorted.identities.nil || sorted.identities.exists(possible(test, _)))
-      && (sorted.kinds.nil || sorted.kinds.has(test.kind))
-      && sorted.tags.all { alternatives => alternatives.nil || alternatives.exists(test.tags.has(_)) }
-      && !sorted.exclusions.exists { term => Suggest.axisOf(term).absent && certain(test, term) }
+      val tagged: Boolean =
+        sorted.tags.all: alternatives => alternatives.nil || alternatives.exists(test.tags.has(_))
+
+      (sorted.identities.nil || sorted.identities.exists(possible(test, _))) &&
+        (sorted.kinds.nil || sorted.kinds.has(test.kind)) &&
+        tagged &&
+        !sorted.exclusions.exists: term => Suggest.axisOf(term).absent && certain(test, term)
 
 final class Index private[fume] (private[fume] val lines: List[Index.Line]):
   import Index.{Line, Link, Name, Test}
@@ -544,7 +549,8 @@ final class Index private[fume] (private[fume] val lines: List[Index.Line]):
   // The lines declared from each root: a suite's own `Testable`, by its topic, or a method's
   // parameter, by the method. Grouped once, so that resolving a suite reads only its own lines
   // and those of the methods it calls.
-  private def rootKey(topic: Text, method: Text): Text = if method == t"" then t"=$topic" else method
+  private def rootKey(topic: Text, method: Text): Text =
+    if method == t"" then t"=$topic" else method
 
   private def root(line: Line): Optional[Text] = line match
     case Line.Declaration(topic, method, _, _, _, _, _, _, _, _) => rootKey(topic, method)
@@ -557,8 +563,8 @@ final class Index private[fume] (private[fume] val lines: List[Index.Line]):
     val grouped: scala.collection.mutable.LinkedHashMap[Text, List[Line]] =
       scala.collection.mutable.LinkedHashMap()
 
-    lines.each: line =>
-      root(line).let { key => grouped(key) = line :: grouped.getOrElse(key, Nil) }
+    def add(line: Line)(key: Text): Unit = grouped(key) = line :: grouped.getOrElse(key, Nil)
+    lines.each: line => root(line).let(add(line))
 
     grouped.view.mapValues(_.reverse).toMap
 
@@ -572,8 +578,10 @@ final class Index private[fume] (private[fume] val lines: List[Index.Line]):
   private case class Position(links: List[Link], above: Int, dynamic: Boolean):
     def enter(name: Name, moniker: Optional[Text]): Position =
       val dynamic2: Boolean = dynamic || name.dynamic
+
       val link =
         Link(name.text, moniker, if dynamic2 then t"" else Index.id(above, name.text), name.dynamic)
+
       Position(link :: links, above + Index.hash(name.text), dynamic2)
 
   // A suite's own position: named by its title, and known in paths by its id, which is its
@@ -583,8 +591,11 @@ final class Index private[fume] (private[fume] val lines: List[Index.Line]):
     val entered: Position = Position(Nil, 0, false).enter(Name(title, false), topic)
 
     entered.links match
-      case link :: _ if topic == Index.derive(title) => entered.copy(links = List(link.copy(derived = true)))
-      case _                                         => entered
+      case link :: _ if topic == Index.derive(title) =>
+        entered.copy(links = List(link.copy(derived = true)))
+
+      case _ =>
+        entered
 
   private def descend(position: Position, topic: Text, method: Text, path: List[Name]): Position =
     def recur(position: Position, done: List[Name], todo: List[Name]): Position = todo match
@@ -632,7 +643,7 @@ final class Index private[fume] (private[fume] val lines: List[Index.Line]):
         Nil
 
   private def found(suite: Text, entries: List[Text]): List[Found] =
-    topics(suite).lay(Nil: List[Found]) { topic => expand(topic, t"", root(topic), 0, entries) }
+    topics(suite).lay(Nil: List[Found]): topic => expand(topic, t"", root(topic), 0, entries)
 
   // Every test the suite declares, in the order of its source files and of the lines in them.
   def tests(suite: Text): List[Test] =
@@ -668,7 +679,7 @@ final class Index private[fume] (private[fume] val lines: List[Index.Line]):
     val path: List[Text] = Index.segments(term)
 
     def target(test: Test): List[Text] =
-      Index.locate(test.links, path).let(_.head).lay(Nil: List[Text]) { link => List(link.id) }
+      Index.locate(test.links, path).let(_.head).lay(Nil: List[Text]): link => List(link.id)
 
     val ids: List[Text] = all.flatMap(target).distinct
     if ids.nil || ids.has(t"") then List(term) else ids
@@ -679,8 +690,10 @@ final class Index private[fume] (private[fume] val lines: List[Index.Line]):
     if term.starts(t"not:") && Index.scoped(term.skip(4)) then
       val ids: List[Text] = targets(term.skip(4))
       if ids == List(term.skip(4)) then List(term) else ids.map(exclusion)
-    else if Index.scoped(term) then targets(term)
-    else List(term)
+    else if Index.scoped(term) then
+      targets(term)
+    else
+      List(term)
 
   // The terms as a suite understands them: a scoped path — a test or a group within the links
   // which are named, as `threads/0a48bc` or `threads/errors` — is one of fume's own forms, which
