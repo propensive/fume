@@ -99,16 +99,23 @@ object Server:
     finished = finished.omit(run)
 
 // The dashboard as the web front-end `Tool` serves from the daemon: launched once, for as long
-// as the daemon lives, when a config says `serve` (on its `port`, or 8090), and stopped by
-// `fume quit`. `fume serve` remains the interactive way to serve it, from a terminal.
+// as the daemon lives, when a config says `serve`, and stopped by `fume quit`. It is served
+// behind the machine's Pyrocosm hub, at `/fume/` on the hub's origin (8090), from a port of its
+// own the hub reaches it by; a `port` in a config serves it on that port too. `fume serve`
+// remains the interactive way to serve it, from a terminal.
 object Dashboard:
   // The host's zone, for a run's time of day. Aviation has no notion of a system default, so
   // the JVM is asked for its name; UTC if aviation does not know it.
   private lazy val timezone: Timezone =
     safely(Timezone(java.time.ZoneId.systemDefault.nn.getId.nn.tt)).or(tz"UTC")
 
+  // Where the dashboard on `port` is found: under the hub's origin for port 0, which the hub
+  // holds, and at the port itself otherwise.
+  def address(port: Int): Text =
+    if port == 0 then t"http://localhost:${pyrocosm.Hubs.port}/fume/" else t"http://localhost:$port/"
+
   val web: Tool.Web = new Tool.Web:
-    def port: Int = 8090
+    def port: Int = 0
 
     // The frontend holds the monitor and the error page, which outlive it; vouched pure so it
     // can be stopped from another invocation.

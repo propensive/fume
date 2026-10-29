@@ -256,7 +256,10 @@ object Views:
     val daemon: Api.Daemon =
       Api.Daemon(handle.pid, version, started, Runs.directory.let(_.encode).or(t""))
 
-    def service(entry: (Text, Int)): Api.Service = Api.Service(entry(0), entry(1))
+    // A front-end on port 0 took a port of its own, which the shared presence knows.
+    def service(entry: (Text, Int)): Api.Service =
+      val port: Int = if entry(1) == 0 then pyrocosm.Presence.shared.web().or(0) else entry(1)
+      Api.Service(entry(0), port)
 
     // The MCP server's own service records its port where it lives, outside this module.
     val mcp: List[Api.Service] = McpServer.serving.lay(Nil: List[Api.Service]) { port => List(Api.Service(t"mcp", port)) }

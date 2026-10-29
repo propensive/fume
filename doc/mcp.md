@@ -14,8 +14,10 @@ The server speaks MCP's streamable HTTP transport, at the path `/mcp`:
    in a configuration file, changes the port;
  - a bare `mcp` keyword in `.pyrocosm/fume/config.tel` or `~/.config/fume/config.tel` serves it
    from the moment the daemon starts, for as long as it lives, so an agent always finds it;
- - the dashboard (`fume serve`, or `serve` in a configuration file) mounts it at `/mcp` on its
-   own port too, `http://localhost:8090/mcp` by default.
+ - the dashboard (`fume serve`, or `serve` in a configuration file) mounts it at `/mcp` too, so
+   it is `http://localhost:8090/fume/mcp` through the machine's Pyrocosm hub; and the hub's own
+   `http://localhost:8090/mcp` serves every Pyrocosm tool's MCP server at once, fume's tools
+   among them as `fume_runs`, `fume_failures` and the rest.
 
 Claude Code connects with:
 
