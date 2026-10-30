@@ -37,10 +37,9 @@ import java.nio.file as jnf
 
 import soundness.*
 
-import denominative.dysasymptotics.linearSize
-
 import calendars.gregorianCalendar
 import charsets.utf8Charset
+import denominative.dysasymptotics.linearSize
 import systems.javaBaseSystem
 import textSanitizers.skipSanitizer
 
@@ -64,7 +63,7 @@ object Runs:
   def locate()(using Environment): Optional[Path on Linux] =
     val found: Optional[Path on Linux] = safely(Xdg.stateHome[Path on Linux] / "fume" / "runs")
 
-    found.let { path => located() = path }
+    found.let: path => located() = path
     found
 
   def directory: Optional[Path on Linux] = located().or:
@@ -72,7 +71,7 @@ object Runs:
     locate()
 
   private def directory(id: Text): Optional[Path on Linux] =
-    directory.let { directory => unsafely(directory / id) }
+    directory.let: directory => unsafely(directory / id)
 
   // A run's id: the UTC time it started, to the second, and four hex digits of entropy, so ids
   // sort by time and two runs starting in one second — one per client — stay distinct.
@@ -85,7 +84,8 @@ object Runs:
     t"$date-$time-$entropy"
 
   private def wellFormed(name: Text): Boolean =
-    name.length == 20 && name.s.forall { char => char.isDigit || char == '-' || (char >= 'a' && char <= 'f') }
+    def legal(char: Char): Boolean = char.isDigit || char == '-' || (char >= 'a' && char <= 'f')
+    name.length == 20 && name.s.forall(legal)
 
   def eventsFile(index: Int): Text =
     val number: Text = index.toString.tt
@@ -96,7 +96,7 @@ object Runs:
     t"captured/$number.txt"
 
   private def file(id: Text, name: Text): Optional[ji.File] =
-    directory(id).let { directory => ji.File(directory.encode.s, name.s) }
+    directory(id).let: directory => ji.File(directory.encode.s, name.s)
 
   // Writes the record, replacing any earlier version atomically: a reader sees the old record
   // or the new, never a partial one.
@@ -130,7 +130,9 @@ object Runs:
       // fixed-width digits and hex, so a string order is a time order.
       if listed == null then Nil else
         val names: scala.Array[String | Null] = listed
-        val sorted: scala.Array[String] = names.map(_.nn).sorted(using scala.math.Ordering.String.reverse)
+
+        val sorted: scala.Array[String] =
+          names.map(_.nn).sorted(using scala.math.Ordering.String.reverse)
 
         def recur(index: Int, done: List[Text]): List[Text] =
           if index < 0 then done else
@@ -162,7 +164,7 @@ object Runs:
           Array.unsafeFrozen[Byte](raw)
 
   def captured(id: Text, index: Int): Optional[Text] =
-    bytes(id, capturedFile(index)).let { data => safely(data.read[Text]) }
+    bytes(id, capturedFile(index)).let: data => safely(data.read[Text])
 
   // Stores what a suite printed outside its report, in the sections the output log uses.
   def capture(id: Text, index: Int, captured: Captures.Captured): Boolean =
@@ -172,6 +174,7 @@ object Runs:
           file.getParentFile.nn.mkdirs()
           jnf.Files.writeString(file.toPath, Captures.sections(captured).s)
           true
+
         . or(false)
 
   // Writes a suite's frames as they arrive, each with the 4-byte big-endian length the wire
@@ -213,7 +216,7 @@ object Runs:
 
       if children != null then
         val present: scala.Array[ji.File | Null] = children
-        present.foreach { child => wipe(child.nn) }
+        present.foreach: child => wipe(child.nn)
 
       file.delete()
 
@@ -242,7 +245,7 @@ object Runs:
       def handle(frame: Data): Unit = model.handle(probably.Streamer.read(frame))
 
       def replaySuite(suite: RunRecord.Suite): Unit =
-        val data: Optional[Data] = suite.events.let { name => bytes(record.id, name) }
+        val data: Optional[Data] = suite.events.let: name => bytes(record.id, name)
 
         data.let: data =>
           val chunks: Chain[Data] = Chain(data)

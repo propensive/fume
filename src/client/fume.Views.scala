@@ -35,7 +35,6 @@ package fume
 import soundness.*
 
 import denominative.dysasymptotics.linearSize
-
 import probably.TestEvent
 
 // The API's view of what the daemon holds: journal runs and model states — live, for a run in
@@ -90,10 +89,10 @@ object Views:
   private def trace(trace: TestEvent.Trace): Api.Trace =
     Api.Trace:
       trace.components.map: component =>
-        Api.TraceComponent
-          ( component.className,
-            component.message,
-            component.frames.map { frame => Api.Frame(frame.className, frame.method, frame.file, frame.line) } )
+        val frames: List[Api.Frame] = component.frames.map: frame =>
+          Api.Frame(frame.className, frame.method, frame.file, frame.line)
+
+        Api.TraceComponent(component.className, component.message, frames)
 
   // The command which reruns one test: its suite alone, and its id, which is unique within
   // the suite.
@@ -124,7 +123,7 @@ object Views:
 
     val hotspots: List[Api.Hotspot] =
       entry.hotspots.lay(Nil: List[Api.Hotspot]): hotspots =>
-        hotspots.frames.map { frame => Api.Hotspot(frame.className, frame.method, frame.samples) }
+        hotspots.frames.map: frame => Api.Hotspot(frame.className, frame.method, frame.samples)
 
     Api.TestResult
       ( ref(entry.ref, entry.scope),
@@ -147,10 +146,12 @@ object Views:
   // A test's details, by its ref: the model's details are keyed by the qualified ref, but a
   // snapshot carries the ref alone, so a test is matched by its id and path.
   private def details(state: Model.State, ref: TestEvent.Ref): List[TestEvent] =
-    state.details.seek { (other, _) => other.id == ref.id && other.path == ref.path }.lay(Nil: List[TestEvent])(_(1))
+    val matching = state.details.seek: (other, _) => other.id == ref.id && other.path == ref.path
+    matching.lay(Nil: List[TestEvent])(_(1))
 
   def failures(run: Journal.Run, state: Model.State): Api.Failures =
-    val failing: List[Model.Entry] = entries(state).filter { entry => Documenting.entryStatus(entry).failed }
+    val failing: List[Model.Entry] =
+      entries(state).filter: entry => Documenting.entryStatus(entry).failed
 
     val failures: List[Api.Failure] = failing.map: entry =>
       val events: List[TestEvent] = details(state, entry.ref)
@@ -168,7 +169,7 @@ object Views:
       val captures: List[Api.Capture] =
         events.bind[List[Api.Capture], Api.Capture, List[Api.Capture]]:
           case TestEvent.DetailCaptures(_, values) =>
-            values.to[List].map { (label, value) => Api.Capture(label, value) }
+            values.to[List].map: (label, value) => Api.Capture(label, value)
 
           case _ =>
             Nil
@@ -228,7 +229,9 @@ object Views:
     val index: Index = Suites.index(classpath)
     val resolved: List[Text] = index.resolve(terms)
 
-    Suites.discover(classpath).bind[List[Api.IndexedTest], Api.IndexedTest, List[Api.IndexedTest]]: suite =>
+    type Tests = List[Api.IndexedTest]
+
+    Suites.discover(classpath).bind[Tests, Api.IndexedTest, Tests]: suite =>
       index.tests(suite).filter(Index.admits(_, resolved)).map: test =>
         val leaf: Optional[Index.Link] = test.links.last
 
@@ -251,6 +254,7 @@ object Views:
     val started: Instant over Unix =
       Optional(handle.info.nn.startInstant.nn.orElse(null)).let: instant =>
         Instant.of[Unix](instant.toEpochMilli)
+
       . or(now())
 
     val daemon: Api.Daemon =
@@ -262,13 +266,15 @@ object Views:
       Api.Service(entry(0), port)
 
     // The MCP server's own service records its port where it lives, outside this module.
-    val mcp: List[Api.Service] = McpServer.serving.lay(Nil: List[Api.Service]) { port => List(Api.Service(t"mcp", port)) }
+    val mcp: List[Api.Service] =
+      McpServer.serving.lay(Nil: List[Api.Service]): port => List(Api.Service(t"mcp", port))
+
     val services: List[Api.Service] = Server.services.map(service) + mcp
 
     val runs: List[Api.ActiveRun] = Journal.active.map: run =>
       val active: List[Api.ActiveTest] =
         Server.model(run.id).lay(Nil: List[Api.ActiveTest]): model =>
-          model.state().active.map { ref => Api.ActiveTest(this.ref(ref, run.current.or(t""))) }
+          model.state().active.map: ref => Api.ActiveTest(this.ref(ref, run.current.or(t"")))
 
       Api.ActiveRun
         ( summary(run), run.current, run.record.suites.size, run.record.scheduled.size, active,

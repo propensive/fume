@@ -69,9 +69,11 @@ object Figures:
   def grouped(n: Int): Text =
     val digits = n.toString
     val out = StringBuilder()
+
     digits.indices.foreach: index =>
       if index > 0 && (digits.length - index)%3 == 0 then out.append(',')
       out.append(digits.charAt(index))
+
     out.toString.tt
 
   def percent(basisPoints: Long): Text =

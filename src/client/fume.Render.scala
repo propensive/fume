@@ -34,13 +34,10 @@ package fume
 
 import soundness.*
 
-import denominative.dysasymptotics.{linearAccess, linearSize}
-
-import probably.TestEvent
-
-import fume.Figures.measurable
 import columnAttenuation.ignoreAttenuation
-import decimalConverters.javaDecimalConverter
+import denominative.dysasymptotics.{linearAccess, linearSize}
+import fume.Figures.measurable
+import probably.TestEvent
 
 // Fume's terminal renderer: the consumer-side replacement for probably's `AnsiRenderer` and
 // `TerseRenderer`, drawing the `Doc.Document` that `Documenting` derives from the event
@@ -71,11 +68,11 @@ object Render:
     def flex(metrics: Metrics, maxWidth: Int): Flex = Flex(metrics, 1.0, Unset)
 
     def fit[text: Textual { type Result = Char }]
-       (lines: Array[text]^{}, width: Int, textAlign: TextAlignment)
-       (using Text is Measurable, Hyphenation)
+      ( lines: Array[text]^{}, width: Int, textAlign: TextAlignment )
+      ( using Text is Measurable, Hyphenation )
     :   Sequence[text] =
 
-      lines.to[List].bind[Sequence[text], text, List[text]] { line => Flow.wrap(line, width) }.to[Sequence]
+      lines.to[List].bind[Sequence[text], text, List[text]](Flow.wrap(_, width)).to[Sequence]
 
   // A rigid column: exactly its natural content width, never shrunk when the table is
   // squeezed — numeric figures (a duration and its unit) must not wrap.
@@ -84,11 +81,11 @@ object Render:
       Flex(Metrics(metrics.natural, metrics.natural), 0.0, metrics.natural)
 
     def fit[text: Textual { type Result = Char }]
-       (lines: Array[text]^{}, width: Int, textAlign: TextAlignment)
-       (using Text is Measurable, Hyphenation)
+      ( lines: Array[text]^{}, width: Int, textAlign: TextAlignment )
+      ( using Text is Measurable, Hyphenation )
     :   Sequence[text] =
 
-      lines.to[List].bind[Sequence[text], text, List[text]] { line => Flow.wrap(line, width) }.to[Sequence]
+      lines.to[List].bind[Sequence[text], text, List[text]](Flow.wrap(_, width)).to[Sequence]
 
   // ---------------------------------------------------------------- data rendering
 
@@ -172,42 +169,48 @@ object Render:
   private val winnerBg: Bg = Bg(Palette.subdue(Palette.pass, 0.65))
 
   private def printTable
-     ( columns: List[Column],
-       rows: List[List[Datum]],
-       width: Int,
-       terse: Boolean,
-       highlight: List[Int] = Nil )
-     (emit: Teletype => Unit)
+    ( columns:   List[Column],
+      rows:      List[List[Datum]],
+      width:     Int,
+      terse:     Boolean,
+      highlight: List[Int]         = Nil )
+    ( emit: Teletype => Unit )
   :   Unit =
 
     // Rows are zipped with their indices so each column's decorator can recognise a
     // highlighted row from the row value alone.
     val indexed: List[(List[Datum], Int)] =
-      rows.indexed.map { (row, index) => (row, index.n0) }
+      rows.indexed.map: (row, index) => (row, index.n0)
 
     val defs: List[escritoire.Column[(List[Datum], Int), Teletype]] =
       columns.indexed.map: (column, index) =>
         val align = if column.numeric then TextAlignment.Right else TextAlignment.Left
+
         val sizing: Columnar =
           if column.stretch && !terse then Stretch
           else if column.numeric then Rigid
           else columnar.Paragraph
+
         val title: Teletype = if terse then column.title.teletype else e"$Bold(${column.title})"
 
         escritoire.Column[(List[Datum], Int), Teletype, Teletype]
-           ( title, align, sizing = sizing,
-             decorate = { (row: (List[Datum], Int)) =>
-               if !terse && highlight.has(row(1))
-               then ((line: Teletype) => e"$winnerBg($line)"): Optional[Teletype -> Teletype]
-               else Unset } ):
+          ( title,
+            align,
+            sizing   = sizing,
+            decorate = { (row: (List[Datum], Int)) =>
+              if !terse && highlight.has(row(1))
+              then ((line: Teletype) => e"$winnerBg($line)"): Optional[Teletype -> Teletype]
+              else Unset } ):
           row => datum(row(0)(index).or(Datum.Blank), terse)
 
-    gridLines(Scaffold[(List[Datum], Int), Teletype](defs*).tabulate(indexed), width, terse).each(emit(_))
+    gridLines(Scaffold[(List[Datum], Int), Teletype](defs*).tabulate(indexed), width, terse)
+    . each(emit(_))
 
   // ---------------------------------------------------------------- the results table
 
   private def resultsTable(document: Document, width: Int, terse: Boolean)(using Stdio): Unit =
     val results = document.results
+
     if !results.nil then
       if !terse then Out.println(e"$Bold($Underline(Test results))")
 
@@ -219,8 +222,10 @@ object Render:
         val name = row.ref.name
 
         if row.status == Status.Suite then
-          if terse then e"${t"  "*depth}$name" else e"${t"  "*depth}${Fg(Palette.foreground)}($Bold($name))"
-        else e"${t"  "*depth}$name"
+          if terse then e"${t"  "*depth}$name"
+          else e"${t"  "*depth}${Fg(Palette.foreground)}($Bold($name))"
+        else
+          e"${t"  "*depth}$name"
 
       val mark: escritoire.Column[SummaryRow, Teletype] =
         escritoire.Column[SummaryRow, Teletype, Teletype](e""): row =>
@@ -230,34 +235,36 @@ object Render:
       val defs: List[escritoire.Column[SummaryRow, Teletype]] =
         List
           ( mark,
-            escritoire.Column[SummaryRow, Teletype, Teletype](if terse then e"Hash" else e"$Bold(Hash)"):
-              row => if terse then e"${row.ref.id}" else e"${Fg(Palette.informative)}(${row.ref.id})",
+            escritoire.Column[SummaryRow, Teletype, Teletype]
+              ( if terse then e"Hash" else e"$Bold(Hash)" ):
+              row =>
+                if terse then e"${row.ref.id}" else e"${Fg(Palette.informative)}(${row.ref.id})",
 
             escritoire.Column[SummaryRow, Teletype, Teletype]
-               (if terse then e"Test" else e"$Bold(Test)",
-                sizing = if terse then columnar.Paragraph else Stretch)(title),
+              ( if terse then e"Test" else e"$Bold(Test)",
+                sizing = if terse then columnar.Paragraph else Stretch )
+              ( title ),
 
             escritoire.Column[SummaryRow, Teletype, Teletype]
-               (if terse then e"Count" else e"$Bold(Count)", TextAlignment.Right,
-                sizing = Rigid): row =>
-              if row.count == 0 then e""
-              else if terse then e"${row.count}"
-              else e"${Fg(Palette.informative)}(${row.count})",
+              ( if terse then e"Count" else e"$Bold(Count)", TextAlignment.Right, sizing = Rigid ):
+              row =>
+                if row.count == 0 then e""
+                else if terse then e"${row.count}"
+                else e"${Fg(Palette.informative)}(${row.count})",
 
             escritoire.Column[SummaryRow, Teletype, Teletype]
-               (if terse then e"Min" else e"$Bold(Min)", TextAlignment.Right,
-                sizing = Rigid): row =>
-              if row.count < 2 || row.min == 0L then e"" else time(row.min, terse),
+              ( if terse then e"Min" else e"$Bold(Min)", TextAlignment.Right, sizing = Rigid ):
+              row => if row.count < 2 || row.min == 0L then e"" else time(row.min, terse),
 
             escritoire.Column[SummaryRow, Teletype, Teletype]
-               (if terse then e"$timeTitle" else e"$Bold($timeTitle)", TextAlignment.Right,
-                sizing = Rigid): row =>
-              if row.avg == 0L then e"" else time(row.avg, terse),
+              ( if terse then e"$timeTitle" else e"$Bold($timeTitle)",
+                TextAlignment.Right,
+                sizing = Rigid ):
+              row => if row.avg == 0L then e"" else time(row.avg, terse),
 
             escritoire.Column[SummaryRow, Teletype, Teletype]
-               (if terse then e"Max" else e"$Bold(Max)", TextAlignment.Right,
-                sizing = Rigid): row =>
-              if row.count < 2 || row.max == 0L then e"" else time(row.max, terse) )
+              ( if terse then e"Max" else e"$Bold(Max)", TextAlignment.Right, sizing = Rigid ):
+              row => if row.count < 2 || row.max == 0L then e"" else time(row.max, terse) )
 
       gridLines(Scaffold[SummaryRow, Teletype](defs*).tabulate(results), width, terse)
       . each(Out.println(_))
@@ -278,7 +285,7 @@ object Render:
   // survive as data, never as pre-rendered ANSI bytes (the grid writes plain `Text`
   // literally).
   private[fume] def groupLines(group: Doc.Group, width: Int, terse: Boolean)
-     (emit: Teletype => Unit)
+    ( emit: Teletype => Unit )
   :   Unit =
 
     if group.pending then
@@ -322,6 +329,7 @@ object Render:
 
         emit:
           val headings: Text = steps.map { (step: Long) => step.show.pad(stepWidth, Rtl) }.join
+
           if terse then e"  ${t"N".pad(labelWidth)}$headings"
           else e"  ${Fg(Palette.subdued)}(${t"N".pad(labelWidth)}$headings)"
 
@@ -332,6 +340,7 @@ object Render:
                        else e"${Fg(Palette.subdued)}(${t"·".pad(stepWidth, Rtl)})"):
                 (level: Int, subduedCell: Boolean) =>
                   val text = Figures.sparkBlocks((level - 1).z).or(t"").pad(stepWidth, Rtl)
+
                   if terse then text.teletype
                   else if subduedCell then e"${Fg(Palette.subdued)}($text)"
                   else e"${Fg(Palette.accented)}($text)"
@@ -383,6 +392,7 @@ object Render:
           // resolution; a typed local is equivalent and expands cleanly.
           val id: Text = ref.id
           val name: Text = ref.name
+
           if terse then emit(e"$id  $name  (pending)")
           else
             val dot = e"${Fg(Palette.subdued)}(·)"
@@ -393,7 +403,7 @@ object Render:
   private def location(ref: TestEvent.Ref): Text = t"${ref.file}:${ref.line}"
 
   private def renderTrace(trace: TestEvent.Trace, terse: Boolean, crop: Boolean = false)
-     (using Stdio)
+    ( using Stdio )
   :   Unit =
 
     trace.components.each: component0 =>
@@ -401,14 +411,14 @@ object Render:
       // A failure's trace ends where the test framework begins: everything from the first
       // `probably.` frame down is the runner and transport machinery, not the test.
       val frames: List[TestEvent.Frame] =
-        if !crop then component.frames
-        else component.frames.keep(!_.className.starts(t"probably."))
+        if !crop then component.frames else component.frames.keep(!_.className.starts(t"probably."))
 
       val className: Text = component.className
       val message: Text = Figures.abbreviate(component.message)
 
       if terse then
         Out.println(t"  $className: $message")
+
         frames.keep(3).each: frame =>
           val line = frame.line.let(_.show).or(t"?")
           Out.println(t"    at ${frame.className}.${frame.method} (${frame.file}:$line)")
@@ -423,9 +433,12 @@ object Render:
           Out.println(e"    $at ${frame.className}${Fg(Palette.subdued)}(.)${frame.method} $loc")
 
   private def renderCompare
-     ( expected: Text, found: Text, rows: List[TestEvent.CompareRow],
-       width: Int, terse: Boolean )
-     (using Stdio)
+    ( expected: Text,
+      found:    Text,
+      rows:     List[TestEvent.CompareRow],
+      width:    Int,
+      terse:    Boolean )
+    ( using Stdio )
   :   Unit =
 
     def indent(text: Text): Text =
@@ -452,14 +465,15 @@ object Render:
               e"${t"  "*row.depth}$label",
 
             escritoire.Column[TestEvent.CompareRow, Teletype, Teletype]
-               (if terse then e"Expected" else e"$Bold(Expected)", sizing = if terse then columnar.Paragraph else Stretch):
+              ( if terse then e"Expected" else e"$Bold(Expected)",
+                sizing = if terse then columnar.Paragraph else Stretch ):
               row =>
                 if terse then e"${row.left}"
                 else if row.kind == t"different" then e"${Fg(Palette.pass)}(${row.left})"
                 else e"${Fg(Palette.subdued)}(${row.left})",
 
             escritoire.Column[TestEvent.CompareRow, Teletype, Teletype]
-               (if terse then e"Observed" else e"$Bold(Observed)"):
+              ( if terse then e"Observed" else e"$Bold(Observed)" ):
               row =>
                 if terse then e"${row.right}"
                 else if row.kind == t"different" then e"${Fg(Palette.fail)}(${row.right})"
@@ -469,7 +483,7 @@ object Render:
       . each(Out.println(_))
 
   private def renderFailures(document: Document, width: Int, terse: Boolean, github: Boolean)
-     (using Stdio)
+    ( using Stdio )
   :   Unit =
 
     // Every FAILED test gets a section — header and location always, details when the run
@@ -505,6 +519,7 @@ object Render:
 
             if terse then Out.println(t"  $explanation")
             else Out.println(e"${Fg(Palette.foreground)}($explanation)")
+
             renderTrace(trace, terse, crop = true)
 
           case TestEvent.DetailCompare(_, expected, found, rows) =>
@@ -516,7 +531,8 @@ object Render:
             val defs =
               List
                 ( escritoire.Column[(Text, Text), Teletype, Teletype]
-                     (e"Expression", TextAlignment.Right)(_(0).teletype),
+                    ( e"Expression", TextAlignment.Right )
+                    ( _(0).teletype ),
                   escritoire.Column[(Text, Text), Teletype, Teletype](e"Value")(_(1).teletype) )
 
             gridLines(Scaffold[(Text, Text)](defs*).tabulate(pairs), width, terse)
@@ -532,7 +548,7 @@ object Render:
       if github then GithubActions.endGroup()
 
   private def renderFatal(document: Document, terse: Boolean, github: Boolean)
-     (using Stdio, Environment)
+    ( using Stdio, Environment )
   :   Unit =
 
     document.fatals.each: (trace, active) =>
@@ -540,7 +556,9 @@ object Render:
 
       val explanation =
         if active.nil then t"No tests were active when a fatal error occurred."
-        else t"A fatal error occurred while $activeNames ${if active.size == 1 then t"was" else t"were"} running."
+        else
+          val verb: Text = if active.size == 1 then t"was" else t"were"
+          t"A fatal error occurred while $activeNames $verb running."
 
       if github then
         val className = trace.components.head.let(_.className).or(t"")
@@ -569,6 +587,7 @@ object Render:
       case TestEvent.DetailThrows(_, check, trace) =>
         val className = trace.components.head.let(_.className).or(t"")
         val message = trace.components.head.let(_.message).or(t"")
+
         if check then Figures.abbreviate(t"Check threw $className: $message")
         else Figures.abbreviate(t"Threw $className: $message")
 
@@ -657,11 +676,10 @@ object Render:
       val passText = e"$Bold($fgText(${totals.passed})) passed (${100.0*totals.passed/total}%)"
       val failText = e"$Bold($fgText(${totals.failed})) failed (${100.0*totals.failed/total}%)"
 
-      val aspirePassText =
-        e"$Bold($fgText(${totals.aspirePassed})) aspire-passed (${100.0*totals.aspirePassed/total}%)"
-
-      val aspireFailText =
-        e"$Bold($fgText(${totals.aspireFailed})) aspire-failed (${100.0*totals.aspireFailed/total}%)"
+      val aspirePassed = 100.0*totals.aspirePassed/total
+      val aspireFailed = 100.0*totals.aspireFailed/total
+      val aspirePassText = e"$Bold($fgText(${totals.aspirePassed})) aspire-passed ($aspirePassed%)"
+      val aspireFailText = e"$Bold($fgText(${totals.aspireFailed})) aspire-failed ($aspireFailed%)"
 
       val allText = e"$Bold($fgText($total)) total"
 
@@ -697,10 +715,10 @@ object GithubActions:
 
   private def workspaceRelative(path: Text)(using Environment): Text =
     safely(Environment.githubWorkspace[Text]).let: workspace =>
-      if path.starts(workspace) && path.length > workspace.length
-          && path(workspace.length.z) == '/'
+      if path.starts(workspace) && path.length > workspace.length && path(workspace.length.z) == '/'
       then path.skip(workspace.length + 1)
       else path
+
     . or(path)
 
   private def escape(text: Text): Text =
@@ -713,19 +731,19 @@ object GithubActions:
   def endGroup()(using Stdio): Unit = Out.println(t"::endgroup::")
 
   def error
-     ( message: Text,
-       file:    Optional[Text] = Unset,
-       line:    Optional[Int]  = Unset,
-       title:   Optional[Text] = Unset )
-     (using Stdio, Environment)
+    ( message: Text,
+      file:    Optional[Text] = Unset,
+      line:    Optional[Int]  = Unset,
+      title:   Optional[Text] = Unset )
+    ( using Stdio, Environment )
   :   Unit =
 
-    def one(value: Optional[Text]): List[Text] = value.lay(Nil: List[Text]) { text => List(text) }
+    def one(value: Optional[Text]): List[Text] = value.lay(Nil: List[Text]): text => List(text)
 
     val props: List[Text] =
-      one(file.let(workspaceRelative(_)).let { path => t"file=${escapeProperty(path)}" })
-      + one(line.let { value => t"line=${value.show}" })
-      + one(title.let { value => t"title=${escapeProperty(value)}" })
+      one(file.let(workspaceRelative(_)).let { path => t"file=${escapeProperty(path)}" }) +
+        one(line.let { value => t"line=${value.show}" }) +
+        one(title.let { value => t"title=${escapeProperty(value)}" })
 
     val header = if props.nil then t"" else t" ${props.join(t",")}"
     Out.println(t"::error$header::${escape(message)}")

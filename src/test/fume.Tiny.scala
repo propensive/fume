@@ -41,8 +41,10 @@ object Tiny extends Suite(m"Tiny Tests"):
   def run(): Unit =
     test(m"one and one"):
       1 + 1
+
     . assert(_ == 2)
 
     test(m"fails on demand"):
       java.lang.System.getProperty("fume.tiny.fail") == null
+
     . assert(_ == true)

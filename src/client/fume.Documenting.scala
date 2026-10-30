@@ -37,9 +37,8 @@ import scala.math
 import soundness.*
 
 import denominative.dysasymptotics.linearSize
-import sortingAlgorithms.timsort
-
 import probably.TestEvent
+import sortingAlgorithms.timsort
 
 // The single structural pass over an accumulated event `Model`: builds the renderer-agnostic
 // `Doc.Document` consumed by every output mode. All decisions about WHAT appears in a report
@@ -68,7 +67,7 @@ object Documenting:
         case Status.AspireFail => totals.copy(aspireFailed = totals.aspireFailed + 1)
         case _                 => totals.copy(failed = totals.failed + 1)
 
-    counted.fold(Totals.zero) { (totals, row) => add(totals, row.status) }
+    counted.fold(Totals.zero): (totals, row) => add(totals, row.status)
 
   def document(state: State): Document =
     val (counted, results) = summaries(state)
@@ -92,7 +91,7 @@ object Documenting:
 
     case _ =>
       Status.collective:
-        entry.completions.map { completion => Status.of(completion(1).outcome) }
+        entry.completions.map: completion => Status.of(completion(1).outcome)
 
   // One row per suite and per entry, in declaration order; a `check` entry's runs are
   // aggregated across all its cells into a single status and duration statistics.
@@ -114,15 +113,19 @@ object Documenting:
             // Every proper prefix of the test's path is an ancestor suite's path.
             def prefixes(n: Int, acc: List[List[Text]]): List[List[Text]] =
               if n >= path.size then acc else prefixes(n + 1, path.keep(n) :: acc)
+
             prefixes(1, Nil)
 
         case _ =>
           Nil
+
       . to[Set]
 
     // Each line's row, and whether it belongs among the results as well as the counted.
-    val rows: List[(SummaryRow, Boolean)] =
-      state.lines.bind[List[(SummaryRow, Boolean)], (SummaryRow, Boolean), List[(SummaryRow, Boolean)]]:
+    type Row = (SummaryRow, Boolean)
+
+    val rows: List[Row] =
+      state.lines.bind[List[Row], Row, List[Row]]:
         case Line.SuiteLine(ref) =>
           List((SummaryRow(Status.Suite, ref, 0, 0L, 0L, 0L), populated.has(ref.path)))
 
@@ -133,10 +136,11 @@ object Documenting:
             val ran =
               !entry.benches.nil || !entry.strains.nil || entry.hotspots.present
 
-            if ran then List((SummaryRow(entryStatus(entry), entry.ref, 0, 0L, 0L, 0L), false)) else Nil
+            if ran then List((SummaryRow(entryStatus(entry), entry.ref, 0, 0L, 0L, 0L), false))
+            else Nil
           else
             val durations: List[Long] =
-              entry.completions.map { completion => completion(1).duration }
+              entry.completions.map: completion => completion(1).duration
 
             if durations.nil then Nil else
               val avg: Long = durations.fold(0L)(_ + _)/durations.size
@@ -145,12 +149,17 @@ object Documenting:
 
               List((SummaryRow(entryStatus(entry), entry.ref, durations.size, min, max, avg), true))
 
-    (rows.map(_(0)), rows.bind[List[SummaryRow], SummaryRow, List[SummaryRow]] { pair => if pair(1) then List(pair(0)) else Nil })
+    val admitted: List[SummaryRow] =
+      rows.bind[List[SummaryRow], SummaryRow, List[SummaryRow]]: pair =>
+        if pair(1) then List(pair(0)) else Nil
+
+    (rows.map(_(0)), admitted)
 
   // The display text and numeric value of one coordinate.
   def coordText(coordinate: TestEvent.Coordinate): Text =
     coordinate.discrete.or:
       coordinate.integral.let(_.show).or(coordinate.decimal.let(_.toString.tt))
+
     . or(t"")
 
   private def coordNumeric(coordinate: TestEvent.Coordinate): Double =
@@ -172,7 +181,11 @@ object Documenting:
         case Line.EntryLine(entry) => List(entry)
         case _                     => Nil
 
-    List(t"check", t"bench", t"stress", t"profile").bind[List[(Optional[TestEvent.Ref], Text, List[Entry])], (Optional[TestEvent.Ref], Text, List[Entry]), List[(Optional[TestEvent.Ref], Text, List[Entry])]]: (kind: Text) =>
+    type Grouping = (Optional[TestEvent.Ref], Text, List[Entry])
+
+    val kinds: List[Text] = List(t"check", t"bench", t"stress", t"profile")
+
+    kinds.bind[List[Grouping], Grouping, List[Grouping]]: (kind: Text) =>
       val ofKind: List[Entry] = entries.filter(_.kind.or(t"check") == kind)
 
       val relevant: List[Entry] = kind match
@@ -184,7 +197,7 @@ object Documenting:
       // Group by immediate suite, preserving declaration order of suites and entries: one
       // pass to bucket the members, and the first ref of each path, rather than a scan of
       // every entry per suite.
-      val members: Map[List[Text], List[Entry]] = relevant.group { entry => parent(entry.ref.path) }
+      val members: Map[List[Text], List[Entry]] = relevant.group: entry => parent(entry.ref.path)
 
       val paths: List[List[Text]] =
         val seen = scala.collection.mutable.HashSet[List[Text]]()
@@ -194,12 +207,12 @@ object Documenting:
       val suites: Map[List[Text], TestEvent.Ref] =
         suiteRefs.reverse.map { ref => ref.path -> ref }.to[Map]
 
-      paths.map { (path: List[Text]) => (suites(path), kind, members(path).or(Nil)) }
+      paths.map: (path: List[Text]) => (suites(path), kind, members(path).or(Nil))
 
   // The groups the dashboard charts: each suite's benchmarks and stress tests, in the order
   // the report lays them out.
   private[fume] def measurements(state: State): List[(Optional[TestEvent.Ref], Text, List[Entry])] =
-    grouped(state).filter { group => group(1) == t"bench" || group(1) == t"stress" }
+    grouped(state).filter: group => group(1) == t"bench" || group(1) == t"stress"
 
   private def groups(state: State): List[Group] =
     grouped(state).bind[List[Group], Group, List[Group]]: (suite, kind, members) =>
@@ -207,8 +220,8 @@ object Documenting:
       // its members stay elided until the group starts evaluating.
       val started: Boolean =
         members.exists: entry =>
-          !entry.completions.nil || !entry.benches.nil || !entry.strains.nil
-            || entry.hotspots.present || state.active.exists(_.id == entry.ref.id)
+          !entry.completions.nil || !entry.benches.nil || !entry.strains.nil ||
+            entry.hotspots.present || state.active.exists(_.id == entry.ref.id)
 
       if !started then List(Group(suite, kind, Nil, pending = true))
       else
@@ -230,9 +243,7 @@ object Documenting:
   // flat listing.
   private def axialCheck(entry: Entry): Block =
     val axes: List[Text] =
-      entry.completions.bind[List[Text], Text, List[Text]]: completion =>
-        completion(0).map(_.axis)
-      . distinct
+      entry.completions.bind[List[Text], Text, List[Text]](_(0).map(_.axis)).distinct
 
     axes match
       case axis :: Nil =>
@@ -258,8 +269,7 @@ object Documenting:
 
       case first :: second :: Nil =>
         crosstab(entry, first, second): completions =>
-          if completions.nil then Datum.Gap
-          else Datum.Mark(outcomeStatus(completions.map(_(1))))
+          if completions.nil then Datum.Gap else Datum.Mark(outcomeStatus(completions.map(_(1))))
 
       case _ =>
         val rows: List[List[Datum]] =
@@ -284,9 +294,10 @@ object Documenting:
   // test's first axis is the crosstab's rows and the chart's groups, unless transposed.
   private[fume] def axesOf(entry: Entry): List[Text] =
     val recorded: List[Text] =
-      entry.benches.bind[List[Text], Text, List[Text]] { bench => bench.coordinates.map(_.axis) }.distinct
+      entry.benches.bind[List[Text], Text, List[Text]](_.coordinates.map(_.axis)).distinct
 
-    val declared: List[Text] = if recorded.nil then entry.axes.filter(!_.emergent).map(_.axis) else recorded
+    val declared: List[Text] =
+      if recorded.nil then entry.axes.filter(!_.emergent).map(_.axis) else recorded
 
     declared match
       case first :: second :: Nil if transposed => List(second, first)
@@ -296,45 +307,48 @@ object Documenting:
   // any others its records carry — in first-appearance order for discrete axes and numeric
   // order otherwise.
   private[fume] def axisValues(entry: Entry, axis: Text): List[TestEvent.Coordinate] =
-    val scheduled: List[TestEvent.Coordinate] =
-      entry.axes.seek(_.axis == axis).lay(Nil: List[TestEvent.Coordinate]): schedule =>
-        schedule.values.map: value =>
-          schedule.domain match
-            case t"discrete" => TestEvent.Coordinate(axis, schedule.domain, schedule.emergent, value, Unset, Unset)
-            case t"integral" => TestEvent.Coordinate(axis, schedule.domain, schedule.emergent, Unset, safely(value.as[Long]).or(0L), Unset)
-            case _           => TestEvent.Coordinate(axis, schedule.domain, schedule.emergent, Unset, Unset, safely(value.as[Double]).or(0.0))
+    type Coordinate = TestEvent.Coordinate
 
-    val all: List[TestEvent.Coordinate] =
-      entry.completions.bind[List[TestEvent.Coordinate], TestEvent.Coordinate,
-          List[TestEvent.Coordinate]]: completion =>
+    val scheduled: List[Coordinate] =
+      entry.axes.seek(_.axis == axis).lay(Nil: List[Coordinate]): schedule =>
+        schedule.values.map: value =>
+          val coordinate = TestEvent.Coordinate(axis, schedule.domain, schedule.emergent, _, _, _)
+
+          schedule.domain match
+            case t"discrete" => coordinate(value, Unset, Unset)
+            case t"integral" => coordinate(Unset, safely(value.as[Long]).or(0L), Unset)
+            case _           => coordinate(Unset, Unset, safely(value.as[Double]).or(0.0))
+
+    val all: List[Coordinate] =
+      entry.completions.bind[List[Coordinate], Coordinate, List[Coordinate]]: completion =>
         completion(0).filter(_.axis == axis)
 
-    val benchCoords: List[TestEvent.Coordinate] =
-      entry.benches.bind[List[TestEvent.Coordinate], TestEvent.Coordinate,
-          List[TestEvent.Coordinate]]: bench =>
+    val benchCoords: List[Coordinate] =
+      entry.benches.bind[List[Coordinate], Coordinate, List[Coordinate]]: bench =>
         bench.coordinates.filter(_.axis == axis)
 
-    val combined: List[TestEvent.Coordinate] = scheduled + all + benchCoords
+    val combined: List[Coordinate] = scheduled + all + benchCoords
 
-    val distinct: List[TestEvent.Coordinate] =
-      def recur(rest: List[TestEvent.Coordinate], seen: List[Text],
-          acc: List[TestEvent.Coordinate]): List[TestEvent.Coordinate] =
+    val distinct: List[Coordinate] =
+      def recur(rest: List[Coordinate], seen: List[Text], acc: List[Coordinate]): List[Coordinate] =
         rest match
           case head :: tail =>
             val text = coordText(head)
+
             if seen.has(text) then recur(tail, seen, acc)
             else recur(tail, text :: seen, head :: acc)
-          case _ => acc.reverse
+
+          case _ =>
+            acc.reverse
 
       recur(combined, Nil, Nil)
 
-    if distinct.exists(_.domain == t"discrete") then distinct
-    else distinct.order(coordNumeric(_))
+    if distinct.exists(_.domain == t"discrete") then distinct else distinct.order(coordNumeric(_))
 
   // The biaxial grid: the first axis's values are rows, the second's are columns, and each
   // cell holds only the headline datum; absent combinations render as gaps.
   private def crosstab(entry: Entry, first: Text, second: Text)
-     (cell: List[(List[TestEvent.Coordinate], TestEvent.Outcome)] => Datum)
+    ( cell: List[(List[TestEvent.Coordinate], TestEvent.Outcome)] => Datum )
   :   Block =
 
     val rowValues: List[Text] = axisValues(entry, first).map(coordText(_))
@@ -345,15 +359,15 @@ object Documenting:
         val cells: List[Datum] =
           columnValues.map: column =>
             val matching = entry.completions.filter: completion =>
-              completion(0).exists { c => c.axis == first && coordText(c) == row }
-                && completion(0).exists { c => c.axis == second && coordText(c) == column }
+              completion(0).exists { c => c.axis == first && coordText(c) == row } &&
+                completion(0).exists: c => c.axis == second && coordText(c) == column
 
             cell(matching)
 
         Datum.Str(row) :: cells
 
     val columns: List[Column] =
-      Column(first, stretch = true) :: columnValues.map { value => Column(value, numeric = true) }
+      Column(first, stretch = true) :: columnValues.map: value => Column(value, numeric = true)
 
     Block.Table(entry.ref, columns, rows)
 
@@ -378,17 +392,18 @@ object Documenting:
 
   private def benchMetricColumns(sized: Boolean): List[Column] =
     val sizes: List[Column] =
-      if sized then List(Column(t"Size", numeric = true), Column(t"Rate", numeric = true))
-      else Nil
+      if sized then List(Column(t"Size", numeric = true), Column(t"Rate", numeric = true)) else Nil
 
-    List
-      ( Column(t"n", numeric = true),
-        Column(t"μ", numeric = true),
-        Column(t"σ", numeric = true),
-        Column(t"Confidence", numeric = true),
-        Column(t"Throughput", numeric = true),
-        Column(t"Alloc·op¯¹", numeric = true) )
-    + sizes
+    val metrics: List[Column] =
+      List
+        ( Column(t"n", numeric = true),
+          Column(t"μ", numeric = true),
+          Column(t"σ", numeric = true),
+          Column(t"Confidence", numeric = true),
+          Column(t"Throughput", numeric = true),
+          Column(t"Alloc·op¯¹", numeric = true) )
+
+    metrics + sizes
 
   private def benchMetricCells(bench: TestEvent.BenchmarkRecorded, sized: Boolean): List[Datum] =
     val sizes: List[Datum] =
@@ -397,29 +412,32 @@ object Documenting:
         List
           ( bench.operationSize.lay(Datum.Blank)(Datum.Str(_)),
             bench.operationRate.lay(Datum.Blank)(Datum.Str(_)) )
-      else Nil
+      else
+        Nil
 
     // Bytes allocated per operation, when the harness measured it (a suite built against a
     // Soundness whose `Bench` predates the field never reaches here: its fingerprint differs).
     val allocation: Optional[Long] = bench.allocation
 
-    List
-      ( Datum.Num(bench.iterations),
-        Datum.Time(bench.mean.toLong),
-        Datum.Time(bench.sd.toLong),
-        confidence(bench),
-        rate(bench),
-        allocation.lay(Datum.Blank)(Datum.Memory(_)) )
-    + sizes
+    val metrics: List[Datum] =
+      List
+        ( Datum.Num(bench.iterations),
+          Datum.Time(bench.mean.toLong),
+          Datum.Time(bench.sd.toLong),
+          confidence(bench),
+          rate(bench),
+          allocation.lay(Datum.Blank)(Datum.Memory(_)) )
+
+    metrics + sizes
 
   // The baseline-relative datum of one benchmark against the anchor's, following the
   // anchor's settings: the compared statistic (min/mean/max of the timing distribution), as
   // a ratio (`Geometric`, the anchor's own row showing ★) or a signed difference
   // (`Arithmetic`), inverted to a rate for a non-temporal baseline.
   private def relative
-     ( anchor: TestEvent.AnchorRecorded,
-       anchorBench: TestEvent.BenchmarkRecorded,
-       bench: TestEvent.BenchmarkRecorded )
+    ( anchor:      TestEvent.AnchorRecorded,
+      anchorBench: TestEvent.BenchmarkRecorded,
+      bench:       TestEvent.BenchmarkRecorded )
   :   Datum =
 
     def stat(bench: TestEvent.BenchmarkRecorded): Double = anchor.compare match
@@ -456,8 +474,8 @@ object Documenting:
     val axial: List[Entry] = entries.filter(!axesOf(_).nil)
 
     val sized: Boolean =
-      entries.exists(_.benches.exists { bench =>
-        bench.operationSize.present || bench.operationRate.present })
+      entries.exists: entry =>
+        entry.benches.exists: bench => bench.operationSize.present || bench.operationRate.present
 
     val table: List[Block] =
       // DECLARATION order, not throughput order: a live board pre-lists the scheduled rows
@@ -476,11 +494,11 @@ object Documenting:
       // stragglers is not yet the best.
       val highlight: List[Int] =
         if plain.nil || plain.exists(_.benches.nil) then Nil else
-          val rates: List[Long] = plain.map { entry => entry.benches.head.lay(0L)(throughput(_)) }
+          val rates: List[Long] = plain.map: entry => entry.benches.head.lay(0L)(throughput(_))
           val best: Long = rates.maximum.or(0L)
 
           if best == 0L then Nil
-          else rates.where(_ == best).lay(Nil: List[Int]) { ordinal => List(ordinal.n0) }
+          else rates.where(_ == best).lay(Nil: List[Int]): ordinal => List(ordinal.n0)
 
       if rows.nil then Nil else
         List(Block.Table
@@ -489,7 +507,7 @@ object Documenting:
             rows,
             highlight ))
 
-    table + axial.bind[List[Block], Block, List[Block]] { entry => axialBench(entry, sized) }
+    table + axial.bind[List[Block], Block, List[Block]]: entry => axialBench(entry, sized)
 
   // An entry with one axis renders as a table of its runs; with two, as a crosstab of
   // headline data; with more, as a flat listing of coordinates and headlines.
@@ -502,30 +520,29 @@ object Documenting:
     def headline(bench: TestEvent.BenchmarkRecorded): Datum =
       if sized then rate(bench) else Datum.Time(bench.mean.toLong)
 
+    def anchorText(anchor: TestEvent.AnchorRecorded): Text =
+      anchor.discrete.or(anchor.integral.let(_.show)).or(anchor.decimal.let(_.toString.tt)).or(t"")
+
     axes match
       case axis :: Nil =>
         val anchored: Optional[(TestEvent.AnchorRecorded, TestEvent.BenchmarkRecorded)] =
-          entry.anchor.let: anchor =>
-            val value: Text =
-              anchor.discrete.or(anchor.integral.let(_.show)).or(anchor.decimal.let(_.toString.tt)).or(t"")
-
-            benchAt(axis, value).let(anchor -> _)
+          entry.anchor.let: anchor => benchAt(axis, anchorText(anchor)).let(anchor -> _)
 
         val comparisonColumns: List[Column] = anchored.lay(Nil): (anchor, _) =>
-          val value: Text =
-            anchor.discrete.or(anchor.integral.let(_.show)).or(anchor.decimal.let(_.toString.tt)).or(t"")
-
-          List(Column(t"×$value", numeric = true))
+          List(Column(t"×${anchorText(anchor)}", numeric = true))
 
         // A scheduled value yet to record occupies its row with blank cells, as a plain
         // benchmark does, filling in when its data arrives.
         val rows: List[List[Datum]] =
           axisValues(entry, axis).map: coordinate =>
-            benchAt(axis, coordText(coordinate)).lay(Datum.Str(coordText(coordinate)) :: blankCells(benchMetricColumns(sized).size + comparisonColumns.size)): bench =>
+            val label: Datum = Datum.Str(coordText(coordinate))
+            val width: Int = benchMetricColumns(sized).size + comparisonColumns.size
+
+            benchAt(axis, coordText(coordinate)).lay(label :: blankCells(width)): bench =>
               val comparison: List[Datum] = anchored.lay(Nil): (anchor, anchorBench) =>
                 List(relative(anchor, anchorBench, bench))
 
-              Datum.Str(coordText(coordinate)) :: benchMetricCells(bench, sized) + comparison
+              label :: benchMetricCells(bench, sized) + comparison
 
         List(Block.Table
           ( entry.ref,
@@ -541,14 +558,15 @@ object Documenting:
             val cells: List[Datum] =
               columnValues.map: column =>
                 entry.benches.seek: bench =>
-                  bench.coordinates.exists { c => c.axis == first && coordText(c) == row }
-                    && bench.coordinates.exists { c => c.axis == second && coordText(c) == column }
+                  bench.coordinates.exists { c => c.axis == first && coordText(c) == row } &&
+                    bench.coordinates.exists: c => c.axis == second && coordText(c) == column
+
                 . lay(Datum.Gap)(headline(_))
 
             Datum.Str(row) :: cells
 
         val columns: List[Column] =
-          Column(first, stretch = true) :: columnValues.map { value => Column(value, numeric = true) }
+          Column(first, stretch = true) :: columnValues.map: value => Column(value, numeric = true)
 
         List(Block.Table(entry.ref, columns, rows))
 
@@ -578,13 +596,19 @@ object Documenting:
   // An entry's scaling curve: concurrency against the strain measured there; a repeated
   // concurrency keeps its first measurement.
   private[fume] def curve(entry: Entry): List[TestEvent.StrainRecorded] =
-    def recur(rest: List[TestEvent.StrainRecorded], seen: List[Int],
-        acc: List[TestEvent.StrainRecorded]): List[TestEvent.StrainRecorded] =
+    def recur
+      ( rest: List[TestEvent.StrainRecorded],
+        seen: List[Int],
+        acc:  List[TestEvent.StrainRecorded] )
+    :   List[TestEvent.StrainRecorded] =
+
       rest match
         case head :: tail =>
           if seen.has(head.concurrency) then recur(tail, seen, acc)
           else recur(tail, head.concurrency :: seen, head :: acc)
-        case _ => acc.reverse
+
+        case _ =>
+          acc.reverse
 
     recur(entry.strains, Nil, Nil)
 
@@ -594,15 +618,15 @@ object Documenting:
 
     // Each stress entry's strains form its scaling curve.
     val curves: List[(Entry, List[TestEvent.StrainRecorded])] =
-      entries.map { entry => entry -> curve(entry) }
+      entries.map: entry => entry -> curve(entry)
 
     val steps: List[Long] =
       val all: List[Long] =
-        curves.bind[List[Long], Long, List[Long]] { curve => curve(1).map(_.concurrency.toLong) }
+        curves.bind[List[Long], Long, List[Long]]: curve => curve(1).map(_.concurrency.toLong)
 
       val shared: List[Long] =
         if curves.size < 2 then all.distinct
-        else all.distinct.filter { step => all.count(_ == step) > 1 }
+        else all.distinct.filter: step => all.count(_ == step) > 1
 
       val chosen: List[Long] = if shared.size > 1 then shared else all.distinct
       chosen.sort
@@ -611,8 +635,7 @@ object Documenting:
       if steps.size < 2 then Nil else
         val peakRate: Long =
           val rates: List[Long] =
-            curves.bind[List[Long], Long, List[Long]]: curve =>
-              curve(1).map(strainThroughput(_))
+            curves.bind[List[Long], Long, List[Long]]: curve => curve(1).map(strainThroughput(_))
 
           rates.fold(1L)(_.max(_))
 
@@ -649,7 +672,7 @@ object Documenting:
             curve.seek(_.sustained).or:
               curve.maximize(strainThroughput(_))
 
-          best.lay(Nil) { strain => List(entry -> strain) }
+          best.lay(Nil): strain => List(entry -> strain)
 
     val bestRate: Long =
       peaks.map { peak => strainThroughput(peak(1)) }.fold(0L)(_.max(_))
@@ -658,20 +681,23 @@ object Documenting:
 
     val summary: List[Block] =
       if peaks.nil && pending.nil then Nil else
-        val columns: List[Column] =
+        val base: List[Column] =
           List
             ( Column(t"Hash"),
               Column(t"Test", stretch = true),
               Column(t"N", numeric = true),
               Column(t"Throughput", numeric = true) )
-          + (if ranked then List(Column(t"×best", numeric = true)) else Nil: List[Column])
-          + List(Column(t"Alloc·op¯¹", numeric = true))
-          + (if latencies then List(Column(t"p99", numeric = true)) else Nil: List[Column])
-          + (if slo then List(Column(t"SLO", numeric = true)) else Nil: List[Column])
+
+        val ranking: List[Column] = if ranked then List(Column(t"×best", numeric = true)) else Nil
+        val p99: List[Column] = if latencies then List(Column(t"p99", numeric = true)) else Nil
+        val compliance: List[Column] = if slo then List(Column(t"SLO", numeric = true)) else Nil
+
+        val columns: List[Column] =
+          base + ranking + List(Column(t"Alloc·op¯¹", numeric = true)) + p99 + compliance
 
         val rows: List[List[Datum]] =
           val sorted: List[(Entry, TestEvent.StrainRecorded)] =
-            peaks.order { peak => -strainThroughput(peak(1)) }
+            peaks.order: peak => -strainThroughput(peak(1))
 
           sorted.map: (entry, strain) =>
             val rate: Long = strainThroughput(strain)
@@ -700,8 +726,8 @@ object Documenting:
         val blanks: List[List[Datum]] =
           pending.map: entry =>
             val cells =
-              2 + (if ranked then 1 else 0) + 1 + (if latencies then 1 else 0)
-                + (if slo then 1 else 0)
+              2 + (if ranked then 1 else 0) + 1 + (if latencies then 1 else 0) +
+                (if slo then 1 else 0)
 
             List(Datum.Hash(entry.ref.id), Datum.Title(entry.ref.name, 0)) + blankCells(cells)
 

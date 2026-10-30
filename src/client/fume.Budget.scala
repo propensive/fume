@@ -48,7 +48,7 @@ object Budget:
   // Anything else — including zero and negative — is `Unset`.
   def parse(text: Text): Optional[Long] =
     if text.length == 0 then Unset else
-      val (digits, multiplier): (Text, Double) = text.s.charAt(text.length - 1) match
+      val (digits, multiplier) = text.s.charAt(text.length - 1) match
         case 's' => (text.keep(text.length - 1), 1.0)
         case 'm' => (text.keep(text.length - 1), 60.0)
         case 'h' => (text.keep(text.length - 1), 3600.0)
@@ -62,7 +62,7 @@ object Budget:
   // carry no estimate to add; a classpath that cannot stream (pre-event, or an incompatible
   // Soundness) has no schedule, so its measurements simply run at their declared lengths.
   def expected(schedule: List[TestEvent.TestScheduled]): Long =
-    schedule.fold(0L) { (total, scheduled) => total + scheduled.expected.or(0L) }
+    schedule.fold(0L): (total, scheduled) => total + scheduled.expected.or(0L)
 
   // The factor, rendered to nine decimal places by hand: `Double.toString` falls into
   // exponent notation for small values, which probably's number parser does not read, and
@@ -77,6 +77,7 @@ object Budget:
   // confirm what was asked.
   def show(nanos: Long): Text =
     val tenths: Long = nanos/100_000_000L
+
     if tenths < 600L then t"${tenths/10L}.${tenths%10L}s"
     else if tenths < 36000L then t"${tenths/600L}m${(tenths%600L/10L).show.pad(2, Rtl, '0')}s"
     else t"${tenths/36000L}h${(tenths%36000L/600L).show.pad(2, Rtl, '0')}m"

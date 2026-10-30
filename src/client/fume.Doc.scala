@@ -41,6 +41,23 @@ import probably.TestEvent
 // colour or tersely) — and, later, by an HTML backend. Data is semantic, never preformatted:
 // backends decide colour and glyphs, and `Format` decides digits.
 object Doc:
+  object Status:
+    // The outcome vocabulary of `TestEvent.Outcome`, one word per verdict.
+    def of(outcome: Text): Status = outcome match
+      case t"pass"         => Pass
+      case t"fail"         => Fail
+      case t"throws"       => Throws
+      case t"check-throws" => CheckThrows
+      case t"aspire-pass"  => AspirePass
+      case t"aspire-fail"  => AspireFail
+      case _               => Mixed
+
+    // The collective status of a set of outcomes: their common status, or `Mixed` when they
+    // disagree.
+    def collective(statuses: List[Status]): Status = statuses match
+      case head :: tail => if tail.all(_ == head) then head else Mixed
+      case _            => Mixed
+
   enum Status:
     case Pass, Fail, Throws, CheckThrows, Mixed, Suite, Bench, Stress, Profile, AspirePass,
       AspireFail
@@ -90,23 +107,6 @@ object Doc:
       case Fail | Throws | CheckThrows | Mixed => true
       case _                                   => false
 
-  object Status:
-    // The outcome vocabulary of `TestEvent.Outcome`, one word per verdict.
-    def of(outcome: Text): Status = outcome match
-      case t"pass"         => Pass
-      case t"fail"         => Fail
-      case t"throws"       => Throws
-      case t"check-throws" => CheckThrows
-      case t"aspire-pass"  => AspirePass
-      case t"aspire-fail"  => AspireFail
-      case _               => Mixed
-
-    // The collective status of a set of outcomes: their common status, or `Mixed` when they
-    // disagree.
-    def collective(statuses: List[Status]): Status = statuses match
-      case head :: tail => if tail.all(_ == head) then head else Mixed
-      case _            => Mixed
-
   enum Datum:
     case Blank
     case Gap                                     // a sparse-grid hole: an omitted combination
@@ -144,6 +144,7 @@ object Doc:
         columns:   List[Column],
         rows:      List[List[Datum]],
         highlight: List[Int] = Nil )
+
     case Sparkline(steps: List[Long], sequence: List[Spark])
     case Histogram(title: Optional[TestEvent.Ref], total: Long, frames: List[TestEvent.Hotspot])
 
@@ -161,7 +162,11 @@ object Doc:
       pending: Boolean = false )
 
   // One row of the global results table, aggregating a test's runs across all its cells.
-  case class SummaryRow(status: Status, ref: TestEvent.Ref, count: Int, min: Long, max: Long, avg: Long)
+  case class SummaryRow
+    ( status: Status, ref: TestEvent.Ref, count: Int, min: Long, max: Long, avg: Long )
+
+  object Totals:
+    def zero: Totals = Totals(0, 0, 0, 0, Nil)
 
   // The counts of a run, and the DISTINCT statuses its tests took (suites excluded), for the
   // legend to explain only the marks that appear.
@@ -175,7 +180,7 @@ object Doc:
     def total: Int = passed + failed + aspirePassed + aspireFailed
     def pass: Boolean = failed == 0 && total > 0
 
-    def +(other: Totals): Totals =
+    def + (other: Totals): Totals =
       Totals
         ( passed + other.passed,
           failed + other.failed,
@@ -185,7 +190,7 @@ object Doc:
 
     // The totals accrued between two snapshots of a run: one suite's share of the whole. The
     // statuses seen are the later snapshot's; they only ever grow.
-    def -(other: Totals): Totals =
+    def - (other: Totals): Totals =
       Totals
         ( passed - other.passed,
           failed - other.failed,
@@ -195,9 +200,6 @@ object Doc:
 
     def record(status: Status): Totals =
       if statuses.has(status) then this else copy(statuses = statuses + List(status))
-
-  object Totals:
-    def zero: Totals = Totals(0, 0, 0, 0, Nil)
 
   case class Document
     ( results:        List[SummaryRow],

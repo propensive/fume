@@ -65,7 +65,8 @@ object Palette extends iridescence.Palette:
   val highlight:   Color in Srgb = accent(yellow)
   val pass:        Color in Srgb = theme.spectrum.green.to[Srgb]
   val fail:        Color in Srgb = red
-  val aspirePass:  Color in Srgb = mix(theme.spectrum.green.to[Srgb], theme.spectrum.cyan.to[Srgb], 0.5)
+  val green:       Color in Srgb = theme.spectrum.green.to[Srgb]
+  val aspirePass:  Color in Srgb = mix(green, theme.spectrum.cyan.to[Srgb], 0.5)
   val aspireFail:  Color in Srgb = subdue(yellow, 0.5)
   val detail:      Color in Srgb = blue
   val subdued:     Color in Srgb = subdue(theme.foreground.to[Srgb], 0.5)

@@ -35,12 +35,9 @@ package fume
 import soundness.*
 
 import denominative.dysasymptotics.linearSize
-
-import probably.TestEvent
-
-import pyrocosm.Inline
-
 import fontMetrics.averageFontMetric
+import probably.TestEvent
+import pyrocosm.Inline
 
 // The dashboard's charts: a tasseomancy drawing above each measurement table of a run, kept
 // current as its records arrive. Each is a Pyrocosm `Figure`, so it rides the web frontend's
@@ -106,7 +103,12 @@ object Charts:
 
   private def bar(category: Text, bench: TestEvent.BenchmarkRecorded, base: Timebase): Bar =
     val ci: Double = interval(bench)
-    Bar(category, bench.mean/base.nanos, (bench.mean - ci).max(0.0)/base.nanos, (bench.mean + ci)/base.nanos)
+
+    Bar
+      ( category,
+        bench.mean/base.nanos,
+        (bench.mean - ci).max(0.0)/base.nanos,
+        (bench.mean + ci)/base.nanos )
 
   private def baseOf(benches: List[TestEvent.BenchmarkRecorded]): Timebase =
     timebase(benches.map(_.mean).fold(0.0)(_.max(_)))
@@ -116,7 +118,8 @@ object Charts:
   // is fixed from the schedule and a result arriving changes only its bar's height.
   def plain(members: List[Model.Entry]): BarData =
     val entries: List[Model.Entry] = members.filter(Documenting.axesOf(_).nil)
-    val base: Timebase = baseOf(entries.bind[List[TestEvent.BenchmarkRecorded], TestEvent.BenchmarkRecorded, List[TestEvent.BenchmarkRecorded]](_.benches))
+    type Record = TestEvent.BenchmarkRecorded
+    val base: Timebase = baseOf(entries.bind[List[Record], Record, List[Record]](_.benches))
 
     val bars: List[Bar] =
       entries.map: entry =>
@@ -136,14 +139,17 @@ object Charts:
 
     def benchAt(pairs: List[(Text, Text)]): Optional[TestEvent.BenchmarkRecorded] =
       entry.benches.seek: bench =>
-        pairs.all { (axis, value) => bench.coordinates.exists { c => c.axis == axis && Documenting.coordText(c) == value } }
+        pairs.all: (axis, value) =>
+          bench.coordinates.exists: c => c.axis == axis && Documenting.coordText(c) == value
 
-    def values(axis: Text): List[Text] = Documenting.axisValues(entry, axis).map(Documenting.coordText(_))
+    def values(axis: Text): List[Text] =
+      Documenting.axisValues(entry, axis).map(Documenting.coordText(_))
 
     axes match
       case axis :: Nil =>
         val bars: List[Bar] =
-          values(axis).map { value => benchAt(List((axis, value))).lay(Bar(value, 0.0, 0.0, 0.0))(bar(value, _, base)) }
+          values(axis).map: value =>
+            benchAt(List((axis, value))).lay(Bar(value, 0.0, 0.0, 0.0))(bar(value, _, base))
 
         BarData(List(Slice(entry.ref.name, bars)), base)
 
@@ -151,7 +157,9 @@ object Charts:
         val slices: List[Slice] =
           values(second).map: column =>
             val bars: List[Bar] =
-              values(first).map { row => benchAt(List((first, row), (second, column))).lay(Bar(row, 0.0, 0.0, 0.0))(bar(row, _, base)) }
+              values(first).map: row =>
+                benchAt(List((first, row), (second, column)))
+                . lay(Bar(row, 0.0, 0.0, 0.0))(bar(row, _, base))
 
             Slice(column, bars)
 
@@ -159,7 +167,8 @@ object Charts:
 
       case _ =>
         val bars: List[Bar] =
-          entry.benches.map { bench => bar(bench.coordinates.map(Documenting.coordText(_)).join(t", "), bench, base) }
+          entry.benches.map: bench =>
+            bar(bench.coordinates.map(Documenting.coordText(_)).join(t", "), bench, base)
 
         BarData(List(Slice(entry.ref.name, bars)), base)
 
@@ -167,14 +176,20 @@ object Charts:
   // measured once.
   def curves(members: List[Model.Entry]): List[Curve] =
     members.filter(!_.strains.nil).map: entry =>
-      Curve(entry.ref.name, Documenting.curve(entry).map { strain => (strain.concurrency, Documenting.strainThroughput(strain).toDouble) })
+      val points = Documenting.curve(entry).map: strain =>
+        (strain.concurrency, Documenting.strainThroughput(strain).toDouble)
+
+      Curve(entry.ref.name, points)
 
   def benchSeries(data: BarData): List[Series[Text, Estimate]] =
     data.slices.map: slice =>
-      Series(slice.name, slice.bars.map { bar => (bar.category, Estimate(bar.mean, bar.lower, bar.upper)) }.to[Sequence])
+      val estimates = slice.bars.map: bar =>
+        (bar.category, Estimate(bar.mean, bar.lower, bar.upper))
+
+      Series(slice.name, estimates.to[Sequence])
 
   def stressSeries(curves: List[Curve]): List[Series[Int, Double]] =
-    curves.map { curve => Series(curve.name, curve.points.to[Sequence]) }
+    curves.map: curve => Series(curve.name, curve.points.to[Sequence])
 
   // The chart's lettering: Sono, from Google Fonts, at variable width — the face and axis the
   // web front-end sets its labels in — and at the size those labels have on the page, since a
@@ -182,8 +197,11 @@ object Charts:
   private case class Link(text: Text)
   private given Link is Abstractable across Urls to Text = _.text
 
+  private val sonoStylesheet: Text =
+    t"https://fonts.googleapis.com/css2?family=Sono:wght,MONO@200..800,0..1&display=swap"
+
   private given (Typeface of "Sono") is Typesettable in Web =
-    Web.imported(Link(t"https://fonts.googleapis.com/css2?family=Sono:wght,MONO@200..800,0..1&display=swap"), Coverage.Unknown)
+    Web.imported(Link(sonoStylesheet), Coverage.Unknown)
 
   private val sono: Font in Web =
     unsafely(Web.font(Typeface["Sono"].face.varying(Variation.Axis(t"MONO"), 0.0)))
@@ -247,7 +265,10 @@ object Charts:
   def benchStyle(data: BarData): Style =
     val grouped: Boolean = data.slices.size > 1
     val groups: Int = data.slices.map(_.bars.size).fold(0)(_.max(_))
-    val widestCategory: Double = data.slices.bind(_.bars).map { bar => textWidth(bar.category) }.fold(0.0)(_.max(_))
+
+    val widestCategory: Double =
+      data.slices.bind(_.bars).map { bar => textWidth(bar.category) }.fold(0.0)(_.max(_))
+
     val widestName: Double = data.slices.map { slice => textWidth(slice.name) }.fold(0.0)(_.max(_))
 
     // A band is what its bars need at the least gap, or wider when its label is; the gap then
@@ -290,14 +311,17 @@ object Charts:
   private def show(svg: Svg): Text = svg.in[Xml].show
 
   private def partIds(drawing: Chart.Drawing): List[Text] =
-    drawing.parts.to[List].map { (pair: (Svg.Id, Figure)) => pair(0).text }
+    drawing.parts.to[List].map: (pair: (Svg.Id, Figure)) => pair(0).text
 
   // Applies a chart's revisions to its figure: each changed part with the whole drawing
   // alongside, for a tab yet to show it — or the whole drawing when the axes moved, or when a
   // part is new (a series that has just appeared), since a page can only replace what it has.
   // A named method rather than a block lambda, which crashes the 3.9.0-p16 compiler inside
   // implicit search.
-  private def revise(figure: pyrocosm.Figure, revisions: List[Chart.Revision], known: List[Text], whole: => Svg): Unit =
+  private def revise
+    ( figure: pyrocosm.Figure, revisions: List[Chart.Revision], known: List[Text], whole: => Svg )
+  :   Unit =
+
     lazy val drawing: Text = show(whole)
 
     val fresh: Boolean = revisions.exists:
@@ -306,8 +330,10 @@ object Charts:
 
     if fresh then figure.redraw(drawing)
     else revisions.each:
-      case Chart.Revision.Redraw(svg)         => figure.redraw(show(svg))
-      case Chart.Revision.Replace(id, figure0) => figure.replace(id.text, figure0.in[Xml].show, drawing)
+      case Chart.Revision.Redraw(svg) => figure.redraw(show(svg))
+
+      case Chart.Revision.Replace(id, figure0) =>
+        figure.replace(id.text, figure0.in[Xml].show, drawing)
 
   // A chart in hand: its figure, the drawing it was last revised from, and the data that
   // drawing shows, so a refresh which brings nothing new sends nothing.
@@ -338,8 +364,11 @@ final class Charts:
   // The figures as of the last refresh, by the key of the table each stands above.
   def figures: Ledger[Text, pyrocosm.Figure] = figures0
 
-  private def existing[held <: Held](key: Text)(select: PartialFunction[Held, held]): Optional[held] =
-    held(key).let { held => if select.isDefinedAt(held) then select(held) else Unset }
+  private def existing[held <: Held](key: Text)
+    ( select: PartialFunction[Held, held] )
+  :   Optional[held] =
+
+    held(key).let: held => if select.isDefinedAt(held) then select(held) else Unset
 
   // A benchmark chart: bars are added, or their values revised, as records arrive; a change of
   // timebase (a chart's first record was quick, a later one slow) redraws with a new scale.
@@ -349,8 +378,12 @@ final class Charts:
       given Chart.Standard = style
 
       // A chart keeps its axes while the timebase, the grouping and the width it needs hold.
+      def compatible(data0: BarData): Boolean =
+        data0.base == data.base && benchStyle(data0).width == style.width &&
+          benchStyle(data0).legend == style.legend
+
       val next: Held.Bench = existing(key) { case held: Held.Bench => held } match
-        case Held.Bench(figure, chart, data0) if data0.base == data.base && benchStyle(data0).width == style.width && benchStyle(data0).legend == style.legend =>
+        case Held.Bench(figure, chart, data0) if compatible(data0) =>
           if data0 == data then Held.Bench(figure, chart, data) else
             val known = partIds(chart.drawing)
             val (chart2, revisions) = chart.revise(benchSeries(data))
@@ -400,25 +433,28 @@ final class Charts:
     var figures1: Ledger[Text, pyrocosm.Figure] = Ledger()
 
     def record(key: Text, figure: Optional[pyrocosm.Figure]): Unit =
-      figure.let { figure => figures1 = figures1.define(key, figure) }
+      figure.let: figure => figures1 = figures1.define(key, figure)
 
     Documenting.measurements(state).each: (suite, kind, members) =>
       val suiteName: Text = suite.let(_.name).or(t"")
 
       kind match
         case t"bench" =>
-          record(key(suite, kind, t"plain"), bench(key(suite, kind, t"plain"), plain(members),
-              Inline.text(t"Mean time of each benchmark in $suiteName, with its confidence interval")))
+          val plainKey: Text = key(suite, kind, t"plain")
+          val caption = t"Mean time of each benchmark in $suiteName, with its confidence interval"
+          record(plainKey, bench(plainKey, plain(members), Inline.text(caption)))
 
           members.filter(!Documenting.axesOf(_).nil).each: entry =>
             val axes: Text = Documenting.axesOf(entry).join(t" and ")
 
-            record(key(suite, kind, entry.ref.id), bench(key(suite, kind, entry.ref.id), axial(entry),
-                Inline.text(t"Mean time of ${entry.ref.name} by $axes, with its confidence interval")))
+            val axialKey: Text = key(suite, kind, entry.ref.id)
+            val caption = t"Mean time of ${entry.ref.name} by $axes, with its confidence interval"
+            record(axialKey, bench(axialKey, axial(entry), Inline.text(caption)))
 
         case t"stress" =>
-          record(key(suite, kind, t"stress"), stress(key(suite, kind, t"stress"), curves(members),
-              Inline.text(t"Throughput of each stress test in $suiteName against concurrency")))
+          val stressKey: Text = key(suite, kind, t"stress")
+          val caption = t"Throughput of each stress test in $suiteName against concurrency"
+          record(stressKey, stress(stressKey, curves(members), Inline.text(caption)))
 
         case _ =>
           ()

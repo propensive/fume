@@ -23,16 +23,17 @@ profile default
   language implicitConversions
   language experimental.modularity
   language experimental.dependent
-  language experimental.relaxedLambdaSyntax
   language experimental.genericNumberLiterals
-  language experimental.into
   language experimental.erasedDefinitions
   language experimental.saferExceptions
-  language experimental.strictEqualityPatternMatching
   language experimental.subCases
   language experimental.multiSpreads
   language experimental.captureChecking
   language experimental.separationChecking
+
+  # The build enables the relaxed lambda syntax (`f: x => …` on one line) with `-preview`, but
+  # flare cannot yet be given `-preview`, so it parses with the language feature that preceded it.
+  language experimental.relaxedLambdaSyntax
 
   style consequent
     header etc/header.txt

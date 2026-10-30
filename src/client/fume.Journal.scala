@@ -75,6 +75,7 @@ object Journal:
   // Both lists are newest-first.
   @scala.caps.unsafe.untrackedCaptures
   private var active0: List[Run] = Nil
+
   @scala.caps.unsafe.untrackedCaptures
   private var completed0: Optional[List[Run]] = Unset
 
@@ -83,7 +84,8 @@ object Journal:
       val corrected: RunRecord = record.copy(finished = record.started, outcome = RunRecord.aborted)
       Runs.write(corrected)
       Run(corrected, Unset)
-    else Run(record, Unset)
+    else
+      Run(record, Unset)
 
   // The history, loaded from the runs directory on first use. A run this daemon has in flight
   // is already on disk, and is not history; a run the directory holds with no end — its
@@ -95,7 +97,7 @@ object Journal:
     loaded
 
   private def amend(id: Text)(lambda: Run => Run): Unit =
-    active0 = active0.map { run => if run.id == id then lambda(run) else run }
+    active0 = active0.map: run => if run.id == id then lambda(run) else run
 
   private def persist(id: Text): Unit = active0.seek(_.id == id) match
     case run: Run => Runs.write(run.record)
@@ -137,7 +139,7 @@ object Journal:
 
   // Marks the suite a run is currently executing.
   def began(id: Text, suite: Text): Unit = mutex:
-    amend(id) { run => run.copy(current = suite) }
+    amend(id): run => run.copy(current = suite)
 
   def record
     ( id:       Text,
@@ -151,8 +153,11 @@ object Journal:
 
     mutex:
       amend(id): run =>
-        val entry = RunRecord.Suite(suite, passed, started, now(), this.totals(totals), events, captured)
-        run.copy(record = run.record.copy(suites = run.record.suites + List(entry)), current = Unset)
+        val entry =
+          RunRecord.Suite(suite, passed, started, now(), this.totals(totals), events, captured)
+
+        val suites: List[RunRecord.Suite] = run.record.suites + List(entry)
+        run.copy(record = run.record.copy(suites = suites), current = Unset)
 
       persist(id)
 
@@ -165,7 +170,10 @@ object Journal:
         val finished: Optional[Instant over Unix] = now()
         val word: Optional[Text] = outcome.show
         val counts: Optional[RunRecord.Totals] = this.totals(totals)
-        val record: RunRecord = run.record.copy(finished = finished, outcome = word, totals = counts)
+
+        val record: RunRecord =
+          run.record.copy(finished = finished, outcome = word, totals = counts)
+
         val done: Run = Run(record, Unset)
 
         active0 = active0.filter(_.id != id)
@@ -192,9 +200,11 @@ object Journal:
 
       found match
         case run: Run => run
-        case _        => Runs.read(id) match
-          case record: RunRecord => Run(record, Unset)
-          case _                 => Unset
+
+        case _ =>
+          Runs.read(id) match
+            case record: RunRecord => Run(record, Unset)
+            case _                 => Unset
 
   // Every run, newest first, the active ones first: the journal's, then the directory's.
   def all(limit: Int): List[Run] = mutex:
@@ -202,5 +212,8 @@ object Journal:
 
     if known.size >= limit then known.keep(limit) else
       val ids: Set[Text] = known.map(_.id).to[Set]
-      val more: List[Run] = Runs.load(limit).filter { record => !ids.has(record.id) }.map(Run(_, Unset))
+
+      val more: List[Run] =
+        Runs.load(limit).filter { record => !ids.has(record.id) }.map(Run(_, Unset))
+
       (known + more).keep(limit)
