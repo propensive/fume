@@ -35,7 +35,6 @@ package fume
 import soundness.*
 
 import denominative.dysasymptotics.linearSize
-
 import probably.TestEvent
 
 // Discovery of Probably test suites on a user-supplied classpath. Suites are found ONLY through
@@ -76,7 +75,7 @@ object Suites:
         val root: Path on Linux = (if absolute then t"/" else base).as[Path on Linux]
         val pattern: Glob = Glob.parse(if absolute then entry.skip(1) else entry)
 
-        root.glob(pattern).map(_.encode).order { (path: Text) => path.s }
+        root.glob(pattern).map(_.encode).order: (path: Text) => path.s
 
       . or(List())
 
@@ -85,7 +84,7 @@ object Suites:
   // configured jar has not been built yet.
   def discover(classpath: LocalClasspath): List[Text] =
     val suites: List[Text] =
-      classpath.entries.bind[List[Text], Text, List[Text]] { entry => services(entry) }
+      classpath.entries.bind[List[Text], Text, List[Text]]: entry => services(entry)
 
     suites.distinct
 
@@ -103,7 +102,9 @@ object Suites:
     // enclosing `safely` block (a hellenism/CC interop wart worth fixing upstream).
     val content: Optional[Text] = entry match
       case entry: (Classpath.Entry.Directory | Classpath.Entry.Jar) =>
-        safely(LocalClasspath(List(entry)*).classloader(Classloader.Delegation.Preferential).java).let: loader =>
+        val delegation = Classloader.Delegation.Preferential
+
+        safely(LocalClasspath(List(entry)*).classloader(delegation).java).let: loader =>
           Optional(loader.getResourceAsStream(index.s)).let: stream =>
             String(stream.readAllBytes(), "UTF-8").tt
 
@@ -111,19 +112,17 @@ object Suites:
         Unset
 
     content.lay(List()): content =>
-      content.cut(t"\n").map(_.trim).filter: line =>
-        line != t"" && !line.starts(t"#")
+      content.cut(t"\n").map(_.trim).filter: line => line != t"" && !line.starts(t"#")
 
   // Invokes one suite IN-PROCESS: the classpath is loaded in a fresh child-first classloader
   // whose parent is the PLATFORM loader, so the suite's classes (including whatever version of
   // Soundness they were built against) are fully isolated from fume's own, and each invocation
-  // gets fresh suite state. The suite object's non-exiting `Suite#invoke` is called through
-  // the STRUCTURAL type below: fume cannot name `probably.Suite` (the suite's world is
-  // deliberately not fume's), but it can describe the one member it needs, and
-  // `reflectiveSelectable` compiles the call into the reflective lookup — erased to
-  // `invoke(String[]): int`, so only JDK types cross the boundary. Structural selection
-  // dispatches on an INSTANCE, so the module instance is fetched from the `<suite>$` class's
-  // `MODULE$` field rather than going through the static forwarder.
+  // gets fresh suite state. The suite object's non-exiting `Suite#invoke` is called by
+  // reflection: fume cannot name `probably.Suite` (the suite's world is deliberately not
+  // fume's), but it can look up the one member it needs by its erased signature, so only JDK
+  // types cross the boundary. The method is invoked on an INSTANCE, so the module instance is
+  // fetched from the `<suite>$` class's `MODULE$` field rather than going through the static
+  // forwarder.
   //
   // A suite of this vintage writes its report through the JVM's own `System.out`/`System.err`,
   // which under the Ethereal daemon belong to the daemon process, not the client: the caller
@@ -133,16 +132,11 @@ object Suites:
   // Returns `Unset` when the suite predates `Suite#invoke` (no such method), so the caller can
   // fall back to a forked JVM.
   //
-  // The structural member matches `Suite`'s single-`Text` entry point, whose arguments are
-  // newline-separated in one value (a selection term can never contain a newline): `Text`
-  // erases to `String`, so the compiled lookup is `invoke(String): int`. The array-taking form
-  // cannot be described structurally today: the compiler fails to pickle the `classOf` of an
-  // array type it synthesizes for the call, under capture checking (a proscala bug).
-  private type Invocable = { def invoke(arguments: Text): Int }
-
+  // The lookup is `Suite`'s single-`Text` entry point, whose arguments are newline-separated in
+  // one value (a selection term can never contain a newline): `Text` erases to `String`, so the
+  // method is `invoke(String): int`. A result that is not an exit code is treated, like a
+  // missing method, as a suite to fork.
   def invoke(classpath: LocalClasspath, suite: Text, args: List[Text]): Optional[Exit] =
-    import scala.reflect.Selectable.reflectiveSelectable
-
     val loader: Classloader = classpath.classloader(Classloader.Delegation.Preferential)
     val arguments: Text = args.join(t"\n")
 
@@ -153,16 +147,18 @@ object Suites:
     safely:
       loader.on(t"$suite$$").let: moduleClass =>
         val instance: Any = moduleClass.getField("MODULE$").nn.get(null).nn
+        val method = moduleClass.getMethod("invoke", classOf[String]).nn
 
-        loader.use:
-          val code = instance.asInstanceOf[Invocable].invoke(arguments)
-          if code == 0 then Exit.Ok else Exit.Fail(code)
+        loader.use(method.invoke(instance, arguments.s): Any) match
+          case 0         => Exit.Ok
+          case code: Int => Exit.Fail(code)
+          case _         => Unset
 
   // One test of a suite's SCHEDULE as tab-completion and `fume list --axes` see it: its wire
   // ref, kind (`check`, `bench`, `stress` or `profile`), tags, and axes with the values (or
   // declared bounds) a `--list` selection admits.
   case class Scheduled
-     ( ref: TestEvent.Ref, kind: Text, tags: List[Text], axes: List[TestEvent.AxisSchedule] )
+    ( ref: TestEvent.Ref, kind: Text, tags: List[Text], axes: List[TestEvent.AxisSchedule] )
 
   // The schedule of one suite by the EVENT protocol (`--list` streamed as `TestScheduled`s), or
   // `Unset` for a suite whose Probably cannot stream it (predating the event stream, or built
@@ -173,16 +169,18 @@ object Suites:
     // Accumulated in reverse and inverted at the end, as `Model` does.
     var rows: List[Scheduled] = Nil
 
+    def handle(event: TestEvent): Unit = event match
+      case TestEvent.TestScheduled(ref, kind, _, tags, axes) =>
+        rows = Scheduled(ref, kind, tags, axes) :: rows
+
+      case _ =>
+        ()
+
     // The abort thunk is passed explicitly: the DEFAULT argument's root capability cannot flow
     // into `safely`'s enclosing function under capture checking (as in `runSuite`).
     val outcome: Optional[EventStream.Outcome] =
       safely:
-        EventStream.stream(classpath, suite, t"--list" :: args)(
-          { case TestEvent.TestScheduled(ref, kind, _, tags, axes) =>
-              rows = Scheduled(ref, kind, tags, axes) :: rows
-            case _ => () },
-          () => false,
-          (_, _) => ())
+        EventStream.stream(classpath, suite, t"--list" :: args)(handle, () => false, (_, _) => ())
 
     outcome match
       case EventStream.Outcome.Completed(_) =>
@@ -213,7 +211,8 @@ object Suites:
                 if leaf != t"" && !leaf.contains(t" ") && leaf != id then leaf else Unset
 
               val kindName: Text = if kind == t"test" then t"check" else kind
-              List(Scheduled(TestEvent.Ref(id, leaf, moniker, segments, t"", 0), kindName, Nil, Nil))
+              val ref: TestEvent.Ref = TestEvent.Ref(id, leaf, moniker, segments, t"", 0)
+              List(Scheduled(ref, kindName, Nil, Nil))
 
             case _ =>
               Nil
@@ -241,7 +240,7 @@ object Suites:
   // only known at runtime are left out: there is nothing of theirs to complete.
   case class Catalogue(index: Index, suites: List[(Text, List[Scheduled])]):
     def schedule: List[Scheduled] =
-      suites.bind[List[Scheduled], Scheduled, List[Scheduled]] { suite => suite(1) }
+      suites.bind[List[Scheduled], Scheduled, List[Scheduled]]: suite => suite(1)
 
     // Every test with the links of its path, for completing terms: the index's own, or, for a
     // suite it does not cover, what the suite's schedule says of each.
@@ -270,8 +269,8 @@ object Suites:
       val backend: FilesystemBackend on Linux = summon[FilesystemBackend on Linux]
 
       val file: Optional[Path on Linux] = safely(path.as[Path on Linux])
-      val stat: Optional[Stat] = file.let { file => safely(backend.stat(file, true)) }
-      val stamp: Text = stat.lay(t"?") { stat => t"${stat.modified}:${stat.size}" }
+      val stat: Optional[Stat] = file.let: file => safely(backend.stat(file, true))
+      val stamp: Text = stat.lay(t"?"): stat => t"${stat.modified}:${stat.size}"
 
       t"$path@$stamp"
 

@@ -34,45 +34,9 @@ package fume
 
 import soundness.*
 
-import calendars.gregorianCalendar
 import codepages.utf8Codepage
 import decodables.instantTelDecodable
 import encodables.instantTelEncodable
-
-// The record of one run, as the daemon persists it in `run.tel` under the run's directory
-// (`Runs`), and as the journal holds it: who ran what, where, and how each suite fared. Pure
-// data — texts, numbers, instants, lists — so the TEL codec derives, and a record written by
-// one daemon is read by the next. The results themselves are not here: they are replayed from
-// the suites' event frames, stored beside the record, so the record stays small however large
-// the run.
-//
-// Vocabularies: `invoker` is `human`, `claude`, `codex`, `remote` or `mcp`; `outcome` is `passed`,
-// `failed`, `aborted` or `timed-out`, and absent while the run is in flight.
-case class RunRecord
-  ( id:        Text,
-    version:   Text,
-    workspace: Text,
-    invoker:   Text,
-    client:    Text,
-    machine:   Text,
-    started:   Instant over Unix,
-    finished:  Optional[Instant over Unix],
-    outcome:   Optional[Text],
-    classpath: List[Text],
-    selection: List[Text],
-    scheduled: List[Text],
-    suites:    List[RunRecord.Suite],
-    totals:    Optional[RunRecord.Totals] ):
-
-  def running: Boolean = finished.absent
-  def duration: Optional[Duration] = finished.let(_ - started)
-  def failures: Int = suites.count(!_.passed)
-
-  // What the run is called, from its first moment to its last: the directory it was invoked
-  // from. A run with no directory — another fume's, run here — is called by the machine which
-  // asked for it, and any other by its id.
-  def name: Text =
-    RunRecord.name(workspace, if invoker == RunRecord.remote then client else t"run $id")
 
 object RunRecord:
   // The last segment of a working directory, or the fallback where it has none.
@@ -114,3 +78,38 @@ object RunRecord:
   val failed: Text = t"failed"
   val aborted: Text = t"aborted"
   val timedOut: Text = t"timed-out"
+
+// The record of one run, as the daemon persists it in `run.tel` under the run's directory
+// (`Runs`), and as the journal holds it: who ran what, where, and how each suite fared. Pure
+// data — texts, numbers, instants, lists — so the TEL codec derives, and a record written by
+// one daemon is read by the next. The results themselves are not here: they are replayed from
+// the suites' event frames, stored beside the record, so the record stays small however large
+// the run.
+//
+// Vocabularies: `invoker` is `human`, `claude`, `codex`, `remote` or `mcp`; `outcome` is `passed`,
+// `failed`, `aborted` or `timed-out`, and absent while the run is in flight.
+case class RunRecord
+  ( id:        Text,
+    version:   Text,
+    workspace: Text,
+    invoker:   Text,
+    client:    Text,
+    machine:   Text,
+    started:   Instant over Unix,
+    finished:  Optional[Instant over Unix],
+    outcome:   Optional[Text],
+    classpath: List[Text],
+    selection: List[Text],
+    scheduled: List[Text],
+    suites:    List[RunRecord.Suite],
+    totals:    Optional[RunRecord.Totals] ):
+
+  def running: Boolean = finished.absent
+  def duration: Optional[Duration] = finished.let(_ - started)
+  def failures: Int = suites.count(!_.passed)
+
+  // What the run is called, from its first moment to its last: the directory it was invoked
+  // from. A run with no directory — another fume's, run here — is called by the machine which
+  // asked for it, and any other by its id.
+  def name: Text =
+    RunRecord.name(workspace, if invoker == RunRecord.remote then client else t"run $id")

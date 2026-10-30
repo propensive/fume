@@ -52,7 +52,7 @@ object Progress:
   val none: Duration = 0.0*Second
 
 final class Progress
-   ( val suites: List[Text], forecast: Forecasts.Forecast, declared: Map[Text, Int] = Map() ):
+  ( val suites: List[Text], forecast: Forecasts.Forecast, declared: Map[Text, Int] = Map() ):
 
   private val count: Int = suites.size
 
@@ -84,7 +84,7 @@ final class Progress
     finished0 += 1
     finishedSuites = suite :: finishedSuites
     observed = observed + (time - currentStarted)
-    forecast(suite).let { observation => forecastTime = forecastTime + observation.time }
+    forecast(suite).let: observation => forecastTime = forecastTime + observation.time
     current0 = Unset
 
   def finished: Int = finished0
@@ -97,7 +97,8 @@ final class Progress
     forecast(suite).lay(Nil: List[Forecasts.Observation])(List(_))
 
   private val known: List[Forecasts.Observation] =
-    suites.bind[List[Forecasts.Observation], Forecasts.Observation, List[Forecasts.Observation]](observation(_))
+    type Observations = List[Forecasts.Observation]
+    suites.bind[Observations, Forecasts.Observation, Observations](observation(_))
 
   private def meanTests: Int = if known.nil then 0 else known.map(_.tests).fold(0)(_ + _)/known.size
 

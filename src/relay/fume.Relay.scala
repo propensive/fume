@@ -36,6 +36,23 @@ import soundness.*
 
 import pyrocosm.{Blobs, Channel}
 
+object Relay:
+  // Derived once: the schema, its fingerprint (the protocol the handshake names) and the codec.
+  lazy val codec: Channel.Codec[Relay] =
+    import Channel.derivation.throwing
+    val schema: Tels = Tels.tels[Relay](t"fume-relay")
+
+    Channel.Codec
+      ( t"fume-relay", schema, message => Channel.encode(message, schema),
+        data => Channel.decode[Relay](data) )
+
+  val completed: Text = t"completed"
+  val failed: Text = t"failed"
+  val legacy: Text = t"legacy"
+
+  // The port a fume worker listens on by default; the dashboard is 8090.
+  val port: Int = 8091
+
 // Fume's own messages over a Pyrocosm `Channel`: what a controller (the fume the user invoked)
 // and a worker (the fume daemon on another machine) say to each other once Pyrocosm's handshake
 // has welcomed the connection. Bulk payloads — a classpath entry being shipped, a suite's test
@@ -78,20 +95,3 @@ enum Relay:
   case Abort
   case Done
   case Rejected(reason: Text)
-
-object Relay:
-  // Derived once: the schema, its fingerprint (the protocol the handshake names) and the codec.
-  lazy val codec: Channel.Codec[Relay] =
-    import Channel.derivation.throwing
-    val schema: Tels = Tels.tels[Relay](t"fume-relay")
-
-    Channel.Codec
-      ( t"fume-relay", schema, message => Channel.encode(message, schema),
-        data => Channel.decode[Relay](data) )
-
-  val completed: Text = t"completed"
-  val failed: Text = t"failed"
-  val legacy: Text = t"legacy"
-
-  // The port a fume worker listens on by default; the dashboard is 8090.
-  val port: Int = 8091

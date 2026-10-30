@@ -74,7 +74,7 @@ object Captures:
 
         val entry: Text = heading + sections(captured)
 
-        Eof(path).open(Write) { handle ?=> handle.write(Chain(entry.in[Data])) }
+        Eof(path).open(Write): handle ?=> handle.write(Chain(entry.in[Data]))
         path
 
   private def describe(captured: Captured): List[Block] =

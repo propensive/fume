@@ -34,8 +34,6 @@ package fume
 
 import soundness.*
 
-import probably.TestEvent
-
 // What remains of the hand-rolled live board, which Pyrocosm's `Board` and `TerminalFrontend`
 // replaced: the byte-level key decoder the load gate (`Load`) still reads the raw terminal
 // with while it waits for the machine to go quiet, to notice Ctrl+C and Ctrl+D.
@@ -77,4 +75,5 @@ object Live:
         else
           pending = t"$pending${byte.toChar}"
           Key.Idle
-      else Key.Idle
+      else
+        Key.Idle

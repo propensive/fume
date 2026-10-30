@@ -34,18 +34,14 @@ package fume
 
 import java.util.concurrent as juc
 
-import scala.unsafeExceptions.canThrowAny
-
 import soundness.*
 
-import pyrocosm.Tool
-
-import denominative.dysasymptotics.linearAccess
-
 import codepages.utf8Codepage
+import denominative.dysasymptotics.linearAccess
 import formatting.indentedJsonFormatting
 import internetAccess.online
 import logging.silentLogging
+import pyrocosm.Tool
 import webserverErrorPages.minimalErrorPage
 
 // Fume as an MCP server: the tools an agent calls to ask about runs — the journal's and the
@@ -68,7 +64,10 @@ object McpServer extends Mcp.Server():
   def initialize(): Session = new Session()
 
   def name: Text = t"fume"
-  def description: Text = t"Test and benchmark runs, their results, and the processes of the fume daemon"
+
+  def description: Text =
+    t"Test and benchmark runs, their results, and the processes of the fume daemon"
+
   def prompts: List[Mcp.Prompt] = Nil
 
   // A development build's version is a tree hash, which is no semver; such a build serves as
@@ -101,7 +100,7 @@ object McpServer extends Mcp.Server():
   def register(answers: Answers): Unit = this.answers = answers
 
   private def answering: Answers =
-    answers.or(throw Api.Error(t"the fume daemon has not registered what it knows"))
+    unsafely(answers.or(throw Api.Error(t"the fume daemon has not registered what it knows")))
 
   // The specification the macro derives encodes a list literal of two texts — the visibility
   // of an `@ui` resource, which no tool here declares, so the code never runs — whose type is
@@ -112,7 +111,9 @@ object McpServer extends Mcp.Server():
   given populatedTexts: (List[Text] & Populated) is Encodable in Text = _.join(t",")
 
   @tool
-  @about("The most recent runs of tests and benchmarks, newest first, runs in flight first; `limit` caps how many")
+  @about
+    ( "The most recent runs of tests and benchmarks, newest first, runs in flight first; `limit` " +
+      "caps how many" )
   def runs(limit: Int): List[Api.RunSummary] = answering.runs(limit)
 
   @tool
@@ -120,19 +121,26 @@ object McpServer extends Mcp.Server():
   def runsIn(workspace: Text, limit: Int): List[Api.RunSummary] = answering.runsIn(workspace, limit)
 
   @tool
-  @about("One run in detail: its classpath, selection, each suite's totals, and whether results are available; `id` may be `last`")
+  @about
+    ( "One run in detail: its classpath, selection, each suite's totals, and whether results are " +
+      "available; `id` may be `last`" )
   def run(id: Text): Api.RunDetail = answering.run(id)
 
   @tool
-  @about("Every test of a run with its status, and its measurements for a benchmark, stress test or profile; `run` may be `last`")
+  @about
+    ( "Every test of a run with its status, and its measurements for a benchmark, stress test or " +
+      "profile; `run` may be `last`" )
   def results(run: Text): List[Api.TestResult] = answering.results(run)
 
   @tool
   @about("The tests of one suite of a run, by the suite's class name; `run` may be `last`")
-  def suiteResults(run: Text, suite: Text): List[Api.TestResult] = answering.suiteResults(run, suite)
+  def suiteResults(run: Text, suite: Text): List[Api.TestResult] =
+    answering.suiteResults(run, suite)
 
   @tool
-  @about("The failing tests of a run with their diagnostics — message, stack trace, captured values, expected and found — and any error that ended a suite; `run` may be `last`")
+  @about
+    ( "The failing tests of a run with their diagnostics — message, stack trace, captured " +
+      "values, expected and found — and any error that ended a suite; `run` may be `last`" )
   def failures(run: Text): Api.Failures = answering.failures(run)
 
   @tool
@@ -140,31 +148,47 @@ object McpServer extends Mcp.Server():
   def test(run: Text, test: Text): List[Api.TestResult] = answering.test(run, test)
 
   @tool
-  @about("The benchmarks, stress tests and profiles of a run with their records; `run` may be `last`")
+  @about
+    ( "The benchmarks, stress tests and profiles of a run with their records; `run` may be " +
+      "`last`" )
   def benchmarks(run: Text): List[Api.TestResult] = answering.benchmarks(run)
 
   @tool
-  @about("What a suite of a run printed outside its report, on stdout and stderr; `run` may be `last`")
+  @about
+    ( "What a suite of a run printed outside its report, on stdout and stderr; `run` may be " +
+      "`last`" )
   def captured(run: Text, suite: Text): Text = answering.captured(run, suite)
 
   @tool
-  @about("The fume daemon's processes: the daemon itself, the services it serves, the runs in flight with the tests they are executing, and the run it is working for another machine")
+  @about
+    ( "The fume daemon's processes: the daemon itself, the services it serves, the runs in " +
+      "flight with the tests they are executing, and the run it is working for another machine" )
   def processes(): Api.Processes = answering.processes()
 
   @tool
-  @about("The test suites on a classpath, from its META-INF/services/probably.Suite index, without running anything; the classpath is `:`-separated absolute jars and directories")
+  @about
+    ( "The test suites on a classpath, from its META-INF/services/probably.Suite index, without " +
+      "running anything; the classpath is `:`-separated absolute jars and directories" )
   def suites(classpath: Text): List[Api.IndexedSuite] = answering.suites(classpath)
 
   @tool
-  @about("The tests a classpath declares, from its static index, without running anything, narrowed by space-separated selection terms as `fume list` takes them; empty terms list every test")
+  @about
+    ( "The tests a classpath declares, from its static index, without running anything, narrowed " +
+      "by space-separated selection terms as `fume list` takes them; empty terms list every test" )
   def tests(classpath: Text, terms: Text): List[Api.IndexedTest] = answering.tests(classpath, terms)
 
   @tool
-  @about("Launch a run of the tests and benchmarks a classpath declares, narrowed by space-separated selection terms as `fume run` takes them (`kind:bench`, a test id, a moniker, `N=4..64`); answers at once with the run's summary, and `run`, `results` and `failures` follow it as it goes")
+  @about
+    ( "Launch a run of the tests and benchmarks a classpath declares, narrowed by " +
+      "space-separated selection terms as `fume run` takes them (`kind:bench`, a test id, a " +
+      "moniker, `N=4..64`); answers at once with the run's summary, and `run`, `results` and " +
+      "`failures` follow it as it goes" )
   def launch(classpath: Text, terms: Text): Api.RunSummary = answering.launch(classpath, terms)
 
   @tool
-  @about("Abort a run launched through this server, as Ctrl+C would; `true` if the run was in flight here")
+  @about
+    ( "Abort a run launched through this server, as Ctrl+C would; `true` if the run was in " +
+      "flight here" )
   def cancel(run: Text): Boolean = answering.cancel(run)
 
   @resource("fume://schema")
@@ -183,10 +207,12 @@ object McpServer extends Mcp.Server():
   // the thread's context classloader as the dashboard's assets are.
   lazy val documentation: Text =
     val loader: ClassLoader =
-      Optional(Thread.currentThread.nn.getContextClassLoader).or(classOf[Api.type].getClassLoader.nn)
+      Optional(Thread.currentThread.nn.getContextClassLoader)
+      . or(classOf[Api.type].getClassLoader.nn)
 
     Optional(loader.getResourceAsStream("fume/mcp.md")).let: stream =>
       String(stream.readAllBytes(), "UTF-8").tt
+
     . or(t"The documentation was not bundled with this build of fume.")
 
   // Answers a request for `/mcp`, and nothing else: the dashboard chains this after its own

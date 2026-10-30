@@ -35,11 +35,10 @@ package fume
 // `Relay` is fume's own message enum, not turbulence's `Relay`.
 import soundness.{Relay as _, *}
 
-import pyrocosm.{Blobs, Channel, Machine, Peer, Tool}
-
 import denominative.dysasymptotics.linearSize
 import environments.javaBaseEnvironment
 import probates.cancelProbate
+import pyrocosm.{Blobs, Channel, Machine, Peer, Tool}
 
 // This daemon as a WORKER: a `Tool.Service` that listens (on `listen-port`, 8091 by default)
 // for a controller — a fume on another machine, invoked with `--machine <this machine>` — and runs
@@ -83,8 +82,9 @@ object Worker:
           val gate: () => Optional[Text] = () => if running() then Peer.Refusal.busy else Unset
 
           val made: Peer.Listener[Relay] =
-            Peer.Listener[Relay](t"fume", Fume.version, Relay.codec, token, identity, capabilities, gate):
-              session => Worker.run(session)
+            Peer.Listener[Relay]
+              ( t"fume", Fume.version, Relay.codec, token, identity, capabilities, gate )
+              ( Worker.run(_) )
 
           listener = made
           Server.announce(t"listener", port)
@@ -119,7 +119,8 @@ object Worker:
                     case Channel.Frame.Raw(data) =>
                       assembly.receive(digest, data, last) match
                         case false =>
-                          session.send(Relay.Rejected(t"the bytes sent for $digest do not have that digest"))
+                          val reason: Text = t"the bytes sent for $digest do not have that digest"
+                          session.send(Relay.Rejected(reason))
                           false
 
                         case _ =>
@@ -135,8 +136,11 @@ object Worker:
                 val missing: List[Text] = store.missing(entries.map(_.digest))
 
                 if !missing.nil
-                then session.send(Relay.Rejected(t"${missing.size} classpath entries were never received"))
-                else execute(session, store, entries, suites, arguments, maxLoad)
+                then
+                  val reason: Text = t"${missing.size} classpath entries were never received"
+                  session.send(Relay.Rejected(reason))
+                else
+                  execute(session, store, entries, suites, arguments, maxLoad)
 
             case _ =>
               session.send(Relay.Rejected(t"the worker has no blob store"))
@@ -158,7 +162,7 @@ object Worker:
 
     // Every entry is a jar in the store: a directory was bundled into one by the controller.
     val jars: List[Classpath.Entry.Jar] =
-      entries.map { entry => Classpath.Entry.Jar(store.path(entry.digest).encode) }
+      entries.map: entry => Classpath.Entry.Jar(store.path(entry.digest).encode)
 
     val classpath: LocalClasspath = LocalClasspath(jars*)
     val aborted: Atomic[Boolean] = Atomic(false)
@@ -172,7 +176,7 @@ object Worker:
 
       recur()
 
-    maxLoad.let { text => safely(text.as[Double]).let(settle(_, aborted)) }
+    maxLoad.let: text => safely(text.as[Double]).let(settle(_, aborted))
 
     val journalId: Text =
       Journal.start
@@ -200,7 +204,7 @@ object Worker:
         val writer: Optional[Runs.Writer] = Runs.writer(journalId, number)
 
         val sink: EventStream.Sink =
-          Runs.tee(writer, EventStream.Sink.forwarding { frame => session.send(Relay.Frame(suite), frame) })
+          Runs.tee(writer, EventStream.Sink.forwarding(session.send(Relay.Frame(suite), _)))
 
         val outcome: Optional[EventStream.Outcome] =
           try

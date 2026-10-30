@@ -35,7 +35,6 @@ package fume
 import soundness.*
 
 import denominative.dysasymptotics.linearSize
-
 import probably.TestEvent
 
 // The accumulated state of a run's event streams — every suite of the run folds into the one
@@ -98,12 +97,16 @@ final class Model:
   // on every snapshot would dominate every repaint.
   @scala.caps.unsafe.untrackedCaptures
   private var ordered0: Optional[List[Text]] = Unset
+
   @scala.caps.unsafe.untrackedCaptures
   private var suites0: Ledger[Text, TestEvent.Ref] = Ledger()
+
   @scala.caps.unsafe.untrackedCaptures
   private var entries0: Ledger[Text, Entry] = Ledger()
+
   @scala.caps.unsafe.untrackedCaptures
   private var details0: Ledger[Text, (TestEvent.Ref, List[TestEvent])] = Ledger()
+
   @scala.caps.unsafe.untrackedCaptures
   private var active0: List[TestEvent.Ref] = Nil
   // Per-suite terminal events accumulate rather than overwrite: a run has one `RunTerminated`
@@ -113,12 +116,16 @@ final class Model:
   // in one suite"). The run as a whole is over only when the host says so (`finish`).
   @scala.caps.unsafe.untrackedCaptures
   private var fatals0: List[(TestEvent.Trace, List[TestEvent.Ref])] = Nil
+
   @scala.caps.unsafe.untrackedCaptures
   private var completed0: Optional[Boolean] = Unset
+
   @scala.caps.unsafe.untrackedCaptures
   private var nothing0: Int = 0
+
   @scala.caps.unsafe.untrackedCaptures
   private var done0: Boolean = false
+
   @scala.caps.unsafe.untrackedCaptures
   private var scheduled0: Boolean = false
 
@@ -145,6 +152,7 @@ final class Model:
 
   private def suiteLine(ref: TestEvent.Ref): Unit =
     val key = suitePath(ref.path)
+
     if suites0(key).absent then
       suites0 = suites0.define(key, ref)
       lines0 = (t"s:$key", scope0) :: lines0
@@ -188,7 +196,7 @@ final class Model:
     prefixes(1)
     // `update`, not `entry`: an `AnchorRecorded` (emitted at declaration, ahead of the
     // schedule) may have created the entry already, kindless; the schedule fills it in.
-    update(ref, kind) { entry => entry.copy(axes = axes) }
+    update(ref, kind): entry => entry.copy(axes = axes)
 
   private def detail(ref: TestEvent.Ref, event: TestEvent): Unit =
     val (_, existing) = details0(key(ref)).or((ref, Nil))
@@ -224,16 +232,16 @@ final class Model:
           entry.copy(completions = entry.completions + List((coordinates, outcome)))
 
       case event@TestEvent.BenchmarkRecorded(ref, _, _, _, _, _, _, _, _, _, _, _, _, _) =>
-        update(ref, t"bench") { entry => entry.copy(benches = entry.benches + List(event)) }
+        update(ref, t"bench"): entry => entry.copy(benches = entry.benches + List(event))
 
       case event@TestEvent.StrainRecorded(ref, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) =>
-        update(ref, t"stress") { entry => entry.copy(strains = entry.strains + List(event)) }
+        update(ref, t"stress"): entry => entry.copy(strains = entry.strains + List(event))
 
       case event@TestEvent.HotspotsRecorded(ref, _, _, _, _) =>
-        update(ref, t"profile") { entry => entry.copy(hotspots = event) }
+        update(ref, t"profile"): entry => entry.copy(hotspots = event)
 
       case event@TestEvent.AnchorRecorded(ref, _, _, _, _, _, _, _) =>
-        update(ref, Unset) { entry => entry.copy(anchor = event) }
+        update(ref, Unset): entry => entry.copy(anchor = event)
 
       case event@TestEvent.DetailCaptures(ref, _)       => detail(ref, event)
       case event@TestEvent.DetailCompare(ref, _, _, _)  => detail(ref, event)
@@ -296,14 +304,14 @@ final class Model:
     // scheduled before its suite is announced hangs from the nearest ancestor present), or
     // the empty key at the root.
     def parentOf(scope: Text, path: List[Text]): Text =
-      List.range(1, path.size).reverse.seek { n => own(qualify(scope, path.keep(n))).present }
-      . lay(t"") { n => qualify(scope, path.keep(n)) }
+      List.range(1, path.size).reverse.seek: n => own(qualify(scope, path.keep(n))).present
+      . lay(t""): n => qualify(scope, path.keep(n))
 
     val children: Map[Text, List[((Line, Text, Text), Ordinal)]] =
-      indexed.group { (pair, _) => parentOf(pair(1), pathOf(pair(0))) }
+      indexed.group: (pair, _) => parentOf(pair(1), pathOf(pair(0)))
 
     def walk(parent: Text): List[Text] =
-      children(parent).or(Nil).order { (pair, index) => rank(pair(0), pair(1), index) }
+      children(parent).or(Nil).order: (pair, index) => rank(pair(0), pair(1), index)
       . bind[List[Text], Text, List[Text]]: (pair, _) =>
           pair(0) match
             case Line.SuiteLine(ref) => pair(2) :: walk(qualify(pair(1), ref.path))
@@ -320,8 +328,10 @@ final class Model:
     val tokens: List[Text] = ordered0.or:
       val computed: List[Text] =
         order:
-          lines0.reverse.bind[List[(Line, Text, Text)], (Line, Text, Text), List[(Line, Text, Text)]]: (token, scope) =>
-            resolve(token).lay(Nil: List[(Line, Text, Text)]) { line => List((line, scope, token)) }
+          type Row = (Line, Text, Text)
+
+          lines0.reverse.bind[List[Row], Row, List[Row]]: (token, scope) =>
+            resolve(token).lay(Nil: List[Row]): line => List((line, scope, token))
 
       ordered0 = computed
       computed
@@ -329,10 +339,11 @@ final class Model:
     // Entries are snapshots already (an event replaces an entry wholesale), so the lines are
     // the current entries themselves: no copy per test per snapshot.
     val lines: List[Line] =
-      tokens.bind[List[Line], Line, List[Line]] { token => resolve(token).lay(Nil: List[Line])(List(_)) }
+      tokens.bind[List[Line], Line, List[Line]]: token =>
+        resolve(token).lay(Nil: List[Line])(List(_))
 
     val details: List[(TestEvent.Ref, List[TestEvent])] =
-      details0.to[List].map { (pair: (Text, (TestEvent.Ref, List[TestEvent]))) =>
-        (pair(1)(0), pair(1)(1).reverse) }
+      details0.to[List].map: (pair: (Text, (TestEvent.Ref, List[TestEvent]))) =>
+        (pair(1)(0), pair(1)(1).reverse)
 
     State(lines, details, active0.reverse, fatals0.reverse, completed0, nothing0, scheduled0)

@@ -76,6 +76,11 @@ final class Board(model: Model, val title: Text, progress0: Optional[Progress] =
     Interface
       ( Inline.text(title),
         List
-          ( Panel(Panel.Id(t"results"), Panel.Role.Primary, Unset, results, Panel.Priority.Essential,
-                hints = Hints(hints.Follow, hints.terminal.Border.None)) ),
+          ( Panel
+              ( Panel.Id(t"results"),
+                Panel.Role.Primary,
+                Unset,
+                results,
+                Panel.Priority.Essential,
+                hints = Hints(hints.Follow, hints.terminal.Border.None) ) ),
         hints = Hints(hints.terminal.Occupancy.Fullscreen) )
