@@ -20,7 +20,8 @@ fume run -c out.jar json/* 'N<=64'      # a path glob and an axis constraint
 fume list -c out.jar                    # enumerate tests without running them
 fume list -c out.jar --scan             # enumerate them by running each suite's body
 fume watch -c out.jar                   # rerun whenever the jar changes
-fume serve                              # serve the dashboard of runs until Ctrl+C
+fume serve                              # serve the dashboard of runs, in the background
+fume serve stop                         # stop serving it
 fume mcp                                # serve the MCP server agents query about runs until Ctrl+C
 fume run -c out.jar --machine laptop    # run the selection on another machine's fume
 fume listen                             # accept runs sent from other machines until Ctrl+C
