@@ -67,8 +67,7 @@ object Answering extends McpServer.Answers:
       text.cut(t":").filter(_ != t"").bind[List[Text], Text, List[Text]](Suites.expand(t"/", _))
 
     val entries: List[Classpath.Entry.Directory | Classpath.Entry.Jar] =
-      expanded.map: entry =>
-        if entry.ends(t".jar") then Classpath.Entry.Jar(entry) else Classpath.Entry.Directory(entry)
+      expanded.map(pyrocosm.Classpaths.entry(_))
 
     if entries.nil then throw Api.Error(t"the classpath names no entries")
     else LocalClasspath(entries*)

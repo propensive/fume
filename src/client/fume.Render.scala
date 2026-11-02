@@ -58,7 +58,7 @@ object Render:
   // Terse output — CI logs, Claude Code — takes the same words with no styling at all, for the
   // same reason the tables lose their colour there: the reader is a log, or a machine.
   def announce(message: Text)(using Stdio, Environment): Unit =
-    if GithubActions.terse then Out.println(message)
+    if pyrocosm.Invoker.detect.terse then Out.println(message)
     else Out.println(e"$Bold(${Fg(Palette.white)}($message))")
 
   // The column which absorbs a table's spare width: elastic from its natural content width
@@ -496,7 +496,7 @@ object Render:
             List(row.ref -> document.failures.seek(_(0).id == row.ref.id).lay(Nil)(_(1)))
 
     failed.each: (ref, details) =>
-      if github then GithubActions.group(t"Failure: ${ref.name} (${ref.id})")
+      if github then pyrocosm.GithubActions.group(t"Failure: ${ref.name} (${ref.id})")
 
       if terse then Out.println(t"${ref.id}  ${ref.name} @ ${location(ref)}")
       else
@@ -545,7 +545,7 @@ object Render:
             ()
 
       Out.println(t"")
-      if github then GithubActions.endGroup()
+      if github then pyrocosm.GithubActions.endGroup()
 
   private def renderFatal(document: Document, terse: Boolean, github: Boolean)
     ( using Stdio, Environment )
@@ -564,11 +564,11 @@ object Render:
         val className = trace.components.head.let(_.className).or(t"")
         val message = trace.components.head.let(_.message).or(t"")
 
-        GithubActions.error
+        pyrocosm.GithubActions.error
           ( message = Figures.abbreviate(t"Fatal error: $className: $message"),
             title = t"Fatal error" )
 
-        GithubActions.group(t"Fatal error stack trace")
+        pyrocosm.GithubActions.group(t"Fatal error stack trace")
 
       Out.println(t"")
 
@@ -578,7 +578,7 @@ object Render:
         Out.println(ribbon.fill(e"$Bold(FATAL)", explanation.teletype))
 
       renderTrace(trace, terse)
-      if github then GithubActions.endGroup()
+      if github then pyrocosm.GithubActions.endGroup()
 
   // ---------------------------------------------------------------- annotations
 
@@ -607,7 +607,7 @@ object Render:
         val details: List[TestEvent] =
           document.failures.seek(_(0).id == row.ref.id).lay(Nil)(_(1))
 
-        GithubActions.error
+        pyrocosm.GithubActions.error
           ( message = describeFailure(details),
             file    = row.ref.file,
             line    = row.ref.line,
@@ -619,7 +619,7 @@ object Render:
   // fatal error — everything except the banner and aggregate totals, which belong to the
   // whole run.
   def suite(document: Document, width: Int, terse: Boolean)(using Stdio, Environment): Unit =
-    val github = GithubActions.enabled
+    val github = pyrocosm.GithubActions.enabled
 
     resultsTable(document, width, terse)
     document.groups.each(renderGroup(_, width, terse))
@@ -703,47 +703,3 @@ object Render:
       cells.columnate(width, gap = 3).each(Out.println(_))
 
       Out.println(t"─"*72)
-
-// GitHub Actions workflow annotations: `::error` lines against the failing test's file and
-// line, and log groups around each section — a port of probably's `GithubActions`.
-object GithubActions:
-  def enabled(using Environment): Boolean =
-    safely(Environment.githubActions[Text]) == t"true"
-
-  def terse(using Environment): Boolean =
-    safely(Environment.claudecode[Text]).present || enabled
-
-  private def workspaceRelative(path: Text)(using Environment): Text =
-    safely(Environment.githubWorkspace[Text]).let: workspace =>
-      if path.starts(workspace) && path.length > workspace.length && path(workspace.length.z) == '/'
-      then path.skip(workspace.length + 1)
-      else path
-
-    . or(path)
-
-  private def escape(text: Text): Text =
-    text.sub(t"%", t"%25").sub(t"\r", t"%0D").sub(t"\n", t"%0A")
-
-  private def escapeProperty(text: Text): Text =
-    escape(text).sub(t",", t"%2C").sub(t":", t"%3A")
-
-  def group(title: Text)(using Stdio): Unit = Out.println(t"::group::${escape(title)}")
-  def endGroup()(using Stdio): Unit = Out.println(t"::endgroup::")
-
-  def error
-    ( message: Text,
-      file:    Optional[Text] = Unset,
-      line:    Optional[Int]  = Unset,
-      title:   Optional[Text] = Unset )
-    ( using Stdio, Environment )
-  :   Unit =
-
-    def one(value: Optional[Text]): List[Text] = value.lay(Nil: List[Text]): text => List(text)
-
-    val props: List[Text] =
-      one(file.let(workspaceRelative(_)).let { path => t"file=${escapeProperty(path)}" }) +
-        one(line.let { value => t"line=${value.show}" }) +
-        one(title.let { value => t"title=${escapeProperty(value)}" })
-
-    val header = if props.nil then t"" else t" ${props.join(t",")}"
-    Out.println(t"::error$header::${escape(message)}")
