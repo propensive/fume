@@ -206,13 +206,7 @@ object McpServer extends Mcp.Server():
   // The documentation, bundled as `res/fume/mcp.md` beside the dashboard's icons, read through
   // the thread's context classloader as the dashboard's assets are.
   lazy val documentation: Text =
-    val loader: ClassLoader =
-      Optional(Thread.currentThread.nn.getContextClassLoader)
-      . or(classOf[Api.type].getClassLoader.nn)
-
-    Optional(loader.getResourceAsStream("fume/mcp.md")).let: stream =>
-      String(stream.readAllBytes(), "UTF-8").tt
-
+    pyrocosm.Resources.text(t"fume/mcp.md")
     . or(t"The documentation was not bundled with this build of fume.")
 
   // Answers a request for `/mcp`, and nothing else: the dashboard chains this after its own

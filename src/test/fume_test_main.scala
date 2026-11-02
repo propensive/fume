@@ -34,14 +34,11 @@ package fume
 
 import soundness.*
 
-import probably.TestEvent
-import stdios.fileDescriptorStdio
-import termcapDefinitions.basicTermcap
+import pyrocosm.Harness
 
-// Fume's own suite, run WITHOUT fume: a `Suite` has no `main` (the host — normally fume —
-// drives it through `invoke`), so this is the plain-`java` entry point `make test` and CI use,
-// printing one line per completed test and exiting with the suite's status (0 = passed,
-// 1 = failures, 2 = the suite threw). `fume run -c <test jar>` remains the full experience.
+// Fume's own suite, run WITHOUT fume, through the harness every tool's is (see
+// `pyrocosm.Harness`): `make test` and CI use it; `fume run -c <test jar>` remains the full
+// experience.
 @main
 def runTests(): Unit = runSuite(t"")
 
@@ -50,27 +47,6 @@ def runTests(): Unit = runSuite(t"")
 // event schema does — the case whenever this repository pins a Soundness newer than the
 // released fume that tests it.
 def runSuite(arguments: Text): Unit =
-  val passes: Atomic[Int] = Atomic(0)
-  val failures: Atomic[Int] = Atomic(0)
-
-  val status = Tests.invoke(arguments, event => event match
-    case TestEvent.TestCompleted(test, _, _, outcome, _, _) =>
-      if outcome.outcome == t"pass" || outcome.outcome == t"aspire-pass" then passes.since(_ + 1)
-      else failures.since(_ + 1)
-
-      Out.println(t"[${outcome.outcome}] ${test.path.join(t" / ")}")
-
-    case TestEvent.DetailMessage(_, message) =>
-      Out.println(t"    $message")
-
-    case TestEvent.DetailCompare(_, expected, found, _) =>
-      Out.println(t"    expected: $expected")
-      Out.println(t"    found:    $found")
-
-    case TestEvent.RunTerminated(error, _, _) =>
-      Out.println(t"suite threw: ${error.components.map(_.message).join(t"; ")}")
-
-    case _ => ())
-
-  Out.println(t"${passes()} passed, ${failures()} failed")
-  Exit(status).terminate()
+  import stdios.fileDescriptorStdio
+  import termcapDefinitions.basicTermcap
+  Exit(Harness.run(arguments, Tests)).terminate()

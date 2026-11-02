@@ -35,6 +35,7 @@ package fume
 import soundness.*
 
 import denominative.dysasymptotics.linearSize
+import pyrocosm.WebService
 import pyrocosm.{Action, Activity, Block, Event, Hints, Inline, Interface, Panel, Tone, Tool, hints}
 
 // The runs the daemon has seen, for the web front-end: the board of every suite in flight,
@@ -110,51 +111,30 @@ object Dashboard:
   private lazy val timezone: Timezone =
     safely(Timezone(java.time.ZoneId.systemDefault.nn.getId.nn.tt)).or(tz"UTC")
 
-  // Where the dashboard on `port` is found: under the hub's origin for port 0, which the hub
-  // holds, and at the port itself otherwise.
-  def address(port: Int): Text =
-    if port == 0 then t"http://localhost:${pyrocosm.Hubs.port}/fume/"
-    else t"http://localhost:$port/"
+  // Where the dashboard on `port` is found.
+  def address(port: Int): Text = Fume.address(port)
 
-  val web: Tool.Web = new Tool.Web:
-    def port: Int = 0
-
-    // The frontend holds the monitor and the error page, which outlive it; vouched pure so it
-    // can be stopped from another invocation.
-    @scala.caps.unsafe.untrackedCaptures
-    @volatile
-    private var frontend: Optional[pyrocosm.WebFrontend] = Unset
-
-    // Serves until `stop`: the dashboard is rebuilt a few times a second by a ticker, for as
-    // long as the front-end runs, exactly as the interactive `fume serve` loop rebuilds it.
-    def serve(port: Int)(using Monitor, Probate): Unit =
-      import webserverErrorPages.minimalErrorPage
-
+  // Served until `stop`, as every tool's web front-end is (`WebService`): the dashboard is
+  // rebuilt a few times a second by the ticker, for as long as the front-end runs, exactly as
+  // the interactive `fume serve` loop rebuilds it. The MCP server answers `/mcp` on the
+  // dashboard's port too, so one address serves both.
+  val web: Tool.Web =
+    val service: Tool.Web = WebService(fallback = Answering.fallback): () =>
       val dashboard = Dashboard()
+      WebService.Session(dashboard.interface, dashboard.handle, () => dashboard.refresh())
 
-      // The MCP server answers `/mcp` on the dashboard's port too, so one address serves both.
-      val running: pyrocosm.WebFrontend =
-        scala.caps.unsafe.unsafeAssumePure:
-          pyrocosm.WebFrontend
-            ( port,
-              fallback = Answering.fallback )
+    new Tool.Web:
+      def port: Int = 0
 
-      frontend = running
-      Server.serving = true
-      Server.announce(t"dashboard", port)
+      def serve(port: Int)(using Monitor, Probate): Unit =
+        Server.serving = true
+        Server.announce(t"dashboard", port)
 
-      try
-        async:
-          while Server.serving do
-            dashboard.refresh()
-            snooze(0.25*Second)
+        try service.serve(port) finally
+          Server.serving = false
+          Server.withdraw(t"dashboard")
 
-        running.run(dashboard.interface)(dashboard.handle)
-      finally
-        Server.serving = false
-        Server.withdraw(t"dashboard")
-
-    def stop(): Unit = frontend.let(_.stop())
+      def stop(): Unit = service.stop()
 
 // The dashboard: the journal's runs to choose from, and the chosen run's report, live while it
 // runs. Rebuilt from the journal and the registry a few times a second; each cell is assigned

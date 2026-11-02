@@ -47,15 +47,7 @@ object Budget:
   // `90` (seconds when bare), `90s`, `10m`, `2h`, decimals allowed (`1.5m`); nanoseconds out.
   // Anything else — including zero and negative — is `Unset`.
   def parse(text: Text): Optional[Long] =
-    if text.length == 0 then Unset else
-      val (digits, multiplier) = text.s.charAt(text.length - 1) match
-        case 's' => (text.keep(text.length - 1), 1.0)
-        case 'm' => (text.keep(text.length - 1), 60.0)
-        case 'h' => (text.keep(text.length - 1), 3600.0)
-        case _   => (text, 1.0)
-
-      safely(digits.as[Double]).lay(Unset: Optional[Long]): value =>
-        if value > 0.0 then (value*multiplier*1e9).toLong else Unset
+    pyrocosm.Timing.parse(text).let: duration => pyrocosm.Timing.millis(duration)*1_000_000L
 
   // The sum, in nanoseconds, of every admitted timed test's expected measuring time, over the
   // schedule the run's single listing pre-pass streamed across all its suites. Untimed checks

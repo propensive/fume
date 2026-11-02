@@ -38,6 +38,7 @@ import soundness.*
 
 import alphabets.hexLowerCase
 import probates.cancelProbate
+import pyrocosm.Frames
 import systems.javaBaseSystem
 
 // Consumes a suite's `TestEvent` stream: fume calls `probably.Streamer.stream` in the SUITE'S
@@ -61,16 +62,7 @@ object EventStream:
   // accumulate across chunk boundaries in an immutable array. A trailing partial frame (a
   // truncated stream) is dropped.
   private[fume] def split(chunks: Chain[Data]): Chain[Data] =
-    def join(left: Data, right: Data): Data =
-      val out = Array.allocate[Byte](left.length + right.length)
-      out.place(left, 0, 0, left.length)
-      out.place(right, 0, left.length, right.length)
-      Array.freeze(out)
-
-    def slice(data: Data, from: Int, until: Int): Data =
-      val out = Array.allocate[Byte](until - from)
-      out.place(data, from, 0, until - from)
-      Array.freeze(out)
+    def join(left: Data, right: Data): Data = Frames.join(List(left, right))
 
     def recur(buffer: Data, rest: Chain[Data]): Chain[Data] = Chain.defer:
       def byte(index: Int): Int = buffer.readUnchecked(index) & 0xff
@@ -79,8 +71,8 @@ object EventStream:
         val length = (byte(0) << 24) | (byte(1) << 16) | (byte(2) << 8) | byte(3)
 
         if buffer.length >= 4 + length then
-          val frame: Data = slice(buffer, 4, 4 + length)
-          Chain.cons(frame, recur(slice(buffer, 4 + length, buffer.length), rest))
+          val frame: Data = Frames.slice(buffer, 4, 4 + length)
+          Chain.cons(frame, recur(Frames.slice(buffer, 4 + length, buffer.length), rest))
         else
           pull(buffer, rest)
       else

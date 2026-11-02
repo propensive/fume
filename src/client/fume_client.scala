@@ -43,7 +43,8 @@ import probably.TestEvent
 // Explicit, so that it outranks the `Tool` the `soundness.*` wildcard exports (anthology's);
 // `standard` is a package-level extension on it.
 import pyrocosm.Tool
-import pyrocosm.{Advert, Blobs, Channel, Machine, Peer, Swarm}
+import pyrocosm.decodables.boolean
+import pyrocosm.{Advert, Attend, Blobs, Channel, Classpaths, Machine, Peer, Swarm, Swarming}
 import systems.javaBaseSystem
 import threads.platformThreads
 
@@ -274,12 +275,6 @@ object ui:
       ( t"timeout",
         t"abort the run if it has not finished within this time, such as 90, 45s or 10m" )
 
-// There is no `Boolean is Decodable in Text` given in distillate, so `Setting[Boolean]` reads
-// (from a flag operand, a system property or an environment variable) decode here: `true`,
-// `yes` and `on` — case-insensitively — are true, and anything else is false.
-given decodable: (Boolean is Decodable in Text) = value =>
-  value.lower == t"true" || value.lower == t"yes" || value.lower == t"on"
-
 // Reads all four kind switches — unconditionally, so that every one of them registers for
 // tab-completion (see the note in `runClient`) — and yields the `kind:` terms they select.
 private def selectedKinds(using Cli, Interpreter): List[Text] =
@@ -365,7 +360,7 @@ private def dispatch()
           Render.announce
             ( t"  `fume swarm join <invitation> ${where.or(t"")}` admits this one to it" )
 
-          NoMachine
+          Tool.NoMachine
 
         case classpath: LocalClasspath =>
           // A scoped path (`threads/0a48bc`) is fume's own form of term, resolved here to
@@ -411,7 +406,7 @@ private def dispatch()
               ( t"--target and --duration-scale are mutually exclusive; using --duration-scale" )
 
             val width: Int = terminalWidth()
-            val terse: Boolean = fume.GithubActions.terse
+            val terse: Boolean = pyrocosm.Invoker.detect.terse
             val tty: Boolean = summon[Resident].cliInput == ethereal.Terminus.Terminal
 
             import probates.cancelProbate
@@ -675,8 +670,7 @@ private def dispatch()
               if !shown then Unset else board.let: _ =>
                 import strategies.throwUnsafely
                 import fume.Figures.measurable
-                import tableStyles.thickTableStyle
-                import palettes.solarizedDarkGaugePalette
+                import pyrocosm.standardRendering.{tableStyle, gaugePalette}
                 scala.caps.unsafe.unsafeAssumePure(pyrocosm.TerminalFrontend(Occupancy.Fullscreen))
 
             // Fulfilled when the board has closed and the terminal is restored, so the
@@ -861,11 +855,11 @@ private def dispatch()
               def blob(path: Text): List[(Blobs.Entry, Data)] =
                 List(unsafely(Blobs.prepare(path.as[Path on Linux], path)))
 
-              val prepared: List[(Blobs.Entry, Data)] =
-                classpath.entries.bind:
-                  case Classpath.Entry.Jar(path)       => blob(path)
-                  case Classpath.Entry.Directory(path) => blob(path)
-                  case _                               => Nil
+              type Blob = (Blobs.Entry, Data)
+
+              val prepared: List[Blob] =
+                classpath.entries.bind[List[Blob], Blob, List[Blob]]: entry =>
+                  Classpaths.path(entry).lay(Nil: List[Blob])(blob(_))
 
               // Per-suite state as the frames arrive, in one object so the consumer task
               // captures a single reference rather than a set of mutable locals.
@@ -1429,16 +1423,7 @@ private def dispatch()
             async:
               try serve() finally stopped() = true
 
-            val input: Live.Input = Live.Input(aborted)
-
-            def loop(): Unit =
-              if tty then while stdio.in.available() > 0 do input.offer(stdio.in.read())
-
-              if !aborted() && !stopped() then
-                snooze(0.25*Second)
-                loop()
-
-            loop()
+            Attend.until(stopped())(())
             fume.Worker.service.stop()
             Render.announce(t"the listener has stopped")
             Exit.Ok
@@ -1447,7 +1432,7 @@ private def dispatch()
             Render.announce:
               t"this machine's identity could not be created; is `keytool` available?"
 
-            RemoteFailed
+            Tool.RemoteFailed
 
     case ui.Watch() :: _ =>
       val classpath: Optional[LocalClasspath] = classpathSetting()
@@ -1461,7 +1446,7 @@ private def dispatch()
         classpath match
           case classpath: LocalClasspath =>
             Render.announce(t"'watch' is not yet implemented")
-            Unimplemented
+            Tool.Unimplemented
 
           case _ =>
             Render.announce(t"at least one --classpath must be specified")
@@ -1511,11 +1496,7 @@ private def classpathSetting()
       text.cut(t":").filter(_ != t"").bind[List[Text], Text, List[Text]]: (entry: Text) =>
         Suites.expand(workingDirectory, entry)
 
-    val entries: List[Classpath.Entry.Directory | Classpath.Entry.Jar] =
-      expanded.map: (entry: Text) =>
-        if entry.ends(t".jar") then Classpath.Entry.Jar(entry) else Classpath.Entry.Directory(entry)
-
-    LocalClasspath(entries*)
+    LocalClasspath(expanded.map(Classpaths.entry(_))*)
 
   given wd: WorkingDirectory = () => workingDirectory
 
@@ -1543,8 +1524,7 @@ private def suiteFlag(classpath: Optional[LocalClasspath])(using Cli, Interprete
 // eagerly, in the pure section, so `--machine` can complete to the names without a lambda
 // having to capture the environment.
 private def machines()(using cli: Cli, environment: Environment): List[Machine] =
-  val directory: Text = cli.workingDirectory.directory()
-  Machine.resolve(List(Fume.repoConfig(directory), Fume.userConfig, Machine.shared))
+  Swarming.machines(Fume, cli.workingDirectory.directory())
 
 private object Executor:
   // Everywhere a run can be sent: each machine on the swarm whose fume daemon is listening
@@ -1754,26 +1734,14 @@ private def invokeSuite
       Render.announce(t"$suite could not be run in-process; running it in a separate JVM")
       forkSuite(classpath, suite, args, abort, run)
 
-// The terminal's width from the invocation's `COLUMNS`, or 120. A method of its own, outside
-// the inlined dispatch: read there, the `safely` region's tactic and the inlined `Environment`
-// parameter's capture sets do not reconcile.
-private def terminalWidth()(using Environment): Int = safely(Environment.columns.as[Int]).or(120)
+// The terminal's width, as every tool reads it. A method of its own, outside the inlined
+// dispatch: read there, the `safely` region's tactic and the inlined `Environment` parameter's
+// capture sets do not reconcile.
+private def terminalWidth()(using Environment): Int = Fume.columns
 
-private def usage()(using invocation: Invocation): UsageError.type =
+private def usage()(using invocation: Invocation): Tool.UsageError.type =
   given Stdio = invocation.stdio
-  Out.println(t"Usage: fume <command> [options] [terms...]")
-  Out.println(t"")
-  Out.println(t"Commands:")
-  Out.println(t"  run      run the tests and benchmarks admitted by the selection")
-  Out.println(t"  list     list the tests and benchmarks on the classpath")
-  Out.println(t"  watch    watch the classpath jars and rerun tests on change")
-  Out.println(t"  serve    serve the dashboard of runs on the web until Ctrl+C")
-  Out.println(t"  listen   run selections sent by fume on other machines until Ctrl+C")
-  Out.println(t"  mcp      serve the MCP server agents query about runs until Ctrl+C")
-  Out.println(t"  about    show fume's version and daemon")
-  Out.println(t"  install  install shell tab-completions and the fume manpage")
-  Out.println(t"  quit     stop the background daemon")
-  UsageError
+  Fume.usage(List(ui.Run, ui.List, ui.Watch, ui.Listen, ui.Mcp))
 
 // The controller's view of a remote run as its frames arrive: which suite is open, what the
 // model held before it, and the tallies. One object, so the consuming task captures a single

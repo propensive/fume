@@ -40,6 +40,7 @@ import soundness.*
 import calendars.gregorianCalendar
 import charsets.utf8Charset
 import denominative.dysasymptotics.linearSize
+import pyrocosm.{Filing, Frames}
 import systems.javaBaseSystem
 import textSanitizers.skipSanitizer
 
@@ -101,20 +102,8 @@ object Runs:
   // Writes the record, replacing any earlier version atomically: a reader sees the old record
   // or the new, never a partial one.
   def write(record: RunRecord): Unit =
-    file(record.id, t"run.tel").let: target =>
-      safely:
-        val parent: ji.File = target.getParentFile.nn
-        parent.mkdirs()
-        val temporary = ji.File(parent, "run.tel.tmp")
-        jnf.Files.writeString(temporary.toPath, RunRecord.write(record).s)
-
-        jnf.Files.move
-          ( temporary.toPath,
-            target.toPath,
-            jnf.StandardCopyOption.ATOMIC_MOVE,
-            jnf.StandardCopyOption.REPLACE_EXISTING )
-
-      . unit
+    directory(record.id).let: directory =>
+      safely(directory / "run.tel").let(Filing.replace(_, RunRecord.write(record)))
 
   def read(id: Text): Optional[RunRecord] =
     file(id, t"run.tel").let: file =>
@@ -180,14 +169,7 @@ object Runs:
   // Writes a suite's frames as they arrive, each with the 4-byte big-endian length the wire
   // gives it, so the file is the stream the suite produced, fingerprint first.
   final class Writer(stream: ji.OutputStream):
-    def frame(data: Data): Unit =
-      val length: Int = data.length
-      stream.write((length >>> 24) & 0xff)
-      stream.write((length >>> 16) & 0xff)
-      stream.write((length >>> 8) & 0xff)
-      stream.write(length & 0xff)
-      val raw: scala.Array[Byte] = Array.unsafeJvm[Byte](data)
-      stream.write(raw)
+    def frame(data: Data): Unit = stream.write(Array.unsafeJvm[Byte](Frames.frame(data)))
 
     def close(): Unit = safely(stream.close()).unit
 
