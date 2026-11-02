@@ -92,7 +92,6 @@ object ui:
   val Run = Subcommand("run", "run the tests and benchmarks admitted by the selection")
   val List = Subcommand("list", "list the tests and benchmarks on the classpath")
   val Watch = Subcommand("watch", "watch the classpath jars and rerun tests on change")
-  val Serve = Subcommand("serve", "serve the dashboard of runs on the web until Ctrl+C")
   val Listen = Subcommand("listen", "run selections sent by fume on other machines until Ctrl+C")
   val Mcp = Subcommand("mcp", "serve the MCP server agents query about runs until Ctrl+C")
 
@@ -205,7 +204,6 @@ object ui:
   // The port `fume serve` listens on; `--port`, the `fume.port` property, `FUME_PORT` and
   // `port` in either config file all reach it — and `Tool` reads the same keyword for the
   // dashboard it serves from the daemon when a config says `serve`.
-  val Port = Setting[Text](t"port", t"the port on which `fume serve` serves the dashboard")
 
   // Remote execution: `--machine <name>` sends the selection to another machine whose fume
   // daemon is listening — one on the swarm, found by what its node advertises, or one declared
@@ -1339,70 +1337,7 @@ private def dispatch()
 
     // `fume watch …` — as `run`, but watch the OUTPUT jars named by `--classpath` (something
     // else does the compiling) and rerun the selection whenever one changes.
-    // `fume serve [--port]` — serve the dashboard: every run the daemon has journalled, the
-    // ones in flight live. Runs started from any shell while it serves register their boards,
-    // so a browser and a terminal watch the same cells.
-    case ui.Serve() :: _ =>
-      val port: Int = ui.Port() match
-        case text: Text => safely(text.as[Int]).or(fume.Dashboard.web.port)
-        case _          => fume.Dashboard.web.port
 
-      execute:
-        given Stdio = summon[Invocation].stdio
-        import probates.cancelProbate
-        import webserverErrorPages.minimalErrorPage
-
-        val stdio: Stdio = summon[Stdio]
-        val tty: Boolean = summon[Resident].cliInput == ethereal.Terminus.Terminal
-        val aborted: Atomic[Boolean] = Atomic(false)
-
-        trap:
-          case profanity.Signal(Interrupt.Int, _, _, _) =>
-            aborted() = true
-            SignalResponse.Accept
-
-        val dashboard = fume.Dashboard()
-        val served: Atomic[Boolean] = Atomic(false)
-
-        // The frontend holds the monitor and the error page, which outlive it; vouched pure so
-        // it can be stopped from here.
-        val frontend: pyrocosm.WebFrontend =
-          scala.caps.unsafe.unsafeAssumePure:
-            pyrocosm.WebFrontend
-              ( port,
-                fallback = Answering.fallback )
-
-        Server.serving = true
-        Server.announce(t"dashboard", port)
-
-        async:
-          try frontend.run(dashboard.interface)(dashboard.handle) finally served() = true
-
-        Render.announce:
-          t"serving the fume dashboard at ${fume.Dashboard.address(port)} (Ctrl+C to stop)"
-
-        // On a terminal the launcher forwards Ctrl+C as a byte rather than a signal, so the
-        // input is read for it here, as the load gate does.
-        val input: Live.Input = Live.Input(aborted)
-
-        def loop(): Unit =
-          if tty then while stdio.in.available() > 0 do input.offer(stdio.in.read())
-          dashboard.refresh()
-
-          if !aborted() && !served() then
-            snooze(0.25*Second)
-            loop()
-
-        loop()
-        Server.serving = false
-        Server.withdraw(t"dashboard")
-        frontend.stop()
-        Render.announce(t"the dashboard has stopped")
-        Exit.Ok
-
-    // `fume mcp [--mcp-port]` — serve the MCP server until Ctrl+C, as the daemon does for as
-    // long as it lives when a config says `mcp`. An agent connects to it over HTTP:
-    // `claude mcp add --transport http fume http://localhost:8092/mcp`.
     case ui.Mcp() :: _ =>
       val port: Int = ui.McpPort() match
         case text: Text => safely(text.as[Int]).or(fume.McpServer.service.port)
