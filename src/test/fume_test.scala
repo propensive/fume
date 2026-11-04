@@ -1647,10 +1647,14 @@ object Tests extends Suite(m"Fume tests"):
         val body: Text = t"""{"jsonrpc":"2.0","id":1,"method":"$method","params":$params}"""
         val headers: List[Http.Header] = List(Http.Header(t"content-type", t"application/json"))
 
+        // A spring's pull takes the tactic a truncated source raises through, so it is a
+        // method rather than a lambda (Soundness 0.75.0).
+        val spring: Spring[Data] = new Spring[Data]:
+          def apply()(using Tactic[Truncation.Error]): (Stream[Data] over Credit)^ =
+            Http.Body.Fixed(body.in[Data]).stream
+
         val request: Http.Request =
-          Http.Request
-            ( Http.Post, 1.1, t"localhost".as[Host], t"/mcp", headers,
-              () => Http.Body.Fixed(body.in[Data]).stream )
+          Http.Request(Http.Post, 1.1, t"localhost".as[Host], t"/mcp", headers, spring)
 
         val response: Optional[Http.Response] = supervise(McpServer.respond(request))
 
