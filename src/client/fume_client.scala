@@ -75,6 +75,7 @@ object UsageError extends Status(2, t"the command line was not understood")
 object NoClasspath extends Status(3, t"no --classpath was specified, or an entry was unreadable")
 object NoSuites extends Status(4, t"no test suites were found on the classpath")
 object RunTimedOut extends Status(5, t"the run did not finish within its --timeout")
+object NoCoverage extends Status(6, t"the code named by --coverage could not be covered")
 object Unimplemented extends Status(10, t"this subcommand is not yet implemented")
 
 object NoMachine
@@ -188,6 +189,17 @@ object ui:
         "with list: run each suite's body to list its tests, rather than read the index of " +
           "them" )
 
+  // The code whose coverage a run records: a class (`fume.Selection`), the classes of a
+  // package (`fume.*`) or a source file (`src/client/fume.Selection.scala`), recompiled with
+  // probes from the TASTy the classpath holds for it (see `Coverage`).
+  val Coverage =
+    Flag[Repeated]
+      ( "coverage",
+        true,
+        Nil,
+        "record which tests reach the code of a class, such as mypackage.MyClass, or of a " +
+          "source file, such as src/file.scala; repeatable" )
+
   val Fork =
     Flag[Unit]
       ( "fork",
@@ -275,6 +287,15 @@ object ui:
       ( t"timeout",
         t"abort the run if it has not finished within this time, such as 90, 45s or 10m" )
 
+  // The compiler options, space-separated, which the code named by `--coverage` was compiled
+  // with and which its recompilation must therefore repeat, beyond those Soundness itself is
+  // compiled with (which `probably.Instrumenter` already has): an option which changes the
+  // code the compiler generates, such as `-Yexplicit-nulls`, not one which only checks it.
+  val CoverageOptions =
+    Setting[Text]
+      ( t"coverageOptions",
+        t"compiler options, space-separated, the code named by --coverage was compiled with" )
+
 // Reads all four kind switches — unconditionally, so that every one of them registers for
 // tab-completion (see the note in `runClient`) — and yields the `kind:` terms they select.
 private def selectedKinds(using Cli, Interpreter): List[Text] =
@@ -334,6 +355,8 @@ private def dispatch()
     val durationScale: Optional[Text] = ui.DurationScale()
     val target: Optional[Text] = ui.Target()
     val timeout: Optional[Text] = ui.Timeout()
+    val covered: Prospective[Repeated] = coverageFlag()
+    val coverageOptions: Optional[Text] = ui.CoverageOptions()
     val fork: Boolean = ui.Fork().present
     val terms: List[Text] = selectionTerms(rest)
     val executors: List[Executor] = Executor.all(machines())
@@ -382,13 +405,44 @@ private def dispatch()
           val chosen: Optional[Text] = suite()
           val suites: List[Text] = selectSuites(classpath, chosen, selectionArgs)
 
+          // The code whose coverage is asked for, recompiled with probes — unless it has been
+          // before — once it is known that there is something to run. Coverage is read out of
+          // the suites' own classloader, so only an in-process run on this machine has any.
+          val coverageTerms: List[Text] = covered().lay(Nil: List[Text])(_.values)
+          val runnable: Boolean = !discovered.nil && !suites.nil
+
+          val planned: (Optional[fume.Coverage.Plan], List[Text]) =
+            if coverageTerms.nil || !runnable then (Unset, Nil: List[Text])
+            else if fork || where.present then
+              ( Unset,
+                List(t"--coverage applies to a run in this process: not with --fork or --machine") )
+            else
+              Render.announce(t"preparing coverage of ${coverageTerms.join(t", ")}")
+
+              fume.Coverage.plan
+                ( classpath,
+                  coverageTerms,
+                  coverageOptions.lay(Nil: List[Text])(_.cut(t" ").filter(_ != t"")),
+                  fume.Coverage.directory )
+
+          val coverage: Optional[fume.Coverage.Plan] = planned(0)
+          val uncovered: List[Text] = planned(1)
+
           if discovered.nil || chosen.lay(false) { chosen => !discovered.has(chosen) } then
             Render.announce(t"no test suites were found on the classpath")
             NoSuites
           else if suites.nil then
             Render.announce(t"no suite on the classpath declares a test the selection admits")
             Exit.Ok
+          else if !uncovered.nil then
+            uncovered.each(Render.announce(_))
+            NoCoverage
           else
+            // What the suites run from: the classpath as given, or, for coverage, with the
+            // recompiled classes ahead of it. Everything else — the index of tests, the
+            // forecast, the run's record — is of the classpath as given.
+            val running: LocalClasspath = coverage.let(_.classpath).or(classpath)
+
             // A positive factor becomes probably's `--scale=<factor>`; anything else is
             // reported and dropped, like `--max-load` above, so that a mistyped multiplier
             // costs a warning rather than a run. The factor is checked here but forwarded
@@ -479,7 +533,7 @@ private def dispatch()
             // invocation. A suite whose Probably has `probably.Standalone` streams its events
             // from there into the same model and board as an in-process one; an older one is
             // forked the legacy way, and renders its own report, so there is no board.
-            val loader: Classloader = classpath.classloader(Classloader.Delegation.Preferential)
+            val loader: Classloader = running.classloader(Classloader.Delegation.Preferential)
             val legacyFork: Boolean = fork && !EventStream.forkable(loader)
 
             val model = Model()
@@ -540,8 +594,8 @@ private def dispatch()
                 captured: (Text, Text) => Unit )
             :   Optional[EventStream.Outcome] =
 
-              if fork then EventStream.forked(classpath, suite, args)(sink, abort, captured)
-              else EventStream.frames(classpath, suite, args, shared)(sink, abort, captured)
+              if fork then EventStream.forked(running, suite, args)(sink, abort, captured)
+              else EventStream.frames(running, suite, args, shared)(sink, abort, captured)
 
             val schedule: scala.collection.mutable.ListBuffer[TestEvent.TestScheduled] =
               scala.collection.mutable.ListBuffer()
@@ -740,7 +794,7 @@ private def dispatch()
                   val suiteStarted: Instant over Unix = now()
 
                   val passed: Boolean =
-                    invokeSuite(classpath, head, args, fork, () => aborted(), journalId) == Exit.Ok
+                    invokeSuite(running, head, args, fork, () => aborted(), journalId) == Exit.Ok
 
                   Journal.record(journalId, head, passed, Unset, suiteStarted, Unset, false)
                   progress.end(head)
@@ -1090,6 +1144,11 @@ private def dispatch()
                 val (failures, ran) = legacyRun(suites, 0, 0)
                 (failures, ran, Unset)
               else
+                // Coverage is read from the one classloader every suite of the run streams
+                // through; a Probably too old to share one is too old to record any.
+                val covering: Boolean =
+                  coverage.present && shared.present && fume.Coverage.activate(loader)
+
                 val (failures, ran, rest) = eventRun(suites, 0, 0)
                 model.finish()
 
@@ -1146,6 +1205,20 @@ private def dispatch()
                     if aborted() then Render.announce(stopped())
                     Render.suite(document, width, terse)
                     document.totals
+
+                // What each test reached, below the report of how each fared, and kept with
+                // the run.
+                coverage.let: plan =>
+                  if !covering
+                  then Render.announce(t"the suites' Probably recorded no coverage for this run")
+                  else
+                    val record: fume.Coverage.Record =
+                      fume.Coverage.Record(plan.subjects, fume.Coverage.drain(loader))
+
+                    fume.Coverage.report(record).each(Out.println(_))
+
+                    Runs.cover(journalId, fume.Coverage.serialize(record)).let: path =>
+                      Render.announce(t"coverage is recorded in $path")
 
                 val (failures2, ran2) =
                   if rest.nil then (failures, ran) else legacyRun(rest, failures, ran)
@@ -1630,6 +1703,11 @@ private def excludeFlag(classpath: Optional[LocalClasspath])(using Cli, Interpre
 
   ui.Exclude()
 
+// Reads `--coverage`: a class or a source file, which has no completions of its own.
+private def coverageFlag()(using Cli, Interpreter): Prospective[Repeated] =
+  given discoverable: (Repeated is Discoverable) = (_, _) => List()
+  ui.Coverage()
+
 // Registers the completion of every positional selection term: the focused word completes to
 // what is NAMED on the classpath — the monikers of its suites, groups and tests — and, once
 // something of it is typed, to the ids which begin with that too; within a scope (`threads/`),
@@ -1649,7 +1727,8 @@ private def selectionArguments(rest: List[Argument]): List[Argument] =
   val valueFlags: List[Flag] =
     List(ui.Classpath.flag, ui.Suite, ui.Kind.flag, ui.Tag, ui.Axis, ui.Exclude, ui.FailFast.flag,
          ui.MaxLoad.flag, ui.DurationScale.flag, ui.Target.flag, ui.Machine.flag,
-         ui.ListenPort.flag, ui.McpPort.flag, ui.Retention.flag, ui.Timeout.flag)
+         ui.ListenPort.flag, ui.McpPort.flag, ui.Retention.flag, ui.Timeout.flag,
+         ui.Coverage, ui.CoverageOptions.flag)
 
   def recur(args: List[Argument], terms: List[Argument]): List[Argument] = args match
     case head :: tail =>

@@ -134,4 +134,4 @@ object Selection:
   // the following word (an `--flag=value` spelling is one word, and consumes nothing).
   private val skipped: List[Text] =
     List(t"--classpath", t"-c", t"--suite", t"-s", t"--fail-fast", t"--max-load",
-         t"--duration-scale", t"--target")
+         t"--duration-scale", t"--target", t"--coverage", t"--coverage-options")
