@@ -23,8 +23,9 @@ otherwise.
 - `fume.EventStream`: BinTEL frames with a schema fingerprint, so the raw event stream is
   already a versioned wire format worth persisting verbatim.
 - Probably: `Axis`/`Spread`/`Spread2`, `Baseline`/`Anchor`, `Selection` (ids, globs,
-  `kind:`, axis constraints, `--scale`), `Ci` detection, and a `coverage` component
-  (`Coverage`, `Juncture`, `Surface` over scoverage measurement files).
+  `kind:`, axis constraints, `--scale`), `Ci` detection, and coverage: `probably.Coverage`,
+  which credits each test with the probes it reaches, and `probably.Instrumenter`, which
+  recompiles classes from their TASTy with those probes.
 - Probably diagnostics already emitted but only partly rendered: `capture`d values
   (`DetailCaptures`), structural expected/found diffs (`DetailCompare`), `Autopsy` contrast
   analysis, and stack traces (`DetailThrows`).
@@ -183,10 +184,12 @@ otherwise.
   Properties are represented as tests *over an emergent axis* (`case` or `seed`), reusing
   the existing `Axis`/`Spread` machinery for selection, coordinates, tables and charts;
   classification labels become a second discrete axis, giving distribution tables for free.
-- **4.3 Coverage integration.** A `coverage` setting runs suites against a
-  scoverage-instrumented classpath, collects measurement files, builds `Surface`s and adds
-  coverage to the run record; thresholds fail the run; terminal, HTML and web renderings
-  (2.3).
+- **4.3 Coverage integration.** Begun: `--coverage <class or source file>` recompiles the
+  code it names from its TASTy with probes, and records which test reaches which probe, with
+  a terminal report and a `coverage.tsv` beside the run (see the readme). Still to do: the
+  record in the MCP server's answers and on the dashboard, by line and by test; thresholds
+  which fail the run; coverage of a `--fork`ed or remote run, whose record has to travel in
+  the event stream; and an LCOV export.
 - **4.4 Soak tests.** A `soak` kind runs a workload for a long, budgeted duration with a
   health probe, recording every failure and recovery as a timestamped event. From the
   timeline fume derives MTTF, MTBF, MTTR, availability and failure rate with confidence
@@ -250,8 +253,9 @@ otherwise.
 
 - Probably: `golden` and `soak` kinds and their events; the expression-breakdown macro and
   `DetailBreakdown` event; a generator typeclass, shrinking and seed events; emergent-axis
-  coordinates for property cases; `requires` declarations for machine gating; coverage hooks
-  reachable from a host; optional `TestEvent` additions (timeouts, flakiness, environment).
+  coordinates for property cases; `requires` declarations for machine gating; a coverage
+  event, for a run whose suites are not in the host's JVM;
+  optional `TestEvent` additions (timeouts, flakiness, environment).
 - Sedentary: `NetworkDevice`, `NetworkDevice.Session` and `NetworkDeviceSessional` are
   superseded by `fume --machine` (a suite declaring `LocalhostDevice` stages and measures on the
   worker); deprecate them, and make `LocalhostDevice` the default `given`.

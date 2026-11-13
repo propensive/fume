@@ -1030,6 +1030,83 @@ object Tests extends Suite(m"Fume tests"):
 
       . assert(_ == t"1h02m")
 
+    suite(m"Coverage"):
+      // Two units — a class of four probes and one of a single probe — and three tests: one
+      // reaching both branches of the first unit's `if`, one reaching only its method, and one
+      // reaching nothing of either; the class body is reached outside any test.
+      def probe(index: Int, kind: Text, line: Int, scope: Text): fume.Coverage.Probe =
+        fume.Coverage.Probe(index, kind, t"src/casket.scala", line, 3, line, 20, scope)
+
+      val casket: fume.Coverage.Subject =
+        fume.Coverage.Subject
+          ( 0,
+            t"venice.Casket",
+            List
+              ( probe(0, t"class", 3, t"venice.Casket"),
+                probe(1, t"method", 5, t"venice.Casket.choose"),
+                probe(2, t"then", 6, t"venice.Casket.choose"),
+                probe(3, t"else", 7, t"venice.Casket.choose") ) )
+
+      val ring: fume.Coverage.Subject =
+        fume.Coverage.Subject
+          ( 1,
+            t"venice.Ring",
+            List
+              ( fume.Coverage.Probe
+                  ( 0, t"method", t"src/ring.scala", 4, 3, 4, 30, t"venice.Ring.give" ) ) )
+
+      val record: fume.Coverage.Record =
+        fume.Coverage.Record
+          ( List(casket, ring),
+            Map
+              ( t"" -> List((0, 0)),
+                t"venice/gold#0a48bc" -> List((0, 1), (0, 2)),
+                t"venice/lead#1b59cd" -> List((0, 1)),
+                t"venice/silver#2c6ade" -> Nil ) )
+
+      test(m"a record is read back as it was written"):
+        val read: fume.Coverage.Record = fume.Coverage.parse(fume.Coverage.serialize(record))
+        (read.subjects, read.reached(t"venice/gold#0a48bc"), read.reached(t""))
+
+      . assert(_ == (List(casket, ring), List((0, 1), (0, 2)), List((0, 0))))
+
+      test(m"a test's key is its path and its id"):
+        fume.Coverage.key:
+          TestEvent.Ref(t"0a48bc", t"gold", Unset, List(t"venice", t"gold"), t"", 1)
+
+      . assert(_ == t"venice/gold#0a48bc")
+
+      test(m"a file's coverage counts what tests reach, apart from what only others do"):
+        fume.Coverage.report(record).filter(_.starts(t"coverage of"))
+
+      . assert:
+          _ ==
+            List
+              ( t"coverage of src/casket.scala: tests reach 2 of 4 probes (50%); 1 more only " +
+                  t"outside any test",
+                t"coverage of src/ring.scala: tests reach 0 of 1 probes (0%)" )
+
+      test(m"what nothing reached is listed by where it is"):
+        fume.Coverage.report(record).filter(_.contains(t"  venice."))
+
+      . assert:
+          _ ==
+            List
+              ( t"    7:3       else    venice.Casket.choose",
+                t"    4:3       method  venice.Ring.give" )
+
+      test(m"the tests which reach it are listed with how much each reaches, most first"):
+        fume.Coverage.report(record).filter(_.contains(t"venice/"))
+
+      . assert:
+          _ == List(t"      2 venice/gold#0a48bc", t"      1 venice/lead#1b59cd")
+
+      test(m"a record no test reached says so"):
+        val idle: fume.Coverage.Record = fume.Coverage.Record(List(ring), Map())
+        fume.Coverage.report(idle).last
+
+      . assert(_ == t"no test reached any of it")
+
     suite(m"Relay"):
       // The wire format between a controller and a worker: every message shape must survive
       // the round trip through the derived BinTEL codec, since a worker built from a different
