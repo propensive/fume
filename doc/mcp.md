@@ -33,7 +33,8 @@ daemon.
 No tool takes an optional parameter: every parameter listed is required, and a tool with a
 sensible default is a tool of its own (synesthesia cannot yet decode an absent parameter:
 [propensive/soundness#2187](https://github.com/propensive/soundness/issues/2187)). Wherever a run id is taken, `last` names the newest run.
-A tool that cannot answer — an unknown run or suite — fails with a message saying why.
+A tool that cannot answer — an unknown run or suite — fails with a message saying why, after
+its bolt code: `[↯/f.29.1.2] no run is known as …`.
 
 | Tool | Parameters | Answers with |
 |---|---|---|

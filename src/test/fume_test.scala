@@ -1717,3 +1717,53 @@ object Tests extends Suite(m"Fume tests"):
           result.contents.as[List[Json]].head.let(_.text.as[Text].starts(t"{"))
 
       . assert(_ == true)
+
+      // A tool's failure is `Api.Error`, whose message the agent reads after its code's label.
+      test(m"the server answers an unknown run with the error's code"):
+        dynamically[Json]:
+          val call: Text = t"""{"name":"run","arguments":{"id":"20000101-000000-none"}}"""
+          val result: Json = rpc(t"tools/call", call).result
+          val text: Optional[Text] = result.content.as[List[Json]].head.let(_.text.as[Text])
+          (result.isError.as[Boolean], text.let(_.starts(t"[↯/f.29.1.2] no run is known")))
+
+      . assert(_ == (true, true))
+
+    suite(m"Bolt codes"):
+      import errorDiagnostics.emptyDiagnostics
+
+      test(m"an API error is coded by its reason"):
+        Api.Error(Api.Error.Reason.UnknownSuite(t"a.Suite", t"last")).bolt.text
+
+      . assert(_ == t"↯/f.29.1.4")
+
+      test(m"an API error's message follows its code's label"):
+        Api.Error(Api.Error.Reason.NoEntries).getMessage.nn.tt
+
+      . assert(_ == t"[↯/f.29.1.3] the classpath names no entries")
+
+      test(m"a connection which could not be made carries Pyrocosm's code for the reason"):
+        val reason: pyrocosm.Peer.Error.Reason = pyrocosm.Peer.Error.Reason.Unreachable(t"far")
+        FumeBolts(FumeBolts.connection).carrying(pyrocosm.Peer.Error(reason).bolt).text
+
+      . assert(_ == t"↯/f.31.8/f.8.1.3")
+
+      test(m"a failure is announced after its code's label"):
+        given Environment = name => if name == t"CLAUDECODE" then t"1" else Unset
+        val buffer: java.io.ByteArrayOutputStream = java.io.ByteArrayOutputStream()
+        val stream: java.io.PrintStream = java.io.PrintStream(buffer, true, "UTF-8")
+        given Stdio = Stdio(stream, null, null, termcapDefinitions.basicTermcap)
+        val message: Text = t"no test suites were found on the classpath"
+        Render.announce(message, FumeBolts(FumeBolts.noSuites))
+        buffer.toString("UTF-8").nn.tt.trim
+
+      . assert(_ == t"[↯/f.31.3] no test suites were found on the classpath")
+
+      test(m"a message with no code is announced as it is"):
+        given Environment = name => if name == t"CLAUDECODE" then t"1" else Unset
+        val buffer: java.io.ByteArrayOutputStream = java.io.ByteArrayOutputStream()
+        val stream: java.io.PrintStream = java.io.PrintStream(buffer, true, "UTF-8")
+        given Stdio = Stdio(stream, null, null, termcapDefinitions.basicTermcap)
+        Render.announce(t"running a.Suite")
+        buffer.toString("UTF-8").nn.tt.trim
+
+      . assert(_ == t"running a.Suite")

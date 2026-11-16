@@ -297,6 +297,14 @@ Fume is structured as five build modules:
    externalize it (unpublished; only buildable after a release)
  - `test`: fume's own Probably test suite (unpublished)
 
+Fume's failures are named by [bolt codes](https://github.com/propensive/bolt), under the letter
+`f` it shares with Pyrocosm and its other tools: its modules are subdivisions 29 (`api`), 30
+(`relay`), 31 (`client`) and 32 (`launcher`), declared in `FumeBolts`, and what every code means
+is recorded in `f.tel` there. An MCP tool which cannot answer fails with `Api.Error`,
+`↯/f.29.1.<reason>`, and a failure `fume` prints is announced after its code's label, as
+`[↯/f.31.3] no test suites were found on the classpath`. A connection to a worker which could
+not be made carries Pyrocosm's code for the reason after its own, `↯/f.31.8/f.8.1.3`.
+
 ## Building
 
 Before a first release (or to iterate locally), build and run fume without Maven Central:

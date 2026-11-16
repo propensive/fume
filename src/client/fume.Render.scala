@@ -57,9 +57,16 @@ object Render:
   //
   // Terse output — CI logs, Claude Code — takes the same words with no styling at all, for the
   // same reason the tables lose their colour there: the reader is a log, or a machine.
-  def announce(message: Text)(using Stdio, Environment): Unit =
-    if pyrocosm.Invoker.detect.terse then Out.println(message)
-    else Out.println(e"$Bold(${Fg(Palette.white)}($message))")
+  //
+  // A failure is announced after its code's label, `[↯/f.31.3] no test suites were found…`, as
+  // fulminate labels an error's message (see `FumeBolts`).
+  def announce(message: Text, code: Optional[fulminate.Bolt] = Unset)(using Stdio, Environment)
+  :   Unit =
+
+    val line: Text = code.lay(message) { code => t"${code.label} $message" }
+
+    if pyrocosm.Invoker.detect.terse then Out.println(line)
+    else Out.println(e"$Bold(${Fg(Palette.white)}($line))")
 
   // The column which absorbs a table's spare width: elastic from its natural content width
   // with NO maximum, so `Flex.solve` hands it everything the rigid columns leave and the

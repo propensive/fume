@@ -37,6 +37,7 @@ import scala.unsafeExceptions.canThrowAny
 import soundness.*
 
 import denominative.dysasymptotics.linearSize
+import errorDiagnostics.emptyDiagnostics
 
 // What the daemon tells the MCP server: the implementation of its `Answers`, from the journal,
 // the runs directory and the live models, through `Views`. Registered with the server when
@@ -45,8 +46,7 @@ object Answering extends McpServer.Answers:
   def version: Text = Fume.version
 
   private def lookup(id: Text): Journal.Run =
-    val unknown: Text = t"no run is known as $id; `runs` lists them, and `last` names the newest"
-    Journal.find(id).or(throw Api.Error(unknown))
+    Journal.find(id).or(throw Api.Error(Api.Error.Reason.UnknownRun(id)))
 
   private def summaries(runs: List[Journal.Run]): List[Api.RunSummary] =
     def recur(todo: List[Journal.Run], done: List[Api.RunSummary]): List[Api.RunSummary] =
@@ -69,7 +69,7 @@ object Answering extends McpServer.Answers:
     val entries: List[Classpath.Entry.Directory | Classpath.Entry.Jar] =
       expanded.map(pyrocosm.Classpaths.entry(_))
 
-    if entries.nil then throw Api.Error(t"the classpath names no entries")
+    if entries.nil then throw Api.Error(Api.Error.Reason.NoEntries)
     else LocalClasspath(entries*)
 
   def runs(limit: Int): List[Api.RunSummary] = summaries(Journal.all(limit.max(1)))
@@ -105,11 +105,10 @@ object Answering extends McpServer.Answers:
   def captured(run: Text, suite: Text): Text =
     val found: Journal.Run = lookup(run)
     val id: Text = found.id
-    val unknown: Text = t"$suite is not a suite of run $id"
 
     val number: Int =
       found.record.scheduled.indexed.seek(_(0) == suite).let(_(1).n0 + 1)
-      . or(throw Api.Error(unknown))
+      . or(throw Api.Error(Api.Error.Reason.UnknownSuite(suite, id)))
 
     Runs.captured(found.id, number).or(t"")
 
@@ -139,7 +138,7 @@ object Answering extends McpServer.Answers:
         lookup(id).pipe(Views.summary)
 
       case _ =>
-        throw Api.Error(t"no test suites were found on the classpath")
+        throw Api.Error(Api.Error.Reason.NoSuites)
 
   def cancel(run: Text): Boolean = Headless.cancel(lookup(run).id)
 
