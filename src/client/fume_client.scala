@@ -355,7 +355,9 @@ private def dispatch()
 
       classpath match
         case _ if where.present && machine.absent =>
-          Render.announce(t"no machine named ${where.or(t"")} is on the swarm or declared")
+          Render.announce
+            ( t"no machine named ${where.or(t"")} is on the swarm or declared",
+              FumeBolts(FumeBolts.noMachine) )
 
           Render.announce
             ( t"  `fume swarm join <invitation> ${where.or(t"")}` admits this one to it" )
@@ -383,7 +385,9 @@ private def dispatch()
           val suites: List[Text] = selectSuites(classpath, chosen, selectionArgs)
 
           if discovered.nil || chosen.lay(false) { chosen => !discovered.has(chosen) } then
-            Render.announce(t"no test suites were found on the classpath")
+            Render.announce
+              ( t"no test suites were found on the classpath", FumeBolts(FumeBolts.noSuites) )
+
             NoSuites
           else if suites.nil then
             Render.announce(t"no suite on the classpath declares a test the selection admits")
@@ -671,7 +675,8 @@ private def dispatch()
                 import strategies.throwUnsafely
                 import fume.Figures.measurable
                 import pyrocosm.standardRendering.{tableStyle, gaugePalette}
-                scala.caps.unsafe.unsafeAssumePure(pyrocosm.TerminalFrontend(Occupancy.Fullscreen))
+                val occupancy = Tui.Occupancy.Fullscreen
+                scala.caps.unsafe.unsafeAssumePure(pyrocosm.TerminalFrontend(occupancy))
 
             // Fulfilled when the board has closed and the terminal is restored, so the
             // report below prints onto the ordinary screen.
@@ -826,9 +831,10 @@ private def dispatch()
                       next(false, Unset)
 
                     case EventStream.Outcome.Incompatible(theirs, ours) =>
-                      Render.announce:
-                        t"the classpath was built against an incompatible Soundness; " +
-                          t"using the legacy run"
+                      Render.announce
+                        ( t"the classpath was built against an incompatible Soundness; " +
+                            t"using the legacy run",
+                          FumeBolts(FumeBolts.incompatible, 1) )
 
                       Render.announce(t"  the suites' event schema is $theirs")
                       Render.announce(t"  fume's is                   $ours")
@@ -888,9 +894,10 @@ private def dispatch()
                   if !Array.same(data, probably.Streamer.fingerprint) then
                     state.incompatible = true
 
-                    Render.announce:
-                      t"$suite was built against an incompatible Soundness; " +
-                        t"its events cannot be read"
+                    Render.announce
+                      ( t"$suite was built against an incompatible Soundness; " +
+                          t"its events cannot be read",
+                        FumeBolts(FumeBolts.incompatible, 2) )
 
                     val ours: Text = probably.Streamer.fingerprint.serialize[Hex]
                     Render.announce(t"  the suite's event schema is ${data.serialize[Hex]}")
@@ -909,12 +916,18 @@ private def dispatch()
                   case Relay.completed => !state.incompatible && (exit == 0 || emptySelection)
 
                   case Relay.failed =>
-                    Render.announce(t"the worker's event consumer failed while $suite was running")
+                    Render.announce
+                      ( t"the worker's event consumer failed while $suite was running",
+                        FumeBolts(FumeBolts.consumer, 1) )
+
                     detail.cut(t"\n").each: (line: Text) => Render.announce(t"  $line")
                     false
 
                   case _ =>
-                    Render.announce(t"$suite cannot stream events, so the worker did not run it")
+                    Render.announce
+                      ( t"$suite cannot stream events, so the worker did not run it",
+                        FumeBolts(FumeBolts.unstreamable) )
+
                     false
 
                 state.writer.let(_.close())
@@ -975,7 +988,9 @@ private def dispatch()
                                   recur()
 
                                 case _ =>
-                                  Render.announce(t"the connection to ${machine.name} was lost")
+                                  Render.announce
+                                    ( t"the connection to ${machine.name} was lost",
+                                      FumeBolts(FumeBolts.remote, 1) )
 
                             case Channel.Frame.Message(Relay.Captured(suite, out, err)) =>
                               captures.append(Captures.Captured(suite, out, err))
@@ -986,13 +1001,17 @@ private def dispatch()
                               recur()
 
                             case Channel.Frame.Message(Relay.Rejected(reason)) =>
-                              Render.announce(t"${machine.name} rejected the run: $reason")
+                              Render.announce
+                                ( t"${machine.name} rejected the run: $reason",
+                                  FumeBolts(FumeBolts.remote, 2) )
 
                             case Channel.Frame.Message(Relay.Done) =>
                               ()
 
                             case Channel.Frame.Closed =>
-                              Render.announce(t"the connection to ${machine.name} was lost")
+                              Render.announce
+                                ( t"the connection to ${machine.name} was lost",
+                                  FumeBolts(FumeBolts.remote, 1) )
 
                             case _ =>
                               recur()
@@ -1014,14 +1033,24 @@ private def dispatch()
                         spin()
 
                       case Channel.Frame.Message(Relay.Rejected(reason)) =>
-                        Render.announce(t"${machine.name} rejected the run: $reason")
+                        Render.announce
+                          ( t"${machine.name} rejected the run: $reason",
+                            FumeBolts(FumeBolts.remote, 2) )
 
                       case _ =>
-                        Render.announce(t"the connection to ${machine.name} was lost")
+                        Render.announce
+                          ( t"the connection to ${machine.name} was lost",
+                            FumeBolts(FumeBolts.remote, 1) )
 
               outcome match
                 case scala.Left(reason) =>
-                  Render.announce(Peer.explain(reason))
+                  // Under fume's code for a connection which could not be made, carrying
+                  // Pyrocosm's for the reason, `↯/f.31.8/f.8.1.<reason>`.
+                  val code: fulminate.Bolt =
+                    import errorDiagnostics.emptyDiagnostics
+                    FumeBolts(FumeBolts.connection).carrying(Peer.Error(reason).bolt)
+
+                  Render.announce(Peer.explain(reason), code)
 
                   // A machine on the swarm which this one did not join holds no token for
                   // this one to present: runs go to the machine which invited.
@@ -1133,8 +1162,17 @@ private def dispatch()
                     file.write(trace)
                     file
 
-                  Render.announce:
-                    t"the event consumer failed while $suite was running; the suite was stopped"
+                  // A coded error the consumer threw is carried by the failure's own code.
+                  val code: fulminate.Bolt = error match
+                    case error: fulminate.Error =>
+                      FumeBolts(FumeBolts.consumer, 2).carrying(error.bolt)
+
+                    case _ =>
+                      FumeBolts(FumeBolts.consumer, 2)
+
+                  Render.announce
+                    ( t"the event consumer failed while $suite was running; the suite was stopped",
+                      code )
 
                   path.let: path =>
                     Render.announce(t"the stack trace is in ${path.encode}, and follows:")
@@ -1181,12 +1219,16 @@ private def dispatch()
 
             // Last, so that it is the line a CI log ends on.
             if timedOut()
-            then Render.announce(t"the run did not finish within ${Budget.show(deadline.or(0L))}")
+            then Render.announce
+              ( t"the run did not finish within ${Budget.show(deadline.or(0L))}",
+                FumeBolts(FumeBolts.timedOut) )
 
             if timedOut() then RunTimedOut else if failures == 0 then Exit.Ok else TestsFailed
 
         case _ =>
-          Render.announce(t"at least one --classpath must be specified")
+          Render.announce
+            ( t"at least one --classpath must be specified", FumeBolts(FumeBolts.noClasspath) )
+
           NoClasspath
 
   arguments match
@@ -1245,7 +1287,9 @@ private def dispatch()
             val suites: List[Text] = selectSuites(classpath, suite())
 
             if suites.nil then
-              Render.announce(t"no test suites were found on the classpath")
+              Render.announce
+                ( t"no test suites were found on the classpath", FumeBolts(FumeBolts.noSuites) )
+
               NoSuites
             else
               val selectionArgs: List[Text] =
@@ -1326,7 +1370,9 @@ private def dispatch()
                 if recur(suites, false) then TestsFailed else Exit.Ok
 
           case _ =>
-            Render.announce(t"at least one --classpath must be specified")
+            Render.announce
+              ( t"at least one --classpath must be specified", FumeBolts(FumeBolts.noClasspath) )
+
             NoClasspath
 
     // `fume watch …` — as `run`, but watch the OUTPUT jars named by `--classpath` (something
@@ -1429,8 +1475,9 @@ private def dispatch()
             Exit.Ok
 
           case _ =>
-            Render.announce:
-              t"this machine's identity could not be created; is `keytool` available?"
+            Render.announce
+              ( t"this machine's identity could not be created; is `keytool` available?",
+                FumeBolts(FumeBolts.identity) )
 
             Tool.RemoteFailed
 
@@ -1445,11 +1492,13 @@ private def dispatch()
 
         classpath match
           case classpath: LocalClasspath =>
-            Render.announce(t"'watch' is not yet implemented")
+            Render.announce(t"'watch' is not yet implemented", FumeBolts(FumeBolts.unimplemented))
             Tool.Unimplemented
 
           case _ =>
-            Render.announce(t"at least one --classpath must be specified")
+            Render.announce
+              ( t"at least one --classpath must be specified", FumeBolts(FumeBolts.noClasspath) )
+
             NoClasspath
 
     // A bare `fume` runs: the workspace's `.pyrocosm/fume/config.tel` supplies the
@@ -1710,7 +1759,7 @@ private def forkSuite
     job.exitStatus()
 
   . or:
-      Render.announce(t"could not invoke $suite")
+      Render.announce(t"could not invoke $suite", FumeBolts(FumeBolts.uninvocable))
       Exit.Fail(2)
 
 // Runs one suite the LEGACY way: in-process through `Suite#invoke` (the suite renders its

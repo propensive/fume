@@ -38,6 +38,7 @@ import soundness.*
 
 import codepages.utf8Codepage
 import denominative.dysasymptotics.linearAccess
+import errorDiagnostics.emptyDiagnostics
 import formatting.indentedJsonFormatting
 import internetAccess.online
 import logging.silentLogging
@@ -100,7 +101,7 @@ object McpServer extends Mcp.Server():
   def register(answers: Answers): Unit = this.answers = answers
 
   private def answering: Answers =
-    unsafely(answers.or(throw Api.Error(t"the fume daemon has not registered what it knows")))
+    unsafely(answers.or(throw Api.Error(Api.Error.Reason.Unregistered)))
 
   // The specification the macro derives encodes a list literal of two texts — the visibility
   // of an `@ui` resource, which no tool here declares, so the code never runs — whose type is

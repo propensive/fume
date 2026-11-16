@@ -19,7 +19,7 @@ object settings:
   // `org.scala-lang` artifact to it, since the pinned libraries name the release each was built
   // with. The fork stays TASTy-compatible across its patch releases, which is what every such
   // pin assumes.
-  val scalaVersion = "3.10.0-pro-1.0.6"
+  val scalaVersion = "3.10.0-pro-1.1.4"
 
   // This build's version. A release's version is declared once, by its tag: the release
   // (release.sh in propensive/.github) and a snapshot (snapshot.sh) both name it in
@@ -266,9 +266,14 @@ object fume extends Project:
   object api extends Component(), Publishing:
     def mvnDeps = Task(settings.soundnessDeps(deps.soundness(), deps.pyrocosm()))
 
+    // The match synesthesia's expansion of `serve` makes on a resource's `Optional[Text]` MIME
+    // type covers both cases, but Proscala 1.1.4's exhaustivity checker cannot see it, and an
+    // `@nowarn` does not reach into the expansion: the warning is silenced for code which comes
+    // from synesthesia's sources alone.
     override def scalacOptions =
       (settings.scalaOptions ++ settings.predef).filterNot: option =>
         option == "-Ycc-new" || option.contains("captureChecking") || option.contains("separationChecking")
+      . appended("-Wconf:msg=match may not be exhaustive&src=.*synesthesia.*:s")
 
   // All of fume's logic — subcommands, flags, dispatch and (later) the test-running machinery.
   // Published to Maven Central as `dev.propensive:fume-client`.

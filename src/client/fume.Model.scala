@@ -245,6 +245,7 @@ final class Model:
 
       case event@TestEvent.DetailCaptures(ref, _)       => detail(ref, event)
       case event@TestEvent.DetailCompare(ref, _, _, _)  => detail(ref, event)
+      case event@TestEvent.DetailDissection(ref, _, _, _) => detail(ref, event)
       case event@TestEvent.DetailMessage(ref, _)        => detail(ref, event)
       case event@TestEvent.DetailThrows(ref, _, _)      => detail(ref, event)
 
