@@ -155,6 +155,7 @@ object settings:
     mvn"dev.propensive:jacinta-time:$soundness",        // (with aviation's instants)
     mvn"dev.propensive:probably-cli:$soundness",        // Suite and its runner
     mvn"dev.propensive:probably-events:$soundness",     // the BinTEL event stream
+    mvn"dev.propensive:probably-instrument:$soundness", // recompiling with coverage probes
     mvn"dev.propensive:sedentary-core:$soundness",      // benchmarks and stress tests
     mvn"dev.propensive:stratiform-core:$soundness",     // .pyrocosm/fume/config.tel
     mvn"dev.propensive:stratiform-time:$soundness",     // run.tel's timestamps

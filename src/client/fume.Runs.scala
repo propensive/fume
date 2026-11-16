@@ -166,6 +166,20 @@ object Runs:
 
         . or(false)
 
+  // Stores what a run recorded of which tests reach which code (see `Coverage.serialize`), and
+  // answers where.
+  def cover(id: Text, content: Text): Optional[Text] =
+    file(id, t"coverage.tsv").let: file =>
+      safely:
+        file.getParentFile.nn.mkdirs()
+        jnf.Files.writeString(file.toPath, content.s)
+        file.getPath.nn.tt
+
+  // What `cover` stored for a run, if it stored anything.
+  def coverage(id: Text): Optional[Text] =
+    file(id, t"coverage.tsv").let: file =>
+      if !file.exists then Unset else safely(jnf.Files.readString(file.toPath).nn.tt)
+
   // Writes a suite's frames as they arrive, each with the 4-byte big-endian length the wire
   // gives it, so the file is the stream the suite produced, fingerprint first.
   final class Writer(stream: ji.OutputStream):

@@ -23,6 +23,7 @@ fume watch -c out.jar                   # rerun whenever the jar changes
 fume serve                              # serve the dashboard of runs, in the background
 fume serve stop                         # stop serving it
 fume mcp                                # serve the MCP server agents query about runs until Ctrl+C
+fume run -c out.jar --coverage my.Class # record which tests reach that class's code
 fume run -c out.jar --machine laptop    # run the selection on another machine's fume
 fume listen                             # accept runs sent from other machines until Ctrl+C
 fume swarm invite                       # admit another machine to this one's swarm
@@ -109,6 +110,50 @@ own (the beneficence plugin registers every `object` extending `Suite`) is run o
 term names its tests, rather than through the suite invoking it. A run with no selection terms
 invokes every suite, as it always did, and `fume run` says when it reaches fewer suites than
 the classpath has.
+
+## Coverage
+
+`--coverage` names code whose coverage a run records: a class (`mypackage.MyClass`), the classes
+of a package (`mypackage.*`), or a source file (`src/core/mypackage.MyClass.scala`, or as much of
+the end of its path as tells it apart). It may be repeated, and goes with the usual selection:
+
+```sh
+fume run -c out.jar --coverage fume.Selection
+fume run -c out.jar --coverage src/client/fume.Selection.scala json/*
+```
+
+Nothing is compiled specially beforehand. Fume finds the TASTy the classpath holds for that
+code and recompiles it — the same compiler, from the trees the compiler itself wrote — with a
+probe at every method's entry and at every branch: each side of an `if`, each `case`, each
+`catch`, a loop's body, and the right operand of `&&` and `||`. The recompiled classes go ahead
+of the originals on the run's classpath, in a cache (`$XDG_CACHE_HOME/fume/coverage`) which is
+reused for as long as the code, the compiler and the options are the same; a probe is a store
+into an array the method fetches once, so a covered run is about as fast as any other.
+
+What a run records is **which test reached which probe**. Probably credits a test with whatever
+its own thread does while its body runs, and with whatever the threads it starts do, and those
+they start. After the report of how each test fared comes, for each source file, how many of its
+probes the tests reached, the places none of them did, and the tests which reached the most; the
+whole record — every probe, and the probes each test reached — is kept beside the run, as
+`coverage.tsv` in its directory.
+
+Some things follow from how it is done:
+
+ - the classpath's Probably must be recent enough to have `probably.Coverage` (Soundness 0.76.0),
+   and the code must have been compiled by the very compiler fume itself is built with: a
+   recompilation has to link against classes which were not recompiled, so fume refuses
+   another compiler's TASTy rather than guess;
+ - the recompilation needs the options which shaped the original's generated code. Those
+   Soundness compiles with are built in; anything further goes in `coverage-options` (or
+   `--coverage-options`), space-separated — `-Yno-predef -Yimports:java.lang,proscenium`, say;
+ - an `inline` method's body is covered only where it is written, not where it is expanded: a
+   call from code which is not itself covered runs an expansion with no probes in it;
+ - what a thread reaches when no test owns it — a pool's thread, started before the test which
+   uses it, or one which outlives its test — is counted for the file, as reached "only outside
+   any test", and credited to no test, as is whatever a suite does between its tests;
+ - a class's initializer is credited to whichever test first causes it to run;
+ - coverage is read from the suites' own classloader, so it is not recorded with `--fork` or
+   `--machine`.
 
 ## Configuration files
 
