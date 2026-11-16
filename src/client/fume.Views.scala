@@ -192,6 +192,21 @@ object Views:
         case stack: TestEvent.Trace => trace(stack)
         case _                      => Unset
 
+      val dissected: Optional[TestEvent.DetailDissection] =
+        events.sweep { case dissected: TestEvent.DetailDissection => dissected }.head
+
+      val predicate: Optional[Text] = dissected match
+        case dissected: TestEvent.DetailDissection => dissected.source
+        case _                                     => Unset
+
+      val dissection: List[Api.Dissection] = dissected match
+        case dissected: TestEvent.DetailDissection =>
+          dissected.rows.map: row =>
+            Api.Dissection(row.depth, row.code, row.start, row.end, row.value, row.kind)
+
+        case _ =>
+          Nil
+
       val expected: Optional[Text] = compare match
         case compare: TestEvent.DetailCompare => compare.expected
         case _                                => Unset
@@ -209,6 +224,8 @@ object Views:
           expected,
           found,
           rows,
+          predicate,
+          dissection,
           rerun(run.record, entry.scope, entry.ref) )
 
     def fatal(error: TestEvent.Trace, active: List[TestEvent.Ref]): Api.Fatal =
