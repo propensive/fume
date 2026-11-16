@@ -181,10 +181,10 @@ object Charts:
 
       Curve(entry.ref.name, points)
 
-  def benchSeries(data: BarData): List[Series[Text, Estimate]] =
+  def benchSeries(data: BarData): List[Series[Text, Chart.Estimate]] =
     data.slices.map: slice =>
       val estimates = slice.bars.map: bar =>
-        (bar.category, Estimate(bar.mean, bar.lower, bar.upper))
+        (bar.category, Chart.Estimate(bar.mean, bar.lower, bar.upper))
 
       Series(slice.name, estimates.to[Sequence])
 
@@ -201,7 +201,7 @@ object Charts:
     t"https://fonts.googleapis.com/css2?family=Sono:wght,MONO@200..800,0..1&display=swap"
 
   private given (Typeface of "Sono") is Typesettable in Web =
-    Web.imported(Link(sonoStylesheet), Coverage.Unknown)
+    Web.imported(Link(sonoStylesheet), phoenicia.Coverage.Unknown)
 
   private val sono: Font in Web =
     unsafely(Web.font(Typeface["Sono"].face.varying(Variation.Axis(t"MONO"), 0.0)))
@@ -226,16 +226,16 @@ object Charts:
       markerRadius = 2.1, smoothing = smoothing, barGap = barGap ):
 
     override def tickLabel(at: Chart.Anchoring, text: Text, axis: Chart.Axis, color: Color in Srgb)
-    :   List[Figure] =
+    :   List[Svg.Figure] =
 
       axis match
         case Chart.Axis.Ordinate =>
           val position = Point(at.point.x, (at.point.y - fontSize*0.15).toFloat)
-          List(lettering(position, text, at.anchor, Lettering.Baseline.Alphabetic, color))
+          List(lettering(position, text, at.anchor, Svg.Lettering.Baseline.Alphabetic, color))
 
         case Chart.Axis.Abscissa =>
           val position = Point((at.point.x + fontSize*0.3).toFloat, at.point.y)
-          List(lettering(position, text, Lettering.Anchor.Start, at.baseline, color))
+          List(lettering(position, text, Svg.Lettering.Anchor.Start, at.baseline, color))
 
   // A chart is as wide as its data needs and no wider: a bar of a single series is thirty
   // pixels wide, a bar within a group twelve, and the width follows from that, the gap between
@@ -311,7 +311,7 @@ object Charts:
   private def show(svg: Svg): Text = svg.in[Xml].show
 
   private def partIds(drawing: Chart.Drawing): List[Text] =
-    drawing.parts.to[List].map: (pair: (Svg.Id, Figure)) => pair(0).text
+    drawing.parts.to[List].map: (pair: (Svg.Id, Svg.Figure)) => pair(0).text
 
   // Applies a chart's revisions to its figure: each changed part with the whole drawing
   // alongside, for a tab yet to show it — or the whole drawing when the axes moved, or when a
@@ -340,7 +340,7 @@ object Charts:
   private enum Held:
     case Bench
       ( figure: pyrocosm.Figure,
-        chart:  Chart[List[Series[Text, Estimate]], Bars, Bars.Fit, Bars.Style],
+        chart:  Chart[List[Series[Text, Chart.Estimate]], Bars, Bars.Fit, Bars.Style],
         data:   BarData )
 
     case Stress

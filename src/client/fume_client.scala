@@ -671,7 +671,8 @@ private def dispatch()
                 import strategies.throwUnsafely
                 import fume.Figures.measurable
                 import pyrocosm.standardRendering.{tableStyle, gaugePalette}
-                scala.caps.unsafe.unsafeAssumePure(pyrocosm.TerminalFrontend(Occupancy.Fullscreen))
+                val occupancy = Tui.Occupancy.Fullscreen
+                scala.caps.unsafe.unsafeAssumePure(pyrocosm.TerminalFrontend(occupancy))
 
             // Fulfilled when the board has closed and the terminal is restored, so the
             // report below prints onto the ordinary screen.

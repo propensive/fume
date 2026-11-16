@@ -158,10 +158,10 @@ object Render:
   :   Chain[Teletype] =
 
     if terse then
-      given style: TableStyle = tableStyles.minimalTableStyle
+      given style: Table.Style = tableStyles.minimalTableStyle
       tabulation.grid(width).render
     else
-      given style: TableStyle = tableStyles.thickTableStyle
+      given style: Table.Style = tableStyles.thickTableStyle
       tabulation.grid(width).render
 
   // The winner's background: subdued towards the terminal background so the row's own
@@ -482,6 +482,69 @@ object Render:
       gridLines(Scaffold[TestEvent.CompareRow](defs*).tabulate(rows), width, terse)
       . each(Out.println(_))
 
+  // A dissected predicate, as a table: one row for each subexpression which was evaluated, the
+  // whole predicate first. A predicate written on one line is shown as it was written, each
+  // subexpression set under its own place in the line; one written over several lines is
+  // indented by depth instead.
+  private def renderDissection
+    ( source:       Text,
+      rows:         List[TestEvent.DissectRow],
+      reproducible: Boolean,
+      width:        Int,
+      terse:        Boolean )
+    ( using Stdio )
+  :   Unit =
+
+    val origin: Int = rows.head.let(_.start).or(0)
+
+    // The expression column may take half the width. A predicate which fits there on one line
+    // has each subexpression set under its place in it; a longer one, or one written over
+    // several lines, is indented by depth instead, and cut short where it would wrap.
+    val budget: Int = (width/2).max(24)
+
+    val aligned: Boolean =
+      !rows.exists(_.code.contains(t"\n")) &&
+        rows.all: row => (row.start - origin).max(0) + row.code.length <= budget
+
+    def expression(row: TestEvent.DissectRow): Text =
+      if aligned then t"${t" "*(row.start - origin).max(0)}${row.code}" else
+        val text: Text = t"${t"  "*row.depth}${row.code.sub(t"\n", t" ")}"
+        if text.length <= budget then text else t"${text.keep(budget - 1)}…"
+
+    // The column is exactly as wide as its widest expression, so none is ever wrapped.
+    val widest: Int = rows.map(expression(_).length).fold(10)(_.max(_))
+
+    // The whole predicate's row, and one which threw, are the failure; the rest are evidence.
+    def failing(row: TestEvent.DissectRow): Boolean = row.depth == 0 || row.kind == t"thrown"
+
+    val defs =
+      List
+        ( escritoire.Column[TestEvent.DissectRow, Teletype, Teletype]
+            ( if terse then e"Expression" else e"$Bold(Expression)",
+              sizing = columnar.Fixed(widest) ):
+            row =>
+              if terse then e"${expression(row)}"
+              else e"${Fg(Palette.foreground)}(${expression(row)})",
+
+          escritoire.Column[TestEvent.DissectRow, Teletype, Teletype]
+            ( if terse then e"Value" else e"$Bold(Value)",
+              sizing = if terse then columnar.Paragraph else Stretch ):
+            row =>
+              val value: Text = row.value.sub(t"\n", t" ")
+
+              if terse then e"$value"
+              else if failing(row) then e"${Fg(Palette.fail)}($value)"
+              else e"$value" )
+
+    gridLines(Scaffold[TestEvent.DissectRow](defs*).tabulate(rows), width, terse)
+    . each(Out.println(_))
+
+    if !reproducible then
+      val warning: Text =
+        t"The predicate did not fail when it was evaluated again: it is not deterministic."
+
+      if terse then Out.println(t"  $warning") else Out.println(e"${Fg(Palette.fail)}($warning)")
+
   private def renderFailures(document: Document, width: Int, terse: Boolean, github: Boolean)
     ( using Stdio )
   :   Unit =
@@ -524,6 +587,9 @@ object Render:
 
           case TestEvent.DetailCompare(_, expected, found, rows) =>
             renderCompare(expected, found, rows, width, terse)
+
+          case TestEvent.DetailDissection(_, source, rows, reproducible) =>
+            renderDissection(source, rows, reproducible, width, terse)
 
           case TestEvent.DetailCaptures(_, values) =>
             val pairs: List[(Text, Text)] = values.to[List]
@@ -594,6 +660,10 @@ object Render:
       case TestEvent.DetailCompare(_, expected, found, _) =>
         val found2 = found.sub(t"\n", t" ")
         Figures.abbreviate(t"Expected: ${expected.sub(t"\n", t" ")}; observed: $found2")
+
+      case TestEvent.DetailDissection(_, source, rows, _) =>
+        rows.head.lay(Figures.abbreviate(source)): row =>
+          Figures.abbreviate(t"${row.code.sub(t"\n", t" ")} was ${row.value.sub(t"\n", t" ")}")
 
       case TestEvent.DetailMessage(_, message) =>
         Figures.abbreviate(message)
