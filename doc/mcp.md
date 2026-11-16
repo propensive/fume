@@ -859,54 +859,6 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
       "additionalProperties": false,
       "type": "object"
     },
-    "Completion": {
-      "properties": {
-        "coordinates": {
-          "description": "the cell's coordinates; empty for a test without axes",
-          "items": {
-            "properties": {
-              "axis": {
-                "description": "the axis's label",
-                "optional": false,
-                "type": "string"
-              },
-              "value": {
-                "description": "the axis's value for this cell, as text",
-                "optional": false,
-                "type": "string"
-              }
-            },
-            "optional": false,
-            "required": [
-              "axis",
-              "value"
-            ],
-            "additionalProperties": false,
-            "type": "object"
-          },
-          "optional": false,
-          "type": "array"
-        },
-        "outcome": {
-          "description": "`pass`, `fail`, `throws`, `check-throws`, `aspire-pass` or `aspire-fail`",
-          "optional": false,
-          "type": "string"
-        },
-        "nanoseconds": {
-          "description": "how long the cell took, in nanoseconds",
-          "optional": false,
-          "type": "integer"
-        }
-      },
-      "optional": false,
-      "required": [
-        "coordinates",
-        "outcome",
-        "nanoseconds"
-      ],
-      "additionalProperties": false,
-      "type": "object"
-    },
     "SuiteSummary": {
       "properties": {
         "captured": {
@@ -1353,6 +1305,11 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
           "description": "every failing test, with its diagnostics",
           "items": {
             "properties": {
+              "predicate": {
+                "description": "the predicate which failed, as written, when it was dissected",
+                "optional": true,
+                "type": "string"
+              },
               "comparison": {
                 "description": "the structural comparison, row by row, when the test compared",
                 "items": {
@@ -1503,6 +1460,56 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
                 "optional": true,
                 "type": "string"
               },
+              "dissection": {
+                "description": "the predicate's intermediate values on the value which failed, the whole first",
+                "items": {
+                  "properties": {
+                    "code": {
+                      "description": "the subexpression, as written",
+                      "optional": false,
+                      "type": "string"
+                    },
+                    "kind": {
+                      "description": "`value`, or `thrown` for a predicate which threw",
+                      "optional": false,
+                      "type": "string"
+                    },
+                    "start": {
+                      "description": "where the subexpression starts in the predicate's source",
+                      "optional": false,
+                      "type": "integer"
+                    },
+                    "value": {
+                      "description": "the subexpression's value, rendered; or the exception, for `thrown`",
+                      "optional": false,
+                      "type": "string"
+                    },
+                    "end": {
+                      "description": "where the subexpression ends in the predicate's source",
+                      "optional": false,
+                      "type": "integer"
+                    },
+                    "depth": {
+                      "description": "the row's depth in the tree of the predicate's subexpressions",
+                      "optional": false,
+                      "type": "integer"
+                    }
+                  },
+                  "optional": false,
+                  "required": [
+                    "depth",
+                    "code",
+                    "start",
+                    "end",
+                    "value",
+                    "kind"
+                  ],
+                  "additionalProperties": false,
+                  "type": "object"
+                },
+                "optional": false,
+                "type": "array"
+              },
               "trace": {
                 "description": "the stack trace, when the test threw",
                 "properties": {
@@ -1590,6 +1597,7 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
               "status",
               "captures",
               "comparison",
+              "dissection",
               "rerun"
             ],
             "additionalProperties": false,
@@ -2457,6 +2465,11 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
     },
     "Failure": {
       "properties": {
+        "predicate": {
+          "description": "the predicate which failed, as written, when it was dissected",
+          "optional": true,
+          "type": "string"
+        },
         "comparison": {
           "description": "the structural comparison, row by row, when the test compared",
           "items": {
@@ -2607,6 +2620,56 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
           "optional": true,
           "type": "string"
         },
+        "dissection": {
+          "description": "the predicate's intermediate values on the value which failed, the whole first",
+          "items": {
+            "properties": {
+              "code": {
+                "description": "the subexpression, as written",
+                "optional": false,
+                "type": "string"
+              },
+              "kind": {
+                "description": "`value`, or `thrown` for a predicate which threw",
+                "optional": false,
+                "type": "string"
+              },
+              "start": {
+                "description": "where the subexpression starts in the predicate's source",
+                "optional": false,
+                "type": "integer"
+              },
+              "value": {
+                "description": "the subexpression's value, rendered; or the exception, for `thrown`",
+                "optional": false,
+                "type": "string"
+              },
+              "end": {
+                "description": "where the subexpression ends in the predicate's source",
+                "optional": false,
+                "type": "integer"
+              },
+              "depth": {
+                "description": "the row's depth in the tree of the predicate's subexpressions",
+                "optional": false,
+                "type": "integer"
+              }
+            },
+            "optional": false,
+            "required": [
+              "depth",
+              "code",
+              "start",
+              "end",
+              "value",
+              "kind"
+            ],
+            "additionalProperties": false,
+            "type": "object"
+          },
+          "optional": false,
+          "type": "array"
+        },
         "trace": {
           "description": "the stack trace, when the test threw",
           "properties": {
@@ -2694,6 +2757,7 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
         "status",
         "captures",
         "comparison",
+        "dissection",
         "rerun"
       ],
       "additionalProperties": false,
@@ -3120,6 +3184,99 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
         "scheduled",
         "suites",
         "results"
+      ],
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "Completion": {
+      "properties": {
+        "coordinates": {
+          "description": "the cell's coordinates; empty for a test without axes",
+          "items": {
+            "properties": {
+              "axis": {
+                "description": "the axis's label",
+                "optional": false,
+                "type": "string"
+              },
+              "value": {
+                "description": "the axis's value for this cell, as text",
+                "optional": false,
+                "type": "string"
+              }
+            },
+            "optional": false,
+            "required": [
+              "axis",
+              "value"
+            ],
+            "additionalProperties": false,
+            "type": "object"
+          },
+          "optional": false,
+          "type": "array"
+        },
+        "outcome": {
+          "description": "`pass`, `fail`, `throws`, `check-throws`, `aspire-pass` or `aspire-fail`",
+          "optional": false,
+          "type": "string"
+        },
+        "nanoseconds": {
+          "description": "how long the cell took, in nanoseconds",
+          "optional": false,
+          "type": "integer"
+        }
+      },
+      "optional": false,
+      "required": [
+        "coordinates",
+        "outcome",
+        "nanoseconds"
+      ],
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "Dissection": {
+      "properties": {
+        "code": {
+          "description": "the subexpression, as written",
+          "optional": false,
+          "type": "string"
+        },
+        "kind": {
+          "description": "`value`, or `thrown` for a predicate which threw",
+          "optional": false,
+          "type": "string"
+        },
+        "start": {
+          "description": "where the subexpression starts in the predicate's source",
+          "optional": false,
+          "type": "integer"
+        },
+        "value": {
+          "description": "the subexpression's value, rendered; or the exception, for `thrown`",
+          "optional": false,
+          "type": "string"
+        },
+        "end": {
+          "description": "where the subexpression ends in the predicate's source",
+          "optional": false,
+          "type": "integer"
+        },
+        "depth": {
+          "description": "the row's depth in the tree of the predicate's subexpressions",
+          "optional": false,
+          "type": "integer"
+        }
+      },
+      "optional": false,
+      "required": [
+        "depth",
+        "code",
+        "start",
+        "end",
+        "value",
+        "kind"
       ],
       "additionalProperties": false,
       "type": "object"
