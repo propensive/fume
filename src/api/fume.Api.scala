@@ -68,8 +68,27 @@ object Api:
       t"only by running it"
 
   // What a tool reports when it cannot answer: an unknown run or suite, or results it does
-  // not have. The message is the whole explanation.
-  case class Error(message: Text) extends Exception(message.s)
+  // not have. The message is the whole explanation, after its code, `↯/f.29.1.<reason>`.
+  object Error:
+    enum Reason(val number: Int):
+      case Unregistered                          extends Reason(1)
+      case UnknownRun(id: Text)                  extends Reason(2)
+      case NoEntries                             extends Reason(3)
+      case UnknownSuite(suite: Text, run: Text)  extends Reason(4)
+      case NoSuites                              extends Reason(5)
+
+    given communicable: Reason is Communicable =
+      case Reason.Unregistered => m"the fume daemon has not registered what it knows"
+
+      case Reason.UnknownRun(id) =>
+        m"no run is known as $id; `runs` lists them, and `last` names the newest"
+
+      case Reason.NoEntries                => m"the classpath names no entries"
+      case Reason.UnknownSuite(suite, run) => m"$suite is not a suite of run $run"
+      case Reason.NoSuites                 => m"no test suites were found on the classpath"
+
+  case class Error(reason: Error.Reason)(using Diagnostics) extends fulminate.Error(m"$reason"):
+    override def bolt: fulminate.Bolt = pyrocosm.Bolts(FumeBolts.api, 1, reason.number)
 
   case class Totals
     ( @memo(t"tests which passed, including measurements which completed") passed: Int,
