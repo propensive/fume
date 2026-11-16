@@ -20,7 +20,3 @@ jobs:
       publish_local: fume.__
       assembly:      fume.launcher.assembly
       test_assembly: fume.test.assembly
-      # The suites run under plain `java`, through fume's own `runTests`, rather than through
-      # the fume pinned in etc/tools: a fume built against an older Soundness than this one
-      # cannot read the suites' test events, whose schema changed in Soundness 0.76.0.
-      test_main:     fume.runTests
