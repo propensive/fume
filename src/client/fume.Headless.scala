@@ -102,7 +102,10 @@ object Headless:
     val loader: Classloader = classpath.classloader(Classloader.Delegation.Preferential)
     val shared: Optional[Classloader] = if EventStream.reentrant(loader) then loader else Unset
     val workerTerms: List[Text] = if EventStream.queued(loader) then List(t"--workers=1") else Nil
-    val args: List[Text] = workerTerms + terms
+    val diagnosisTerms: List[Text] =
+      if EventStream.diagnostic(loader) then List(EventStream.diagnosis) else Nil
+
+    val args: List[Text] = workerTerms + diagnosisTerms + terms
 
     val numbers: Map[Text, Int] =
       suites.indexed.map { (suite, ordinal) => suite -> (ordinal.n0 + 1) }.to[Map]

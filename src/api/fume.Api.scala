@@ -270,6 +270,20 @@ object Api:
       @memo(t"how they differ, or the structure's type name for a collation")
       difference: Optional[Text] )
 
+  case class Dissection
+    ( @memo(t"the row's depth in the tree of the predicate's subexpressions")
+      depth: Int,
+      @memo(t"the subexpression, as written")
+      code: Text,
+      @memo(t"where the subexpression starts in the predicate's source")
+      start: Int,
+      @memo(t"where the subexpression ends in the predicate's source")
+      end: Int,
+      @memo(t"the subexpression's value, rendered; or the exception, for `thrown`")
+      value: Text,
+      @memo(t"`value`, or `thrown` for a predicate which threw")
+      kind: Text )
+
   case class Failure
     ( @memo(t"the failing test")
       ref: TestRef,
@@ -287,6 +301,10 @@ object Api:
       found: Optional[Text],
       @memo(t"the structural comparison, row by row, when the test compared")
       comparison: List[Comparison],
+      @memo(t"the predicate which failed, as written, when it was dissected")
+      predicate: Optional[Text],
+      @memo(t"the predicate's intermediate values on the value which failed, the whole first")
+      dissection: List[Dissection],
       @memo(t"the command which reruns exactly this test")
       rerun: Text )
 
@@ -385,6 +403,7 @@ object Api:
   given traceEncodable: Trace is Json.Encodable = Json.EncodableDerivation.derived
   given captureEncodable: Capture is Json.Encodable = Json.EncodableDerivation.derived
   given comparisonEncodable: Comparison is Json.Encodable = Json.EncodableDerivation.derived
+  given dissectionEncodable: Dissection is Json.Encodable = Json.EncodableDerivation.derived
   given failureEncodable: Failure is Json.Encodable = Json.EncodableDerivation.derived
   given fatalEncodable: Fatal is Json.Encodable = Json.EncodableDerivation.derived
   given failuresEncodable: Failures is Json.Encodable = Json.EncodableDerivation.derived
@@ -413,6 +432,7 @@ object Api:
   given traceSchematic: Trace is Schematic over JsonSchema = JsonSchema.derived
   given captureSchematic: Capture is Schematic over JsonSchema = JsonSchema.derived
   given comparisonSchematic: Comparison is Schematic over JsonSchema = JsonSchema.derived
+  given dissectionSchematic: Dissection is Schematic over JsonSchema = JsonSchema.derived
   given failureSchematic: Failure is Schematic over JsonSchema = JsonSchema.derived
   given fatalSchematic: Fatal is Schematic over JsonSchema = JsonSchema.derived
   given failuresSchematic: Failures is Schematic over JsonSchema = JsonSchema.derived
@@ -448,6 +468,7 @@ object Api:
           t"Trace"         -> of[Trace],
           t"Capture"       -> of[Capture],
           t"Comparison"    -> of[Comparison],
+          t"Dissection"    -> of[Dissection],
           t"Failure"       -> of[Failure],
           t"Fatal"         -> of[Fatal],
           t"Failures"      -> of[Failures],

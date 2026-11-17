@@ -883,6 +883,50 @@ object Tests extends Suite(m"Fume tests"):
             ( List(t"heading", t"figure", t"table", t"heading", t"figure", t"table"),
               List(t"heading", t"table", t"heading", t"other", t"chart", t"table") )
 
+      // A failure as the board receives it: the details recorded for one failed test.
+      def failed(details: TestEvent*): Doc.Document =
+        Doc.Document(Nil, Doc.Totals.zero, Nil, List((testA1, details.to(List))), Nil, false)
+
+      val dissected: TestEvent.DetailDissection =
+        TestEvent.DetailDissection
+          ( testA1,
+            t"x*2 < 9 && x > 4",
+            List
+              ( TestEvent.DissectRow(0, t"x*2 < 9 && x > 4", 0, 16, t"false", t"value"),
+                TestEvent.DissectRow(1, t"x*2 < 9", 0, 7, t"true", t"value"),
+                TestEvent.DissectRow(1, t"x > 4", 11, 16, t"false", t"value") ),
+            true )
+
+      val contrasted: TestEvent.DetailCompare =
+        TestEvent.DetailCompare
+          ( testA1,
+            t"Courtier(Hamlet,30)",
+            t"Courtier(Hamlet,31)",
+            List
+              ( TestEvent.CompareRow(0, t"", t"different", t"Courtier(Hamlet,30)",
+                  t"Courtier(Hamlet,31)", t""),
+                TestEvent.CompareRow(1, t"age", t"different", t"30", t"31", t"") ) )
+
+      def sizes(blocks: List[Block]): List[Int] = blocks.bind:
+        case Block.Table(_, rows, _) => List(rows.size)
+        case _                       => Nil
+
+      test(m"a failure's dissection and contrast are tabulated on the board"):
+        val blocks: List[Block] = Blocks.failures(failed(dissected, contrasted))
+        (kinds(blocks), sizes(blocks))
+
+      . assert(_ == (List(t"other", t"table", t"table"), List(3, 2)))
+
+      test(m"a dissection which did not fail again carries a warning"):
+        kinds(Blocks.failures(failed(dissected.copy(reproducible = false))))
+
+      . assert(_ == List(t"other", t"table", t"other"))
+
+      test(m"a failure with nothing to tabulate adds nothing to the board"):
+        Blocks.failures(failed(TestEvent.DetailMessage(testA1, t"no"))).size
+
+      . assert(_ == 0)
+
     suite(m"Progress"):
       def observed(suite: Text, tests: Int, millis: Long): RunRecord.Suite =
         RunRecord.Suite
@@ -1706,7 +1750,7 @@ object Tests extends Suite(m"Fume tests"):
           val names: List[Text] = schema.properties.as[Map[Text, Json]].keys.to[List]
           (names.size, schema.properties.Totals.properties.passed.description.as[Text])
 
-      . assert(_ == (27, t"tests which passed, including measurements which completed"))
+      . assert(_ == (28, t"tests which passed, including measurements which completed"))
 
       test(m"the documentation carries the schema the server serves"):
         import formatting.indentedJsonFormatting

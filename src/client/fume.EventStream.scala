@@ -108,6 +108,18 @@ object EventStream:
   def queued(loader: Classloader): Boolean =
     safely(loader.on(t"probably.Streamer$$").let(_.getMethod("queued"))).present
 
+  // Whether the suites `loader` sees can be asked to diagnose their failed assertions
+  // (Probably's `Streamer.diagnostic`): with `--diagnose=<presentations>` a failed predicate is
+  // read back from the suite's TASTy and evaluated again on the value which failed, each of its
+  // intermediate values recorded. To an older Probably the term is a name glob admitting
+  // nothing, so it is only passed when advertised.
+  def diagnostic(loader: Classloader): Boolean =
+    safely(loader.on(t"probably.Streamer$$").let(_.getMethod("diagnostic"))).present
+
+  // The presentations fume asks a suite for: every intermediate value of a failed predicate,
+  // the two sides of a failed equality contrasted, and each value as a programmer would write it.
+  val diagnosis: Text = t"--diagnose=dissect,contrast,inspect"
+
   // A consumer of a suite's frames: shown the first (fingerprint) frame, which it may reject,
   // and then every event frame. The decoding sink is the local run's; a worker relaying a run
   // to another fume forwards every frame, the fingerprint included, and rejects nothing, so

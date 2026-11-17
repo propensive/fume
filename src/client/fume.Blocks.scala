@@ -367,6 +367,80 @@ object Blocks:
 
     pyrocosm.Activity(t"progress", Inline.text(caption), status, state = List(verdict))
 
+  // The details of the failed tests, as tables: for each, its dissected predicate — one row
+  // for every subexpression which was evaluated, the whole predicate first, each set under its
+  // place in the line when the predicate was written on one — and, for an equality, the
+  // contrast of its two sides. A failure which recorded neither has nothing to tabulate.
+  def failures(document: Document): List[Block] =
+    val space: Text = t"\u00a0"
+
+    def dissection(rows: List[TestEvent.DissectRow]): Block =
+      val origin: Int = rows.head.let(_.start).or(0)
+
+      // Only a predicate short enough not to wrap is laid out as it was written.
+      val aligned: Boolean =
+        !rows.exists(_.code.contains(t"\n")) &&
+          rows.all: row => (row.start - origin).max(0) + row.code.length <= 60
+
+      val rows0: List[Block.Row] = rows.map: (row: TestEvent.DissectRow) =>
+        val indent: Text =
+          if aligned then space*(row.start - origin).max(0) else space*(row.depth*2)
+
+        val failing: Boolean = row.depth == 0 || row.kind == t"thrown"
+        val expression: Text = t"$indent${row.code.sub(t"\n", t" ")}"
+
+        Block.Row
+          ( List(Block.Cell(Inline.text(expression)), Block.Cell(Inline.text(row.value))),
+            if failing then Tone.Failure else Unset )
+
+      Block.Table
+        ( List
+            ( Block.Column(Inline.text(t"Expression"), sizing = Block.Sizing.Rigid),
+              Block.Column(Inline.text(t"Value"), sizing = Block.Sizing.Stretch) ),
+          rows0 )
+
+    def comparison(rows: List[TestEvent.CompareRow]): Block =
+      val rows0: List[Block.Row] = rows.map: (row: TestEvent.CompareRow) =>
+        val label: Text = if row.label == t"" then t"•" else row.label
+
+        Block.Row
+          ( List
+              ( Block.Cell(Inline.text(t"${space*(row.depth*2)}$label")),
+                Block.Cell(Inline.text(row.left)),
+                Block.Cell(Inline.text(row.right)) ),
+            if row.kind == t"different" then Tone.Failure else Unset )
+
+      Block.Table
+        ( List
+            ( Block.Column(Nil, sizing = Block.Sizing.Rigid),
+              Block.Column(Inline.text(t"Expected"), sizing = Block.Sizing.Stretch),
+              Block.Column(Inline.text(t"Observed"), sizing = Block.Sizing.Paragraph) ),
+          rows0 )
+
+    def tables(details: List[TestEvent]): List[Block] = details.bind: (detail: TestEvent) =>
+      detail match
+        case TestEvent.DetailDissection(_, _, rows, reproducible) =>
+          val warning: List[Block] =
+            if reproducible then Nil else
+              List:
+                Block.Paragraph:
+                  List:
+                    toned
+                      ( Tone.Failure,
+                        t"The predicate did not fail when it was evaluated again." )
+
+          dissection(rows) :: warning
+
+        case TestEvent.DetailCompare(_, _, _, rows) =>
+          if rows.size > 1 then List(comparison(rows)) else Nil
+
+        case _ =>
+          Nil
+
+    document.failures.bind: (failure: (TestEvent.Ref, List[TestEvent])) =>
+      val blocks: List[Block] = tables(failure(1))
+      if blocks.nil then Nil else Block.Paragraph(caption(failure(0))) :: blocks
+
   // The board: the live table of checks, then every measurement group, with the dashboard's
   // charts among them when given.
   def board
@@ -376,11 +450,12 @@ object Blocks:
       memo:     RowMemo                       = RowMemo() )
   :   List[Block] =
 
-    live(state, memo).lay(Nil: List[Block])(List(_)) + document.groups.map(group(_, figures))
+    live(state, memo).lay(Nil: List[Block])(List(_)) + document.groups.map(group(_, figures)) +
+      failures(document)
 
   def board(state: Model.State): List[Block] = board(state, Documenting.document(state))
 
   // The finished report's blocks: the results table and the groups.
   def document(document: Document, figures: Ledger[Text, pyrocosm.Figure] = Ledger()): List[Block] =
     results(document.results).lay(Nil: List[Block])(List(_)) +
-      document.groups.map(group(_, figures))
+      document.groups.map(group(_, figures)) + failures(document)

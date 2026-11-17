@@ -678,7 +678,13 @@ private def dispatch()
             val workerTerms: List[Text] =
               if !legacyFork && EventStream.queued(loader) then List(t"--workers=1") else Nil
 
-            val args: List[Text] = scaleTerms + workerTerms + selectionArgs
+            // Failed assertions are diagnosed, when the suites' Probably can (see
+            // `EventStream.diagnostic`): nothing is computed for an assertion which passes.
+            val diagnosisTerms: List[Text] =
+              if !legacyFork && EventStream.diagnostic(loader) then List(EventStream.diagnosis)
+              else Nil
+
+            val args: List[Text] = scaleTerms + workerTerms + diagnosisTerms + selectionArgs
 
             // The load gate, if `--max-load` asked for one. It is entered AFTER the signal
             // trap above, so Ctrl+C during the wait sets `aborted` and the run below then
