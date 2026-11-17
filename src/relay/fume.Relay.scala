@@ -72,7 +72,7 @@ object Relay:
 //   worker → controller   ended     how the suite ended
 //   controller → worker   abort     Ctrl+C at the controller
 //   worker → controller   done      the run is over
-//   worker → controller   rejected  the plan could not be run at all
+//   worker → controller   rejected  the plan could not be run at all, with the worker's code
 enum Relay:
   case Plan
     ( entries:   List[Blobs.Entry],
@@ -94,4 +94,7 @@ enum Relay:
   case Ended(suite: Text, outcome: Text, exit: Int, detail: Text)
   case Abort
   case Done
-  case Rejected(reason: Text)
+
+  // `code` is the text of the worker's bolt code for the rejection (`↯/f.31.1.2`), which the
+  // controller parses and reports as the cause of its own; `reason` is the bare explanation.
+  case Rejected(code: Text, reason: Text)

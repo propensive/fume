@@ -100,9 +100,10 @@ object Worker:
         snooze(0.2*Second)
         settle(target, aborted)
 
-  // A rejection's reason, after its code's label: the controller prints it as it arrives.
-  private def rejection(variant: Int, reason: Text): Text =
-    t"${FumeBolts(FumeBolts.rejection, variant).label} $reason"
+  // A rejection, with its code's text beside its reason: the controller reports the code as the
+  // cause of its own, and prints the reason as it arrives.
+  private def rejection(variant: Int, reason: Text): Relay =
+    Relay.Rejected(FumeBolts(FumeBolts.rejection, variant).text, reason)
 
   // One controller's connection: the plan, the blobs it lacks, then the run.
   private def run(session: Peer.Session[Relay])(using Monitor): Unit =
@@ -124,7 +125,7 @@ object Worker:
                       assembly.receive(digest, data, last) match
                         case false =>
                           val reason: Text = t"the bytes sent for $digest do not have that digest"
-                          session.send(Relay.Rejected(rejection(1, reason)))
+                          session.send(rejection(1, reason))
                           false
 
                         case _ =>
@@ -142,12 +143,12 @@ object Worker:
                 if !missing.nil
                 then
                   val reason: Text = t"${missing.size} classpath entries were never received"
-                  session.send(Relay.Rejected(rejection(2, reason)))
+                  session.send(rejection(2, reason))
                 else
                   execute(session, store, entries, suites, arguments, maxLoad)
 
             case _ =>
-              session.send(Relay.Rejected(rejection(3, t"the worker has no blob store")))
+              session.send(rejection(3, t"the worker has no blob store"))
 
         case _ =>
           ()

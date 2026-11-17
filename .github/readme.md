@@ -349,6 +349,8 @@ is recorded in `f.tel` there. An MCP tool which cannot answer fails with `Api.Er
 `↯/f.29.1.<reason>`, and a failure `fume` prints is announced after its code's label, as
 `[↯/f.31.3] no test suites were found on the classpath`. A connection to a worker which could
 not be made carries Pyrocosm's code for the reason after its own, `↯/f.31.8/f.8.1.3`.
+A worker's rejection of a run is reported in the same way, by the controller's code carrying
+the worker's, as `[↯/f.31.7.2/f.31.1.3] laptop rejected the run: the worker has no blob store`.
 
 ## Building
 

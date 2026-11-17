@@ -46,6 +46,11 @@ object FumeBolts:
   def apply(error: Int, variant: Int = 0): fulminate.Bolt =
     pyrocosm.Bolts(client, error, variant)
 
+  // A worker's rejection of a run as the controller reports it: the controller's own code,
+  // carrying the worker's, whose text the worker sent with its reason.
+  def rejected(code: anticipation.Text): fulminate.Bolt =
+    apply(remote, 2).carrying(fulminate.Bolt.parse(code))
+
   // The API's one error is `Api.Error`, `↯/f.29.1`. The client's are failures it reports other
   // than through an error type, each printed after its code's label (`Render.announce`): a
   // worker's rejection of a run, which it sends to the controller; a machine which is neither
