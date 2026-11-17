@@ -1060,10 +1060,10 @@ private def dispatch()
                               ended(suite, outcome, exit, detail)
                               recur()
 
-                            case Channel.Frame.Message(Relay.Rejected(reason)) =>
+                            case Channel.Frame.Message(Relay.Rejected(code, reason)) =>
                               Render.announce
                                 ( t"${machine.name} rejected the run: $reason",
-                                  FumeBolts(FumeBolts.remote, 2) )
+                                  FumeBolts.rejected(code) )
 
                             case Channel.Frame.Message(Relay.Done) =>
                               ()
@@ -1092,10 +1092,10 @@ private def dispatch()
 
                         spin()
 
-                      case Channel.Frame.Message(Relay.Rejected(reason)) =>
+                      case Channel.Frame.Message(Relay.Rejected(code, reason)) =>
                         Render.announce
                           ( t"${machine.name} rejected the run: $reason",
-                            FumeBolts(FumeBolts.remote, 2) )
+                            FumeBolts.rejected(code) )
 
                       case _ =>
                         Render.announce

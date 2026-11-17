@@ -1220,10 +1220,21 @@ object Tests extends Suite(m"Fume tests"):
                     Relay.Ended(t"a.Tests", Relay.failed, 2, t"a trace"),
                     Relay.Ended(t"a.Tests", Relay.legacy, 2, t""))
 
-      test(m"a rejection round-trips with its reason"):
-        roundTrip(Relay.Rejected(t"the worker has no blob store"))
+      test(m"a rejection round-trips with its code and its reason"):
+        roundTrip(Relay.Rejected(t"↯/f.31.1.3", t"the worker has no blob store"))
 
-      . assert(_ == Relay.Rejected(t"the worker has no blob store"))
+      . assert(_ == Relay.Rejected(t"↯/f.31.1.3", t"the worker has no blob store"))
+
+      // The controller reports a rejection by one compound code: its own, carrying the worker's.
+      test(m"a rejection's code is carried by the controller's"):
+        FumeBolts.rejected(FumeBolts(FumeBolts.rejection, 3).text).label
+
+      . assert(_ == t"[↯/f.31.7.2/f.31.1.3]")
+
+      test(m"a rejection whose code cannot be parsed is reported by the controller's alone"):
+        FumeBolts.rejected(t"not a code").label
+
+      . assert(_ == t"[↯/f.31.7.2]")
 
       // The fingerprint names the protocol in the handshake, so a worker whose `Relay` differs
       // in any field, order or case refuses the connection rather than misreading it.
