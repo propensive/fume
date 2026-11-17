@@ -127,15 +127,16 @@ code and recompiles it — the same compiler, from the trees the compiler itself
 probe at every method's entry and at every branch: each side of an `if`, each `case`, each
 `catch`, a loop's body, and the right operand of `&&` and `||`. The recompiled classes go ahead
 of the originals on the run's classpath, in a cache (`$XDG_CACHE_HOME/fume/coverage`) which is
-reused for as long as the code, the compiler and the options are the same; a probe is a store
-into an array the method fetches once, so a covered run is about as fast as any other.
+reused for as long as the code, the compiler and the options are the same; a probe is an
+increment of a counter in an array the method fetches once, and each thread counts in arrays of
+its own, so a covered run is about as fast as any other, and no count is lost to a race.
 
-What a run records is **which test reached which probe**. Probably credits a test with whatever
-its own thread does while its body runs, and with whatever the threads it starts do, and those
-they start. After the report of how each test fared comes, for each source file, how many of its
+What a run records is **which test reached which probe, and how many times**. Probably credits
+a test with whatever its own thread does while its body runs, and with whatever the threads it
+starts do, and those they start. After the report of how each test fared comes, for each source file, how many of its
 probes the tests reached, the places none of them did, and the tests which reached the most; the
-whole record — every probe, and the probes each test reached — is kept beside the run, as
-`coverage.tsv` in its directory.
+whole record — every probe, and the probes each test reached with the number of times it reached
+each — is kept beside the run, as `coverage.tsv` in its directory.
 
 Some things follow from how it is done:
 

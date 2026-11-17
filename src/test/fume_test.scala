@@ -1077,7 +1077,8 @@ object Tests extends Suite(m"Fume tests"):
     suite(m"Coverage"):
       // Two units — a class of four probes and one of a single probe — and three tests: one
       // reaching both branches of the first unit's `if`, one reaching only its method, and one
-      // reaching nothing of either; the class body is reached outside any test.
+      // reaching nothing of either; the class body is reached outside any test. Each probe is
+      // reached as many times as its count says.
       def probe(index: Int, kind: Text, line: Int, scope: Text): fume.Coverage.Probe =
         fume.Coverage.Probe(index, kind, t"src/casket.scala", line, 3, line, 20, scope)
 
@@ -1103,16 +1104,22 @@ object Tests extends Suite(m"Fume tests"):
         fume.Coverage.Record
           ( List(casket, ring),
             Map
-              ( t"" -> List((0, 0)),
-                t"venice/gold#0a48bc" -> List((0, 1), (0, 2)),
-                t"venice/lead#1b59cd" -> List((0, 1)),
+              ( t"" -> List((0, 0, 1L)),
+                t"venice/gold#0a48bc" -> List((0, 1, 3L), (0, 2, 2L)),
+                t"venice/lead#1b59cd" -> List((0, 1, 1L)),
                 t"venice/silver#2c6ade" -> Nil ) )
 
       test(m"a record is read back as it was written"):
         val read: fume.Coverage.Record = fume.Coverage.parse(fume.Coverage.serialize(record))
         (read.subjects, read.reached(t"venice/gold#0a48bc"), read.reached(t""))
 
-      . assert(_ == (List(casket, ring), List((0, 1), (0, 2)), List((0, 0))))
+      . assert(_ == (List(casket, ring), List((0, 1, 3L), (0, 2, 2L)), List((0, 0, 1L))))
+
+      test(m"a record written without counts reads each probe as reached once"):
+        val text: Text = fume.Coverage.serialize(record).sub(t":3 0:2:2", t" 0:2")
+        fume.Coverage.parse(text).reached(t"venice/gold#0a48bc")
+
+      . assert(_ == List((0, 1, 1L), (0, 2, 1L)))
 
       test(m"a test's key is its path and its id"):
         fume.Coverage.key:
