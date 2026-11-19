@@ -1227,10 +1227,21 @@ object Tests extends Suite(m"Fume tests"):
                     Relay.Ended(t"a.Tests", Relay.failed, 2, t"a trace"),
                     Relay.Ended(t"a.Tests", Relay.legacy, 2, t""))
 
-      test(m"a rejection round-trips with its reason"):
-        roundTrip(Relay.Rejected(t"the worker has no blob store"))
+      test(m"a rejection round-trips with its code and its reason"):
+        roundTrip(Relay.Rejected(t"↯/f.31.1.3", t"the worker has no blob store"))
 
-      . assert(_ == Relay.Rejected(t"the worker has no blob store"))
+      . assert(_ == Relay.Rejected(t"↯/f.31.1.3", t"the worker has no blob store"))
+
+      // The controller reports a rejection by one compound code: its own, carrying the worker's.
+      test(m"a rejection's code is carried by the controller's"):
+        FumeBolts.rejected(FumeBolts(FumeBolts.rejection, 3).text).label
+
+      . assert(_ == t"[↯/f.31.7.2/f.31.1.3]")
+
+      test(m"a rejection whose code cannot be parsed is reported by the controller's alone"):
+        FumeBolts.rejected(t"not a code").label
+
+      . assert(_ == t"[↯/f.31.7.2]")
 
       // The fingerprint names the protocol in the handshake, so a worker whose `Relay` differs
       // in any field, order or case refuses the connection rather than misreading it.
@@ -1243,6 +1254,54 @@ object Tests extends Suite(m"Fume tests"):
         Relay.port != fume.Dashboard.web.port
 
       . assert(_ == true)
+
+    suite(m"A forked suite's temporary directory"):
+      // An environment which can be enumerated, as an invocation's is.
+      val outer: Environment = new Environment:
+        def variable(name: Text): Optional[Text] =
+          if name == t"HOME" then t"/home/user" else if name == t"TMPDIR" then t"/tmp" else Unset
+
+        override def entries: Optional[Map[Text, Text]] =
+          Map(t"HOME" -> t"/home/user", t"TMPDIR" -> t"/tmp")
+
+      test(m"TMPDIR names the suite's directory, and other variables are the invocation's"):
+        val environment = Scratches.environment(outer, t"/scratch/suite")
+        (environment.variable(t"TMPDIR"), environment.variable(t"HOME"))
+
+      . assert(_ == (t"/scratch/suite", t"/home/user"))
+
+      test(m"a child process is given TMPDIR among the invocation's variables"):
+        Scratches.environment(outer, t"/scratch/suite").entries.let: entries =>
+          (entries.at(t"TMPDIR"), entries.at(t"HOME"))
+
+      . assert(_ == (t"/scratch/suite", t"/home/user"))
+
+      test(m"the directory exists while the suite runs, and is deleted once it has ended"):
+        given Environment = outer
+
+        val (existed, directory) =
+          Scratches.lend: (scratch, _) =>
+            val path = java.nio.file.Path.of(scratch.s).nn
+            java.nio.file.Files.writeString(path.resolve("left-behind"), "data")
+            (java.nio.file.Files.isDirectory(path), scratch)
+
+        (existed, java.nio.file.Files.exists(java.nio.file.Path.of(directory.s)))
+
+      . assert(_ == (true, false))
+
+      test(m"the directory is deleted when the suite's run fails"):
+        given Environment = outer
+        var directory: Text = t""
+
+        try
+          Scratches.lend: (scratch, _) =>
+            directory = scratch
+            panic(m"the suite's JVM could not be started")
+        catch case _: Throwable => ()
+
+        java.nio.file.Files.exists(java.nio.file.Path.of(directory.s))
+
+      . assert(_ == false)
 
     suite(m"The static index of tests"):
       // One source file's index, as the beneficence plugin writes it: a suite with a test at

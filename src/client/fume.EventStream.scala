@@ -233,16 +233,24 @@ object EventStream:
       safely(System.properties.java.home[Text]()).lay(t"java"): home => t"$home/bin/java"
 
     safely:
-      val job = sh"$java -cp ${classpath()} probably.Standalone $suite $args".fork[Unit]()
-      val errors = async(job.errorText())
+      // In a temporary directory of the suite's own, deleted once its JVM has exited.
+      Scratches.lend: (scratch, environment) =>
+        given Environment = environment
+        val tmpdir: Text = t"-Djava.io.tmpdir=$scratch"
+        val native: Text = Scratches.nativeAccess
 
-      val producer: Producer^{job} = new Producer:
-        def exit(): Int = job.status()
-        def stop(): Unit = job.abort()
+        val job =
+          sh"$java $tmpdir $native -cp ${classpath()} probably.Standalone $suite $args".fork[Unit]()
 
-      val outcome = consume(job.stdout().chain, sink, abort, producer)
-      captured(t"", scala.caps.unsafe.unsafeAssumeSeparate(safely(errors.await()).or(t"")))
-      outcome
+        val errors = async(job.errorText())
+
+        val producer: Producer^{job} = new Producer:
+          def exit(): Int = job.status()
+          def stop(): Unit = job.abort()
+
+        val outcome = consume(job.stdout().chain, sink, abort, producer)
+        captured(t"", scala.caps.unsafe.unsafeAssumeSeparate(safely(errors.await()).or(t"")))
+        outcome
 
   def stream
     ( classpath: LocalClasspath,

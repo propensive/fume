@@ -205,7 +205,8 @@ object ui:
       ( "fork",
         false,
         Nil,
-        "run each suite in a JVM of its own, in this directory and environment" )
+        "run each suite in a JVM of its own, in this directory and environment, with a temporary " +
+          "directory of its own" )
 
   // Single-valued options are `Setting`s rather than `Flag`s, so each is also configurable
   // through the `Configurator` cascade `Fume.standard` provides; the camelCase name derives the
@@ -534,9 +535,10 @@ private def dispatch()
 
             // `--fork` runs each suite in a JVM of its own, in the invocation's directory and
             // environment, where in-process a suite sees the daemon's, which belong to no
-            // invocation. A suite whose Probably has `probably.Standalone` streams its events
-            // from there into the same model and board as an in-process one; an older one is
-            // forked the legacy way, and renders its own report, so there is no board.
+            // invocation; and with a temporary directory of its own (`Scratches`). A suite whose
+            // Probably has `probably.Standalone` streams its events from there into the same
+            // model and board as an in-process one; an older one is forked the legacy way, and
+            // renders its own report, so there is no board.
             val loader: Classloader = running.classloader(Classloader.Delegation.Preferential)
             val legacyFork: Boolean = fork && !EventStream.forkable(loader)
 
@@ -1060,10 +1062,10 @@ private def dispatch()
                               ended(suite, outcome, exit, detail)
                               recur()
 
-                            case Channel.Frame.Message(Relay.Rejected(reason)) =>
+                            case Channel.Frame.Message(Relay.Rejected(code, reason)) =>
                               Render.announce
                                 ( t"${machine.name} rejected the run: $reason",
-                                  FumeBolts(FumeBolts.remote, 2) )
+                                  FumeBolts.rejected(code) )
 
                             case Channel.Frame.Message(Relay.Done) =>
                               ()
@@ -1092,10 +1094,10 @@ private def dispatch()
 
                         spin()
 
-                      case Channel.Frame.Message(Relay.Rejected(reason)) =>
+                      case Channel.Frame.Message(Relay.Rejected(code, reason)) =>
                         Render.announce
                           ( t"${machine.name} rejected the run: $reason",
-                            FumeBolts(FumeBolts.remote, 2) )
+                            FumeBolts.rejected(code) )
 
                       case _ =>
                         Render.announce
@@ -1826,22 +1828,25 @@ private def forkSuite
   val java: Text =
     safely(System.properties.java.home[Text]()).lay(t"java"): home => t"$home/bin/java"
 
-  val command = sh"$java -cp ${classpath()} $suite $args"
-
   safely:
-    val job = command.fork[Text]()
-    // The suite's own JVM is a process of the run, for as long as it lives.
-    Server.fork(run, job.pid.value)
+    // In a temporary directory of the suite's own, deleted once its JVM has exited.
+    Scratches.lend: (scratch, environment) =>
+      given Environment = environment
+      val tmpdir: Text = t"-Djava.io.tmpdir=$scratch"
+      val native: Text = Scratches.nativeAccess
+      val job = sh"$java $tmpdir $native -cp ${classpath()} $suite $args".fork[Text]()
+      // The suite's own JVM is a process of the run, for as long as it lives.
+      Server.fork(run, job.pid.value)
 
-    val output: Text =
-      try
-        while job.alive && !abort() do snooze(0.1*Second)
-        if job.alive then job.abort()
-        job.await()
-      finally Server.unfork(run)
+      val output: Text =
+        try
+          while job.alive && !abort() do snooze(0.1*Second)
+          if job.alive then job.abort()
+          job.await()
+        finally Server.unfork(run)
 
-    Out.print(output)
-    job.exitStatus()
+      Out.print(output)
+      job.exitStatus()
 
   . or:
       Render.announce(t"could not invoke $suite", FumeBolts(FumeBolts.uninvocable))

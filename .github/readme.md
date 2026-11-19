@@ -322,6 +322,12 @@ sanitized environment. Such a suite should be given what it needs explicitly —
 recorded at build time, say — or be run with `--fork`, which starts each suite's JVM in the
 directory and with the environment `fume run` was invoked with.
 
+A suite run with `--fork` is also given a temporary directory of its own, beneath the daemon's:
+its JVM's `java.io.tmpdir`, and `TMPDIR` for whatever that JVM starts. The directory, and
+whatever the suite left in it, is deleted once the JVM has exited, however it ended, so a
+suite's forgotten scratch files do not outlive its run. In-process, a suite shares the daemon's
+temporary directory, where they would stay.
+
 Whatever a suite prints through the JVM's own streams while it runs in-process — a stray
 `println`, a stack trace, a library's diagnostic — is captured rather than shown, since the
 terminal is the board's while a run is up. It is appended to `$XDG_STATE_HOME/fume/output.log`
@@ -350,6 +356,8 @@ is recorded in `f.tel` there. An MCP tool which cannot answer fails with `Api.Er
 `↯/f.29.1.<reason>`, and a failure `fume` prints is announced after its code's label, as
 `[↯/f.31.3] no test suites were found on the classpath`. A connection to a worker which could
 not be made carries Pyrocosm's code for the reason after its own, `↯/f.31.8/f.8.1.3`.
+A worker's rejection of a run is reported in the same way, by the controller's code carrying
+the worker's, as `[↯/f.31.7.2/f.31.1.3] laptop rejected the run: the worker has no blob store`.
 
 ## Building
 
