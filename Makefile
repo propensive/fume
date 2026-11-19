@@ -73,6 +73,13 @@ run: publishLocal
 # index. CI runs the same command. fume testing fume with a release of itself is the tool
 # rule at work: what a repository runs is a release, never the build under test. `make
 # test-plain` drives `Tests.invoke` in-process without fume.
+# Temporary files and directories are galilei's `Scratch` loans, which delete what they made when
+# their scope ends, however it ends: never the JDK's `createTempFile`/`createTempDirectory`, whose
+# leftovers a long-lived JVM (a test run inside fume's daemon) keeps until it exits, and never
+# `deleteOnExit`, which waits for that exit too.
+check-scratch:
+	! grep -rnE --include='*.scala' 'createTemp(File|Directory)|deleteOnExit' src
+
 test:
 	mill fume.test.assembly
 	fume run -c out/fume/test/assembly.dest/out.jar $(TESTS)
@@ -85,7 +92,7 @@ test-plain:
 # release pinned in etc/tools; `make tools` installs it), as configured in
 # .pyrocosm/flare/config.tel. Findings are warnings, and CI does not run this; PATHS restricts
 # the check to files beneath them.
-check:
+check: check-scratch
 	flare check $(PATHS)
 
 # Install the commands pinned in etc/tools (fume) through their releases' installers.
@@ -106,4 +113,4 @@ snapshot-prune:
 dev:
 	mill -w fume.client.compile
 
-.PHONY: check xek-fetch tools snapshot snapshot-prune assembly release publishLocal run test test-plain dev install
+.PHONY: check check-scratch xek-fetch tools snapshot snapshot-prune assembly release publishLocal run test test-plain dev install
