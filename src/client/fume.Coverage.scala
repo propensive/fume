@@ -43,9 +43,9 @@ import textMetrics.uniformMetric
 // Which tests reach which code. `fume run --coverage <class or source file>` has
 // `probably.Instrumenter` recompile the units it names from their TASTy, with a probe at every
 // method entry and branch; puts the recompiled classes ahead of the originals on the run's
-// classpath; and reads back, from the suites' own `probably.Coverage`, which probes each test
-// reached: there the runner credits a test with what its thread does, and what the threads it
-// starts do.
+// classpath; and reads back, from the suites' own `probably.Coverage`, how many times each test
+// reached each probe: there the runner credits a test with what its thread does, and what the
+// threads it starts do.
 //
 // The recompilation must generate what the original compilation did, bar the probes, so it is
 // done only by the compiler which wrote the TASTy — fume's own, or the run is refused — and is
@@ -70,8 +70,9 @@ object Coverage:
   case class Plan(classpath: LocalClasspath, subjects: List[Subject])
 
   // What a run recorded: for each test, by its key (`key` below), the probes it reached, as a
-  // unit's index and a probe's. The empty key is what was reached outside any test.
-  case class Record(subjects: List[Subject], reached: Map[Text, List[(Int, Int)]])
+  // unit's index, a probe's, and the number of times the test reached it. The empty key is what
+  // was reached outside any test.
+  case class Record(subjects: List[Subject], reached: Map[Text, List[(Int, Int, Long)]])
 
   // The key `probably.Runner` records a test's coverage under.
   def key(ref: probably.TestEvent.Ref): Text = t"${ref.path.join(t"/")}#${ref.id}"
@@ -120,15 +121,16 @@ object Coverage:
   // for each test from now on; false if there is none to ask.
   def activate(loader: Classloader): Boolean = probably.Instrumenter.activate(loader.java)
 
-  // What the tests run through this classloader have reached since the last time it was asked:
-  // each probe a test reached, whatever the number of times it reached it.
-  def drain(loader: Classloader): Map[Text, List[(Int, Int)]] =
+  // What the tests run through this classloader have reached since the last time it was asked,
+  // and how many times.
+  def drain(loader: Classloader): Map[Text, List[(Int, Int, Long)]] =
     probably.Instrumenter.drain(loader.java).to(List).map: reached =>
-      reached.test.tt -> reached.probes.to(List).map { (unit, probe, _) => (unit, probe) }
+      reached.test.tt -> reached.probes.to(List)
 
     . to[Map]
 
-  // A record as text: a line for each unit, each probe, and each test, tab-separated.
+  // A record as text: a line for each unit, each probe, and each test, tab-separated; a test's
+  // line lists what it reached as `unit:probe:count`.
   def serialize(record: Record): Text =
     val lines: scm.ListBuffer[Text] = scm.ListBuffer()
 
@@ -144,7 +146,8 @@ object Coverage:
           . join(t"\t")
 
     record.reached.to[List].each: (test, probes) =>
-      lines += t"test\t$test\t${probes.map { (unit, probe) => t"$unit:$probe" }.join(t" ")}"
+      val reached: List[Text] = probes.map { (unit, probe, count) => t"$unit:$probe:$count" }
+      lines += t"test\t$test\t${reached.join(t" ")}"
 
     lines.toList.to(List).join(t"", t"\n", t"\n")
 
@@ -153,7 +156,7 @@ object Coverage:
 
     val units: scm.ListBuffer[(Int, Text)] = scm.ListBuffer()
     val probes: scm.ListBuffer[(Int, Probe)] = scm.ListBuffer()
-    val reached: scm.ListBuffer[(Text, List[(Int, Int)])] = scm.ListBuffer()
+    val reached: scm.ListBuffer[(Text, List[(Int, Int, Long)])] = scm.ListBuffer()
 
     text.cut(t"\n").each: line =>
       line.cut(t"\t") match
@@ -168,12 +171,22 @@ object Coverage:
                   ( number(index), kind, file, number(line), number(column), number(endLine),
                     number(endColumn), scope ) ) )
 
-        case t"test" :: test :: pairs :: _ =>
-          val list: List[(Int, Int)] =
-            pairs.cut(t" ").filter(_ != t"").bind[List[(Int, Int)], (Int, Int), List[(Int, Int)]]:
-              pair => pair.cut(t":") match
-                case unit :: probe :: _ => List((number(unit), number(probe)))
-                case _                  => Nil
+        // A record written before probes were counted has no count, and each probe in it was
+        // reached at least once.
+        case t"test" :: test :: places :: _ =>
+          type Place = (Int, Int, Long)
+
+          val list: List[Place] =
+            places.cut(t" ").filter(_ != t"").bind[List[Place], Place, List[Place]]: place =>
+              place.cut(t":") match
+                case unit :: probe :: count :: _ =>
+                  List((number(unit), number(probe), safely(count.as[Long]).or(1L)))
+
+                case unit :: probe :: _ =>
+                  List((number(unit), number(probe), 1L))
+
+                case _ =>
+                  Nil
 
           reached += ((test, list))
 
@@ -191,7 +204,9 @@ object Coverage:
     type Place = (Int, Int)
     val lines: scm.ListBuffer[Text] = scm.ListBuffer()
     val tests: scala.List[(Text, scala.List[Place])] =
-      plain(record.reached.to[List]).map { (test, places) => (test, plain(places)) }
+      plain(record.reached.to[List]).map: (test, places) =>
+        (test, plain(places).map { (unit, probe, _) => (unit, probe) })
+
 
     val orphaned: scala.collection.immutable.Set[Place] =
       tests.filter(_(0) == t"").flatMap(_(1)).toSet
