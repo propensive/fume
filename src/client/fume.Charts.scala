@@ -201,7 +201,7 @@ object Charts:
     t"https://fonts.googleapis.com/css2?family=Sono:wght,MONO@200..800,0..1&display=swap"
 
   private given (Typeface of "Sono") is Typesettable in Web =
-    Web.imported(Link(sonoStylesheet), phoenicia.Coverage.Unknown)
+    Web.imported(Link(sonoStylesheet), phoenicia.Font.Coverage.Unknown)
 
   private val sono: Font in Web =
     unsafely(Web.font(Typeface["Sono"].face.varying(Variation.Axis(t"MONO"), 0.0)))
