@@ -120,10 +120,11 @@ object Coverage:
   // for each test from now on; false if there is none to ask.
   def activate(loader: Classloader): Boolean = probably.Instrumenter.activate(loader.java)
 
-  // What the tests run through this classloader have reached since the last time it was asked.
+  // What the tests run through this classloader have reached since the last time it was asked:
+  // each probe a test reached, whatever the number of times it reached it.
   def drain(loader: Classloader): Map[Text, List[(Int, Int)]] =
     probably.Instrumenter.drain(loader.java).to(List).map: reached =>
-      reached.test.tt -> reached.probes.to(List)
+      reached.test.tt -> reached.probes.to(List).map { (unit, probe, _) => (unit, probe) }
 
     . to[Map]
 
