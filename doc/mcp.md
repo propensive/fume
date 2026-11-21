@@ -113,26 +113,250 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
 {
   "description": "The types fume 0.8.0 answers MCP tool calls with, by name",
   "properties": {
-    "Frame": {
+    "RunDetail": {
+      "properties": {
+        "scheduled": {
+          "description": "the suites the run scheduled, in order",
+          "items": {
+            "optional": false,
+            "type": "string"
+          },
+          "optional": false,
+          "type": "array"
+        },
+        "suites": {
+          "description": "each suite that has run so far",
+          "items": {
+            "properties": {
+              "finished": {
+                "description": "when the suite finished",
+                "format": "date-time",
+                "optional": false,
+                "type": "string"
+              },
+              "passed": {
+                "description": "whether the suite passed",
+                "optional": false,
+                "type": "boolean"
+              },
+              "suite": {
+                "description": "the suite's class name",
+                "optional": false,
+                "type": "string"
+              },
+              "totals": {
+                "description": "the suite's totals, when it streamed its events",
+                "properties": {
+                  "passed": {
+                    "description": "tests which passed, including measurements which completed",
+                    "optional": false,
+                    "type": "integer"
+                  },
+                  "failed": {
+                    "description": "tests which failed, threw, or had a failing check",
+                    "optional": false,
+                    "type": "integer"
+                  },
+                  "aspirePassed": {
+                    "description": "aspirational tests which passed",
+                    "optional": false,
+                    "type": "integer"
+                  },
+                  "aspireFailed": {
+                    "description": "aspirational tests which failed, which does not fail the run",
+                    "optional": false,
+                    "type": "integer"
+                  }
+                },
+                "optional": true,
+                "required": [
+                  "passed",
+                  "failed",
+                  "aspirePassed",
+                  "aspireFailed"
+                ],
+                "additionalProperties": false,
+                "type": "object"
+              },
+              "captured": {
+                "description": "whether the suite printed anything outside its report; see the `captured` tool",
+                "optional": false,
+                "type": "boolean"
+              },
+              "started": {
+                "description": "when the suite started",
+                "format": "date-time",
+                "optional": false,
+                "type": "string"
+              }
+            },
+            "optional": false,
+            "required": [
+              "suite",
+              "passed",
+              "started",
+              "finished",
+              "captured"
+            ],
+            "additionalProperties": false,
+            "type": "object"
+          },
+          "optional": false,
+          "type": "array"
+        },
+        "current": {
+          "description": "the suite running now, if any",
+          "optional": true,
+          "type": "string"
+        },
+        "results": {
+          "description": "whether per-test results can be served: `available`, `partial` (some suites could not stream), `incompatible` (the suites' event schema differs from this fume's), or `none`",
+          "optional": false,
+          "type": "string"
+        },
+        "classpath": {
+          "description": "the classpath the suites were loaded from",
+          "items": {
+            "optional": false,
+            "type": "string"
+          },
+          "optional": false,
+          "type": "array"
+        },
+        "summary": {
+          "description": "the run in summary",
+          "properties": {
+            "selection": {
+              "description": "the selection terms forwarded to each suite",
+              "items": {
+                "optional": false,
+                "type": "string"
+              },
+              "optional": false,
+              "type": "array"
+            },
+            "invoker": {
+              "description": "who launched the run: `human`, `claude`, `codex`, or `remote` for another fume",
+              "optional": false,
+              "type": "string"
+            },
+            "finished": {
+              "description": "when the run finished; absent while it is in flight",
+              "format": "date-time",
+              "optional": true,
+              "type": "string"
+            },
+            "outcome": {
+              "description": "`passed`, `failed`, `aborted` or `timed-out`; absent while the run is in flight",
+              "optional": true,
+              "type": "string"
+            },
+            "machine": {
+              "description": "the machine the suites ran on",
+              "optional": false,
+              "type": "string"
+            },
+            "totals": {
+              "description": "the run's totals, once finished",
+              "properties": {
+                "passed": {
+                  "description": "tests which passed, including measurements which completed",
+                  "optional": false,
+                  "type": "integer"
+                },
+                "failed": {
+                  "description": "tests which failed, threw, or had a failing check",
+                  "optional": false,
+                  "type": "integer"
+                },
+                "aspirePassed": {
+                  "description": "aspirational tests which passed",
+                  "optional": false,
+                  "type": "integer"
+                },
+                "aspireFailed": {
+                  "description": "aspirational tests which failed, which does not fail the run",
+                  "optional": false,
+                  "type": "integer"
+                }
+              },
+              "optional": true,
+              "required": [
+                "passed",
+                "failed",
+                "aspirePassed",
+                "aspireFailed"
+              ],
+              "additionalProperties": false,
+              "type": "object"
+            },
+            "duration": {
+              "description": "the run's length in milliseconds, once finished",
+              "optional": true,
+              "type": "integer"
+            },
+            "id": {
+              "description": "the run's id, stable across daemon restarts; `last` names the newest run in any tool",
+              "optional": false,
+              "type": "string"
+            },
+            "suites": {
+              "description": "how many suites the run scheduled",
+              "optional": false,
+              "type": "integer"
+            },
+            "workspace": {
+              "description": "the working directory `fume` was invoked from",
+              "optional": false,
+              "type": "string"
+            },
+            "started": {
+              "description": "when the run started, ISO 8601 in UTC",
+              "format": "date-time",
+              "optional": false,
+              "type": "string"
+            }
+          },
+          "optional": false,
+          "required": [
+            "id",
+            "workspace",
+            "invoker",
+            "machine",
+            "started",
+            "selection",
+            "suites"
+          ],
+          "additionalProperties": false,
+          "type": "object"
+        }
+      },
+      "optional": false,
+      "required": [
+        "summary",
+        "classpath",
+        "scheduled",
+        "suites",
+        "results"
+      ],
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "Hotspot": {
       "properties": {
         "className": {
-          "description": "the frame's class",
+          "description": "the class of the hot method",
           "optional": false,
           "type": "string"
         },
         "method": {
-          "description": "the frame's method",
+          "description": "the hot method",
           "optional": false,
           "type": "string"
         },
-        "file": {
-          "description": "the frame's source file",
+        "samples": {
+          "description": "execution samples landing in it",
           "optional": false,
-          "type": "string"
-        },
-        "line": {
-          "description": "the frame's line, when known",
-          "optional": true,
           "type": "integer"
         }
       },
@@ -140,45 +364,417 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
       "required": [
         "className",
         "method",
-        "file"
+        "samples"
       ],
       "additionalProperties": false,
       "type": "object"
     },
-    "TraceComponent": {
+    "Dissection": {
       "properties": {
-        "className": {
-          "description": "the exception's class",
+        "kind": {
+          "description": "`value`, or `thrown` for a predicate which threw",
           "optional": false,
           "type": "string"
         },
-        "message": {
-          "description": "the exception's message",
+        "end": {
+          "description": "where the subexpression ends in the predicate's source",
+          "optional": false,
+          "type": "integer"
+        },
+        "value": {
+          "description": "the subexpression's value, rendered; or the exception, for `thrown`",
           "optional": false,
           "type": "string"
         },
-        "frames": {
-          "description": "the stack frames, outermost first",
+        "depth": {
+          "description": "the row's depth in the tree of the predicate's subexpressions",
+          "optional": false,
+          "type": "integer"
+        },
+        "code": {
+          "description": "the subexpression, as written",
+          "optional": false,
+          "type": "string"
+        },
+        "start": {
+          "description": "where the subexpression starts in the predicate's source",
+          "optional": false,
+          "type": "integer"
+        }
+      },
+      "optional": false,
+      "required": [
+        "depth",
+        "code",
+        "start",
+        "end",
+        "value",
+        "kind"
+      ],
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "TestResult": {
+      "properties": {
+        "kind": {
+          "description": "`check`, `bench`, `stress` or `profile`",
+          "optional": false,
+          "type": "string"
+        },
+        "benchmarks": {
+          "description": "each cell's benchmark record, for a `bench`",
+          "items": {
+            "properties": {
+              "max": {
+                "description": "slowest run, in nanoseconds per operation",
+                "optional": false,
+                "type": "number"
+              },
+              "mean": {
+                "description": "mean time per operation, in nanoseconds",
+                "optional": false,
+                "type": "number"
+              },
+              "nanoseconds": {
+                "description": "the time measured, in nanoseconds",
+                "optional": false,
+                "type": "integer"
+              },
+              "iterations": {
+                "description": "operations timed",
+                "optional": false,
+                "type": "integer"
+              },
+              "min": {
+                "description": "fastest run, in nanoseconds per operation",
+                "optional": false,
+                "type": "number"
+              },
+              "sd": {
+                "description": "standard deviation, in nanoseconds",
+                "optional": false,
+                "type": "number"
+              },
+              "operationRate": {
+                "description": "the operation rate, when derived",
+                "optional": true,
+                "type": "string"
+              },
+              "allocation": {
+                "description": "bytes allocated per operation, when measured",
+                "optional": true,
+                "type": "integer"
+              },
+              "runs": {
+                "description": "measurement runs",
+                "optional": false,
+                "type": "integer"
+              },
+              "operationSize": {
+                "description": "the size of one operation, when declared",
+                "optional": true,
+                "type": "string"
+              },
+              "coordinates": {
+                "description": "the cell's coordinates",
+                "items": {
+                  "properties": {
+                    "axis": {
+                      "description": "the axis's label",
+                      "optional": false,
+                      "type": "string"
+                    },
+                    "value": {
+                      "description": "the axis's value for this cell, as text",
+                      "optional": false,
+                      "type": "string"
+                    }
+                  },
+                  "optional": false,
+                  "required": [
+                    "axis",
+                    "value"
+                  ],
+                  "additionalProperties": false,
+                  "type": "object"
+                },
+                "optional": false,
+                "type": "array"
+              },
+              "confidence": {
+                "description": "confidence, as a percentage",
+                "optional": false,
+                "type": "integer"
+              }
+            },
+            "optional": false,
+            "required": [
+              "coordinates",
+              "nanoseconds",
+              "iterations",
+              "runs",
+              "mean",
+              "min",
+              "max",
+              "sd",
+              "confidence"
+            ],
+            "additionalProperties": false,
+            "type": "object"
+          },
+          "optional": false,
+          "type": "array"
+        },
+        "ref": {
+          "description": "the test",
+          "properties": {
+            "moniker": {
+              "description": "the test's moniker, a selection term, when it declares one",
+              "optional": true,
+              "type": "string"
+            },
+            "file": {
+              "description": "the source file declaring the test",
+              "optional": false,
+              "type": "string"
+            },
+            "path": {
+              "description": "the path of names or monikers from the root suite to the test",
+              "items": {
+                "optional": false,
+                "type": "string"
+              },
+              "optional": false,
+              "type": "array"
+            },
+            "suite": {
+              "description": "the suite class the test was run under",
+              "optional": false,
+              "type": "string"
+            },
+            "line": {
+              "description": "the line declaring the test",
+              "optional": false,
+              "type": "integer"
+            },
+            "id": {
+              "description": "the test's 6-hex id, a selection term for `fume run`; empty for a suite",
+              "optional": false,
+              "type": "string"
+            },
+            "name": {
+              "description": "the test's name",
+              "optional": false,
+              "type": "string"
+            }
+          },
+          "optional": false,
+          "required": [
+            "id",
+            "name",
+            "path",
+            "suite",
+            "file",
+            "line"
+          ],
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "strains": {
+          "description": "each concurrency level's record, for a `stress`",
+          "items": {
+            "properties": {
+              "nanoseconds": {
+                "description": "the time measured, in nanoseconds",
+                "optional": false,
+                "type": "integer"
+              },
+              "retained": {
+                "description": "bytes retained after the measurement",
+                "optional": false,
+                "type": "integer"
+              },
+              "sustained": {
+                "description": "whether the throughput was sustained at this concurrency",
+                "optional": false,
+                "type": "boolean"
+              },
+              "p50": {
+                "description": "median latency, in nanoseconds",
+                "optional": true,
+                "type": "integer"
+              },
+              "allocation": {
+                "description": "bytes allocated",
+                "optional": false,
+                "type": "integer"
+              },
+              "concurrency": {
+                "description": "concurrent workers",
+                "optional": false,
+                "type": "integer"
+              },
+              "operations": {
+                "description": "operations completed",
+                "optional": false,
+                "type": "integer"
+              },
+              "peakHeap": {
+                "description": "peak heap, in bytes",
+                "optional": false,
+                "type": "integer"
+              },
+              "gcCount": {
+                "description": "garbage collections during the measurement",
+                "optional": false,
+                "type": "integer"
+              },
+              "p99": {
+                "description": "99th percentile latency, in nanoseconds",
+                "optional": true,
+                "type": "integer"
+              },
+              "coordinates": {
+                "description": "the cell's coordinates",
+                "items": {
+                  "properties": {
+                    "axis": {
+                      "description": "the axis's label",
+                      "optional": false,
+                      "type": "string"
+                    },
+                    "value": {
+                      "description": "the axis's value for this cell, as text",
+                      "optional": false,
+                      "type": "string"
+                    }
+                  },
+                  "optional": false,
+                  "required": [
+                    "axis",
+                    "value"
+                  ],
+                  "additionalProperties": false,
+                  "type": "object"
+                },
+                "optional": false,
+                "type": "array"
+              },
+              "p999": {
+                "description": "99.9th percentile latency, in nanoseconds",
+                "optional": true,
+                "type": "integer"
+              },
+              "compliance": {
+                "description": "the fraction of operations within the latency target, when one was declared",
+                "optional": true,
+                "type": "number"
+              },
+              "gcTime": {
+                "description": "time spent in garbage collection, in nanoseconds",
+                "optional": false,
+                "type": "integer"
+              },
+              "p90": {
+                "description": "90th percentile latency, in nanoseconds",
+                "optional": true,
+                "type": "integer"
+              }
+            },
+            "optional": false,
+            "required": [
+              "coordinates",
+              "concurrency",
+              "operations",
+              "nanoseconds",
+              "allocation",
+              "peakHeap",
+              "retained",
+              "gcCount",
+              "gcTime",
+              "sustained"
+            ],
+            "additionalProperties": false,
+            "type": "object"
+          },
+          "optional": false,
+          "type": "array"
+        },
+        "rerun": {
+          "description": "the command which reruns exactly this test",
+          "optional": false,
+          "type": "string"
+        },
+        "completions": {
+          "description": "each cell's outcome, for a `check`",
+          "items": {
+            "properties": {
+              "coordinates": {
+                "description": "the cell's coordinates; empty for a test without axes",
+                "items": {
+                  "properties": {
+                    "axis": {
+                      "description": "the axis's label",
+                      "optional": false,
+                      "type": "string"
+                    },
+                    "value": {
+                      "description": "the axis's value for this cell, as text",
+                      "optional": false,
+                      "type": "string"
+                    }
+                  },
+                  "optional": false,
+                  "required": [
+                    "axis",
+                    "value"
+                  ],
+                  "additionalProperties": false,
+                  "type": "object"
+                },
+                "optional": false,
+                "type": "array"
+              },
+              "outcome": {
+                "description": "`pass`, `fail`, `throws`, `check-throws`, `aspire-pass` or `aspire-fail`",
+                "optional": false,
+                "type": "string"
+              },
+              "nanoseconds": {
+                "description": "how long the cell took, in nanoseconds",
+                "optional": false,
+                "type": "integer"
+              }
+            },
+            "optional": false,
+            "required": [
+              "coordinates",
+              "outcome",
+              "nanoseconds"
+            ],
+            "additionalProperties": false,
+            "type": "object"
+          },
+          "optional": false,
+          "type": "array"
+        },
+        "hotspots": {
+          "description": "the hot methods, for a `profile`",
           "items": {
             "properties": {
               "className": {
-                "description": "the frame's class",
+                "description": "the class of the hot method",
                 "optional": false,
                 "type": "string"
               },
               "method": {
-                "description": "the frame's method",
+                "description": "the hot method",
                 "optional": false,
                 "type": "string"
               },
-              "file": {
-                "description": "the frame's source file",
+              "samples": {
+                "description": "execution samples landing in it",
                 "optional": false,
-                "type": "string"
-              },
-              "line": {
-                "description": "the frame's line, when known",
-                "optional": true,
                 "type": "integer"
               }
             },
@@ -186,20 +782,728 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
             "required": [
               "className",
               "method",
-              "file"
+              "samples"
             ],
             "additionalProperties": false,
             "type": "object"
           },
           "optional": false,
           "type": "array"
+        },
+        "status": {
+          "description": "the test's collective status: `pass`, `fail`, `throws`, `check-throws`, `aspire-pass`, `aspire-fail`, `mixed` (its cells disagree), or `bench`, `stress`, `profile` for a measurement",
+          "optional": false,
+          "type": "string"
         }
       },
       "optional": false,
       "required": [
-        "className",
-        "message",
-        "frames"
+        "ref",
+        "kind",
+        "status",
+        "completions",
+        "benchmarks",
+        "strains",
+        "hotspots",
+        "rerun"
+      ],
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "ActiveRun": {
+      "properties": {
+        "suitesTotal": {
+          "description": "suites scheduled",
+          "optional": false,
+          "type": "integer"
+        },
+        "active": {
+          "description": "tests and suites in flight",
+          "items": {
+            "properties": {
+              "ref": {
+                "description": "the test or suite in flight",
+                "properties": {
+                  "moniker": {
+                    "description": "the test's moniker, a selection term, when it declares one",
+                    "optional": true,
+                    "type": "string"
+                  },
+                  "file": {
+                    "description": "the source file declaring the test",
+                    "optional": false,
+                    "type": "string"
+                  },
+                  "path": {
+                    "description": "the path of names or monikers from the root suite to the test",
+                    "items": {
+                      "optional": false,
+                      "type": "string"
+                    },
+                    "optional": false,
+                    "type": "array"
+                  },
+                  "suite": {
+                    "description": "the suite class the test was run under",
+                    "optional": false,
+                    "type": "string"
+                  },
+                  "line": {
+                    "description": "the line declaring the test",
+                    "optional": false,
+                    "type": "integer"
+                  },
+                  "id": {
+                    "description": "the test's 6-hex id, a selection term for `fume run`; empty for a suite",
+                    "optional": false,
+                    "type": "string"
+                  },
+                  "name": {
+                    "description": "the test's name",
+                    "optional": false,
+                    "type": "string"
+                  }
+                },
+                "optional": false,
+                "required": [
+                  "id",
+                  "name",
+                  "path",
+                  "suite",
+                  "file",
+                  "line"
+                ],
+                "additionalProperties": false,
+                "type": "object"
+              }
+            },
+            "optional": false,
+            "required": [
+              "ref"
+            ],
+            "additionalProperties": false,
+            "type": "object"
+          },
+          "optional": false,
+          "type": "array"
+        },
+        "forked": {
+          "description": "the pid of the suite's own JVM, under `--fork`",
+          "optional": true,
+          "type": "integer"
+        },
+        "current": {
+          "description": "the suite running now",
+          "optional": true,
+          "type": "string"
+        },
+        "summary": {
+          "description": "the run in summary",
+          "properties": {
+            "selection": {
+              "description": "the selection terms forwarded to each suite",
+              "items": {
+                "optional": false,
+                "type": "string"
+              },
+              "optional": false,
+              "type": "array"
+            },
+            "invoker": {
+              "description": "who launched the run: `human`, `claude`, `codex`, or `remote` for another fume",
+              "optional": false,
+              "type": "string"
+            },
+            "finished": {
+              "description": "when the run finished; absent while it is in flight",
+              "format": "date-time",
+              "optional": true,
+              "type": "string"
+            },
+            "outcome": {
+              "description": "`passed`, `failed`, `aborted` or `timed-out`; absent while the run is in flight",
+              "optional": true,
+              "type": "string"
+            },
+            "machine": {
+              "description": "the machine the suites ran on",
+              "optional": false,
+              "type": "string"
+            },
+            "totals": {
+              "description": "the run's totals, once finished",
+              "properties": {
+                "passed": {
+                  "description": "tests which passed, including measurements which completed",
+                  "optional": false,
+                  "type": "integer"
+                },
+                "failed": {
+                  "description": "tests which failed, threw, or had a failing check",
+                  "optional": false,
+                  "type": "integer"
+                },
+                "aspirePassed": {
+                  "description": "aspirational tests which passed",
+                  "optional": false,
+                  "type": "integer"
+                },
+                "aspireFailed": {
+                  "description": "aspirational tests which failed, which does not fail the run",
+                  "optional": false,
+                  "type": "integer"
+                }
+              },
+              "optional": true,
+              "required": [
+                "passed",
+                "failed",
+                "aspirePassed",
+                "aspireFailed"
+              ],
+              "additionalProperties": false,
+              "type": "object"
+            },
+            "duration": {
+              "description": "the run's length in milliseconds, once finished",
+              "optional": true,
+              "type": "integer"
+            },
+            "id": {
+              "description": "the run's id, stable across daemon restarts; `last` names the newest run in any tool",
+              "optional": false,
+              "type": "string"
+            },
+            "suites": {
+              "description": "how many suites the run scheduled",
+              "optional": false,
+              "type": "integer"
+            },
+            "workspace": {
+              "description": "the working directory `fume` was invoked from",
+              "optional": false,
+              "type": "string"
+            },
+            "started": {
+              "description": "when the run started, ISO 8601 in UTC",
+              "format": "date-time",
+              "optional": false,
+              "type": "string"
+            }
+          },
+          "optional": false,
+          "required": [
+            "id",
+            "workspace",
+            "invoker",
+            "machine",
+            "started",
+            "selection",
+            "suites"
+          ],
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "suitesDone": {
+          "description": "suites finished so far",
+          "optional": false,
+          "type": "integer"
+        }
+      },
+      "optional": false,
+      "required": [
+        "summary",
+        "suitesDone",
+        "suitesTotal",
+        "active"
+      ],
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "WorkerSession": {
+      "properties": {
+        "controller": {
+          "description": "the hostname of the controller whose run this daemon is working",
+          "optional": false,
+          "type": "string"
+        },
+        "current": {
+          "description": "the suite running now",
+          "optional": true,
+          "type": "string"
+        }
+      },
+      "optional": false,
+      "required": [
+        "controller"
+      ],
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "Totals": {
+      "properties": {
+        "passed": {
+          "description": "tests which passed, including measurements which completed",
+          "optional": false,
+          "type": "integer"
+        },
+        "failed": {
+          "description": "tests which failed, threw, or had a failing check",
+          "optional": false,
+          "type": "integer"
+        },
+        "aspirePassed": {
+          "description": "aspirational tests which passed",
+          "optional": false,
+          "type": "integer"
+        },
+        "aspireFailed": {
+          "description": "aspirational tests which failed, which does not fail the run",
+          "optional": false,
+          "type": "integer"
+        }
+      },
+      "optional": false,
+      "required": [
+        "passed",
+        "failed",
+        "aspirePassed",
+        "aspireFailed"
+      ],
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "Processes": {
+      "properties": {
+        "daemon": {
+          "description": "this daemon",
+          "properties": {
+            "pid": {
+              "description": "the daemon's pid",
+              "optional": false,
+              "type": "integer"
+            },
+            "version": {
+              "description": "fume's version",
+              "optional": false,
+              "type": "string"
+            },
+            "started": {
+              "description": "when the daemon started",
+              "format": "date-time",
+              "optional": false,
+              "type": "string"
+            },
+            "runsDirectory": {
+              "description": "where runs are persisted",
+              "optional": false,
+              "type": "string"
+            }
+          },
+          "optional": false,
+          "required": [
+            "pid",
+            "version",
+            "started",
+            "runsDirectory"
+          ],
+          "additionalProperties": false,
+          "type": "object"
+        },
+        "services": {
+          "description": "the services this daemon is serving",
+          "items": {
+            "properties": {
+              "name": {
+                "description": "`dashboard`, `listener` or `mcp`",
+                "optional": false,
+                "type": "string"
+              },
+              "port": {
+                "description": "the port it serves on",
+                "optional": false,
+                "type": "integer"
+              }
+            },
+            "optional": false,
+            "required": [
+              "name",
+              "port"
+            ],
+            "additionalProperties": false,
+            "type": "object"
+          },
+          "optional": false,
+          "type": "array"
+        },
+        "runs": {
+          "description": "runs in flight",
+          "items": {
+            "properties": {
+              "suitesTotal": {
+                "description": "suites scheduled",
+                "optional": false,
+                "type": "integer"
+              },
+              "active": {
+                "description": "tests and suites in flight",
+                "items": {
+                  "properties": {
+                    "ref": {
+                      "description": "the test or suite in flight",
+                      "properties": {
+                        "moniker": {
+                          "description": "the test's moniker, a selection term, when it declares one",
+                          "optional": true,
+                          "type": "string"
+                        },
+                        "file": {
+                          "description": "the source file declaring the test",
+                          "optional": false,
+                          "type": "string"
+                        },
+                        "path": {
+                          "description": "the path of names or monikers from the root suite to the test",
+                          "items": {
+                            "optional": false,
+                            "type": "string"
+                          },
+                          "optional": false,
+                          "type": "array"
+                        },
+                        "suite": {
+                          "description": "the suite class the test was run under",
+                          "optional": false,
+                          "type": "string"
+                        },
+                        "line": {
+                          "description": "the line declaring the test",
+                          "optional": false,
+                          "type": "integer"
+                        },
+                        "id": {
+                          "description": "the test's 6-hex id, a selection term for `fume run`; empty for a suite",
+                          "optional": false,
+                          "type": "string"
+                        },
+                        "name": {
+                          "description": "the test's name",
+                          "optional": false,
+                          "type": "string"
+                        }
+                      },
+                      "optional": false,
+                      "required": [
+                        "id",
+                        "name",
+                        "path",
+                        "suite",
+                        "file",
+                        "line"
+                      ],
+                      "additionalProperties": false,
+                      "type": "object"
+                    }
+                  },
+                  "optional": false,
+                  "required": [
+                    "ref"
+                  ],
+                  "additionalProperties": false,
+                  "type": "object"
+                },
+                "optional": false,
+                "type": "array"
+              },
+              "forked": {
+                "description": "the pid of the suite's own JVM, under `--fork`",
+                "optional": true,
+                "type": "integer"
+              },
+              "current": {
+                "description": "the suite running now",
+                "optional": true,
+                "type": "string"
+              },
+              "summary": {
+                "description": "the run in summary",
+                "properties": {
+                  "selection": {
+                    "description": "the selection terms forwarded to each suite",
+                    "items": {
+                      "optional": false,
+                      "type": "string"
+                    },
+                    "optional": false,
+                    "type": "array"
+                  },
+                  "invoker": {
+                    "description": "who launched the run: `human`, `claude`, `codex`, or `remote` for another fume",
+                    "optional": false,
+                    "type": "string"
+                  },
+                  "finished": {
+                    "description": "when the run finished; absent while it is in flight",
+                    "format": "date-time",
+                    "optional": true,
+                    "type": "string"
+                  },
+                  "outcome": {
+                    "description": "`passed`, `failed`, `aborted` or `timed-out`; absent while the run is in flight",
+                    "optional": true,
+                    "type": "string"
+                  },
+                  "machine": {
+                    "description": "the machine the suites ran on",
+                    "optional": false,
+                    "type": "string"
+                  },
+                  "totals": {
+                    "description": "the run's totals, once finished",
+                    "properties": {
+                      "passed": {
+                        "description": "tests which passed, including measurements which completed",
+                        "optional": false,
+                        "type": "integer"
+                      },
+                      "failed": {
+                        "description": "tests which failed, threw, or had a failing check",
+                        "optional": false,
+                        "type": "integer"
+                      },
+                      "aspirePassed": {
+                        "description": "aspirational tests which passed",
+                        "optional": false,
+                        "type": "integer"
+                      },
+                      "aspireFailed": {
+                        "description": "aspirational tests which failed, which does not fail the run",
+                        "optional": false,
+                        "type": "integer"
+                      }
+                    },
+                    "optional": true,
+                    "required": [
+                      "passed",
+                      "failed",
+                      "aspirePassed",
+                      "aspireFailed"
+                    ],
+                    "additionalProperties": false,
+                    "type": "object"
+                  },
+                  "duration": {
+                    "description": "the run's length in milliseconds, once finished",
+                    "optional": true,
+                    "type": "integer"
+                  },
+                  "id": {
+                    "description": "the run's id, stable across daemon restarts; `last` names the newest run in any tool",
+                    "optional": false,
+                    "type": "string"
+                  },
+                  "suites": {
+                    "description": "how many suites the run scheduled",
+                    "optional": false,
+                    "type": "integer"
+                  },
+                  "workspace": {
+                    "description": "the working directory `fume` was invoked from",
+                    "optional": false,
+                    "type": "string"
+                  },
+                  "started": {
+                    "description": "when the run started, ISO 8601 in UTC",
+                    "format": "date-time",
+                    "optional": false,
+                    "type": "string"
+                  }
+                },
+                "optional": false,
+                "required": [
+                  "id",
+                  "workspace",
+                  "invoker",
+                  "machine",
+                  "started",
+                  "selection",
+                  "suites"
+                ],
+                "additionalProperties": false,
+                "type": "object"
+              },
+              "suitesDone": {
+                "description": "suites finished so far",
+                "optional": false,
+                "type": "integer"
+              }
+            },
+            "optional": false,
+            "required": [
+              "summary",
+              "suitesDone",
+              "suitesTotal",
+              "active"
+            ],
+            "additionalProperties": false,
+            "type": "object"
+          },
+          "optional": false,
+          "type": "array"
+        },
+        "worker": {
+          "description": "the run this daemon is working for another machine, if any",
+          "properties": {
+            "controller": {
+              "description": "the hostname of the controller whose run this daemon is working",
+              "optional": false,
+              "type": "string"
+            },
+            "current": {
+              "description": "the suite running now",
+              "optional": true,
+              "type": "string"
+            }
+          },
+          "optional": true,
+          "required": [
+            "controller"
+          ],
+          "additionalProperties": false,
+          "type": "object"
+        }
+      },
+      "optional": false,
+      "required": [
+        "daemon",
+        "services",
+        "runs"
+      ],
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "Benchmark": {
+      "properties": {
+        "max": {
+          "description": "slowest run, in nanoseconds per operation",
+          "optional": false,
+          "type": "number"
+        },
+        "mean": {
+          "description": "mean time per operation, in nanoseconds",
+          "optional": false,
+          "type": "number"
+        },
+        "nanoseconds": {
+          "description": "the time measured, in nanoseconds",
+          "optional": false,
+          "type": "integer"
+        },
+        "iterations": {
+          "description": "operations timed",
+          "optional": false,
+          "type": "integer"
+        },
+        "min": {
+          "description": "fastest run, in nanoseconds per operation",
+          "optional": false,
+          "type": "number"
+        },
+        "sd": {
+          "description": "standard deviation, in nanoseconds",
+          "optional": false,
+          "type": "number"
+        },
+        "operationRate": {
+          "description": "the operation rate, when derived",
+          "optional": true,
+          "type": "string"
+        },
+        "allocation": {
+          "description": "bytes allocated per operation, when measured",
+          "optional": true,
+          "type": "integer"
+        },
+        "runs": {
+          "description": "measurement runs",
+          "optional": false,
+          "type": "integer"
+        },
+        "operationSize": {
+          "description": "the size of one operation, when declared",
+          "optional": true,
+          "type": "string"
+        },
+        "coordinates": {
+          "description": "the cell's coordinates",
+          "items": {
+            "properties": {
+              "axis": {
+                "description": "the axis's label",
+                "optional": false,
+                "type": "string"
+              },
+              "value": {
+                "description": "the axis's value for this cell, as text",
+                "optional": false,
+                "type": "string"
+              }
+            },
+            "optional": false,
+            "required": [
+              "axis",
+              "value"
+            ],
+            "additionalProperties": false,
+            "type": "object"
+          },
+          "optional": false,
+          "type": "array"
+        },
+        "confidence": {
+          "description": "confidence, as a percentage",
+          "optional": false,
+          "type": "integer"
+        }
+      },
+      "optional": false,
+      "required": [
+        "coordinates",
+        "nanoseconds",
+        "iterations",
+        "runs",
+        "mean",
+        "min",
+        "max",
+        "sd",
+        "confidence"
+      ],
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "IndexedSuite": {
+      "properties": {
+        "suite": {
+          "description": "the suite's class name, as `fume run --suite` takes it",
+          "optional": false,
+          "type": "string"
+        },
+        "indexed": {
+          "description": "whether the classpath's static index covers the suite; a suite it does not is listed only by running it",
+          "optional": false,
+          "type": "boolean"
+        },
+        "tests": {
+          "description": "the tests the index declares for the suite",
+          "optional": false,
+          "type": "integer"
+        }
+      },
+      "optional": false,
+      "required": [
+        "suite",
+        "indexed",
+        "tests"
       ],
       "additionalProperties": false,
       "type": "object"
@@ -278,62 +1582,27 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
       "additionalProperties": false,
       "type": "object"
     },
-    "Processes": {
+    "Completion": {
       "properties": {
-        "daemon": {
-          "description": "this daemon",
-          "properties": {
-            "pid": {
-              "description": "the daemon's pid",
-              "optional": false,
-              "type": "integer"
-            },
-            "version": {
-              "description": "fume's version",
-              "optional": false,
-              "type": "string"
-            },
-            "started": {
-              "description": "when the daemon started",
-              "format": "date-time",
-              "optional": false,
-              "type": "string"
-            },
-            "runsDirectory": {
-              "description": "where runs are persisted",
-              "optional": false,
-              "type": "string"
-            }
-          },
-          "optional": false,
-          "required": [
-            "pid",
-            "version",
-            "started",
-            "runsDirectory"
-          ],
-          "additionalProperties": false,
-          "type": "object"
-        },
-        "services": {
-          "description": "the services this daemon is serving",
+        "coordinates": {
+          "description": "the cell's coordinates; empty for a test without axes",
           "items": {
             "properties": {
-              "name": {
-                "description": "`dashboard`, `listener` or `mcp`",
+              "axis": {
+                "description": "the axis's label",
                 "optional": false,
                 "type": "string"
               },
-              "port": {
-                "description": "the port it serves on",
+              "value": {
+                "description": "the axis's value for this cell, as text",
                 "optional": false,
-                "type": "integer"
+                "type": "string"
               }
             },
             "optional": false,
             "required": [
-              "name",
-              "port"
+              "axis",
+              "value"
             ],
             "additionalProperties": false,
             "type": "object"
@@ -341,248 +1610,178 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
           "optional": false,
           "type": "array"
         },
-        "runs": {
-          "description": "runs in flight",
-          "items": {
-            "properties": {
-              "suitesDone": {
-                "description": "suites finished so far",
-                "optional": false,
-                "type": "integer"
-              },
-              "forked": {
-                "description": "the pid of the suite's own JVM, under `--fork`",
-                "optional": true,
-                "type": "integer"
-              },
-              "suitesTotal": {
-                "description": "suites scheduled",
-                "optional": false,
-                "type": "integer"
-              },
-              "current": {
-                "description": "the suite running now",
-                "optional": true,
-                "type": "string"
-              },
-              "summary": {
-                "description": "the run in summary",
-                "properties": {
-                  "duration": {
-                    "description": "the run's length in milliseconds, once finished",
-                    "optional": true,
-                    "type": "integer"
-                  },
-                  "suites": {
-                    "description": "how many suites the run scheduled",
-                    "optional": false,
-                    "type": "integer"
-                  },
-                  "invoker": {
-                    "description": "who launched the run: `human`, `claude`, `codex`, or `remote` for another fume",
-                    "optional": false,
-                    "type": "string"
-                  },
-                  "finished": {
-                    "description": "when the run finished; absent while it is in flight",
-                    "format": "date-time",
-                    "optional": true,
-                    "type": "string"
-                  },
-                  "outcome": {
-                    "description": "`passed`, `failed`, `aborted` or `timed-out`; absent while the run is in flight",
-                    "optional": true,
-                    "type": "string"
-                  },
-                  "id": {
-                    "description": "the run's id, stable across daemon restarts; `last` names the newest run in any tool",
-                    "optional": false,
-                    "type": "string"
-                  },
-                  "machine": {
-                    "description": "the machine the suites ran on",
-                    "optional": false,
-                    "type": "string"
-                  },
-                  "workspace": {
-                    "description": "the working directory `fume` was invoked from",
-                    "optional": false,
-                    "type": "string"
-                  },
-                  "selection": {
-                    "description": "the selection terms forwarded to each suite",
-                    "items": {
-                      "optional": false,
-                      "type": "string"
-                    },
-                    "optional": false,
-                    "type": "array"
-                  },
-                  "started": {
-                    "description": "when the run started, ISO 8601 in UTC",
-                    "format": "date-time",
-                    "optional": false,
-                    "type": "string"
-                  },
-                  "totals": {
-                    "description": "the run's totals, once finished",
-                    "properties": {
-                      "passed": {
-                        "description": "tests which passed, including measurements which completed",
-                        "optional": false,
-                        "type": "integer"
-                      },
-                      "failed": {
-                        "description": "tests which failed, threw, or had a failing check",
-                        "optional": false,
-                        "type": "integer"
-                      },
-                      "aspirePassed": {
-                        "description": "aspirational tests which passed",
-                        "optional": false,
-                        "type": "integer"
-                      },
-                      "aspireFailed": {
-                        "description": "aspirational tests which failed, which does not fail the run",
-                        "optional": false,
-                        "type": "integer"
-                      }
-                    },
-                    "optional": true,
-                    "required": [
-                      "passed",
-                      "failed",
-                      "aspirePassed",
-                      "aspireFailed"
-                    ],
-                    "additionalProperties": false,
-                    "type": "object"
-                  }
-                },
-                "optional": false,
-                "required": [
-                  "id",
-                  "workspace",
-                  "invoker",
-                  "machine",
-                  "started",
-                  "selection",
-                  "suites"
-                ],
-                "additionalProperties": false,
-                "type": "object"
-              },
-              "active": {
-                "description": "tests and suites in flight",
-                "items": {
-                  "properties": {
-                    "ref": {
-                      "description": "the test or suite in flight",
-                      "properties": {
-                        "name": {
-                          "description": "the test's name",
-                          "optional": false,
-                          "type": "string"
-                        },
-                        "path": {
-                          "description": "the path of names or monikers from the root suite to the test",
-                          "items": {
-                            "optional": false,
-                            "type": "string"
-                          },
-                          "optional": false,
-                          "type": "array"
-                        },
-                        "line": {
-                          "description": "the line declaring the test",
-                          "optional": false,
-                          "type": "integer"
-                        },
-                        "moniker": {
-                          "description": "the test's moniker, a selection term, when it declares one",
-                          "optional": true,
-                          "type": "string"
-                        },
-                        "id": {
-                          "description": "the test's 6-hex id, a selection term for `fume run`; empty for a suite",
-                          "optional": false,
-                          "type": "string"
-                        },
-                        "file": {
-                          "description": "the source file declaring the test",
-                          "optional": false,
-                          "type": "string"
-                        },
-                        "suite": {
-                          "description": "the suite class the test was run under",
-                          "optional": false,
-                          "type": "string"
-                        }
-                      },
-                      "optional": false,
-                      "required": [
-                        "id",
-                        "name",
-                        "path",
-                        "suite",
-                        "file",
-                        "line"
-                      ],
-                      "additionalProperties": false,
-                      "type": "object"
-                    }
-                  },
-                  "optional": false,
-                  "required": [
-                    "ref"
-                  ],
-                  "additionalProperties": false,
-                  "type": "object"
-                },
-                "optional": false,
-                "type": "array"
-              }
-            },
-            "optional": false,
-            "required": [
-              "summary",
-              "suitesDone",
-              "suitesTotal",
-              "active"
-            ],
-            "additionalProperties": false,
-            "type": "object"
-          },
+        "outcome": {
+          "description": "`pass`, `fail`, `throws`, `check-throws`, `aspire-pass` or `aspire-fail`",
           "optional": false,
-          "type": "array"
+          "type": "string"
         },
-        "worker": {
-          "description": "the run this daemon is working for another machine, if any",
-          "properties": {
-            "controller": {
-              "description": "the hostname of the controller whose run this daemon is working",
-              "optional": false,
-              "type": "string"
-            },
-            "current": {
-              "description": "the suite running now",
-              "optional": true,
-              "type": "string"
-            }
-          },
-          "optional": true,
-          "required": [
-            "controller"
-          ],
-          "additionalProperties": false,
-          "type": "object"
+        "nanoseconds": {
+          "description": "how long the cell took, in nanoseconds",
+          "optional": false,
+          "type": "integer"
         }
       },
       "optional": false,
       "required": [
-        "daemon",
-        "services",
-        "runs"
+        "coordinates",
+        "outcome",
+        "nanoseconds"
+      ],
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "IndexedTest": {
+      "properties": {
+        "kind": {
+          "description": "`check`, `bench`, `stress` or `profile`",
+          "optional": false,
+          "type": "string"
+        },
+        "moniker": {
+          "description": "the test's moniker, when it declares one",
+          "optional": true,
+          "type": "string"
+        },
+        "file": {
+          "description": "the source file",
+          "optional": false,
+          "type": "string"
+        },
+        "dynamic": {
+          "description": "whether part of the test's name is computed at runtime",
+          "optional": false,
+          "type": "boolean"
+        },
+        "path": {
+          "description": "the path of names or monikers from the root suite to the test",
+          "items": {
+            "optional": false,
+            "type": "string"
+          },
+          "optional": false,
+          "type": "array"
+        },
+        "suite": {
+          "description": "the suite class declaring the test",
+          "optional": false,
+          "type": "string"
+        },
+        "tags": {
+          "description": "the test's tags",
+          "items": {
+            "optional": false,
+            "type": "string"
+          },
+          "optional": false,
+          "type": "array"
+        },
+        "spread": {
+          "description": "whether the test is declared over axes, whose cells the index does not know",
+          "optional": false,
+          "type": "boolean"
+        },
+        "line": {
+          "description": "the line",
+          "optional": false,
+          "type": "integer"
+        },
+        "id": {
+          "description": "the test's 6-hex id; absent when its name is only known at runtime",
+          "optional": true,
+          "type": "string"
+        },
+        "name": {
+          "description": "the test's name, with `*` for each part computed at runtime",
+          "optional": false,
+          "type": "string"
+        }
+      },
+      "optional": false,
+      "required": [
+        "path",
+        "name",
+        "kind",
+        "tags",
+        "suite",
+        "file",
+        "line",
+        "spread",
+        "dynamic"
+      ],
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "Service": {
+      "properties": {
+        "name": {
+          "description": "`dashboard`, `listener` or `mcp`",
+          "optional": false,
+          "type": "string"
+        },
+        "port": {
+          "description": "the port it serves on",
+          "optional": false,
+          "type": "integer"
+        }
+      },
+      "optional": false,
+      "required": [
+        "name",
+        "port"
+      ],
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "TestRef": {
+      "properties": {
+        "moniker": {
+          "description": "the test's moniker, a selection term, when it declares one",
+          "optional": true,
+          "type": "string"
+        },
+        "file": {
+          "description": "the source file declaring the test",
+          "optional": false,
+          "type": "string"
+        },
+        "path": {
+          "description": "the path of names or monikers from the root suite to the test",
+          "items": {
+            "optional": false,
+            "type": "string"
+          },
+          "optional": false,
+          "type": "array"
+        },
+        "suite": {
+          "description": "the suite class the test was run under",
+          "optional": false,
+          "type": "string"
+        },
+        "line": {
+          "description": "the line declaring the test",
+          "optional": false,
+          "type": "integer"
+        },
+        "id": {
+          "description": "the test's 6-hex id, a selection term for `fume run`; empty for a suite",
+          "optional": false,
+          "type": "string"
+        },
+        "name": {
+          "description": "the test's name",
+          "optional": false,
+          "type": "string"
+        }
+      },
+      "optional": false,
+      "required": [
+        "id",
+        "name",
+        "path",
+        "suite",
+        "file",
+        "line"
       ],
       "additionalProperties": false,
       "type": "object"
@@ -668,8 +1867,13 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
           "description": "the tests that were running when it did",
           "items": {
             "properties": {
-              "name": {
-                "description": "the test's name",
+              "moniker": {
+                "description": "the test's moniker, a selection term, when it declares one",
+                "optional": true,
+                "type": "string"
+              },
+              "file": {
+                "description": "the source file declaring the test",
                 "optional": false,
                 "type": "string"
               },
@@ -682,28 +1886,23 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
                 "optional": false,
                 "type": "array"
               },
+              "suite": {
+                "description": "the suite class the test was run under",
+                "optional": false,
+                "type": "string"
+              },
               "line": {
                 "description": "the line declaring the test",
                 "optional": false,
                 "type": "integer"
-              },
-              "moniker": {
-                "description": "the test's moniker, a selection term, when it declares one",
-                "optional": true,
-                "type": "string"
               },
               "id": {
                 "description": "the test's 6-hex id, a selection term for `fume run`; empty for a suite",
                 "optional": false,
                 "type": "string"
               },
-              "file": {
-                "description": "the source file declaring the test",
-                "optional": false,
-                "type": "string"
-              },
-              "suite": {
-                "description": "the suite class the test was run under",
+              "name": {
+                "description": "the test's name",
                 "optional": false,
                 "type": "string"
               }
@@ -734,15 +1933,14 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
     },
     "RunSummary": {
       "properties": {
-        "duration": {
-          "description": "the run's length in milliseconds, once finished",
-          "optional": true,
-          "type": "integer"
-        },
-        "suites": {
-          "description": "how many suites the run scheduled",
+        "selection": {
+          "description": "the selection terms forwarded to each suite",
+          "items": {
+            "optional": false,
+            "type": "string"
+          },
           "optional": false,
-          "type": "integer"
+          "type": "array"
         },
         "invoker": {
           "description": "who launched the run: `human`, `claude`, `codex`, or `remote` for another fume",
@@ -760,33 +1958,8 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
           "optional": true,
           "type": "string"
         },
-        "id": {
-          "description": "the run's id, stable across daemon restarts; `last` names the newest run in any tool",
-          "optional": false,
-          "type": "string"
-        },
         "machine": {
           "description": "the machine the suites ran on",
-          "optional": false,
-          "type": "string"
-        },
-        "workspace": {
-          "description": "the working directory `fume` was invoked from",
-          "optional": false,
-          "type": "string"
-        },
-        "selection": {
-          "description": "the selection terms forwarded to each suite",
-          "items": {
-            "optional": false,
-            "type": "string"
-          },
-          "optional": false,
-          "type": "array"
-        },
-        "started": {
-          "description": "when the run started, ISO 8601 in UTC",
-          "format": "date-time",
           "optional": false,
           "type": "string"
         },
@@ -823,6 +1996,32 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
           ],
           "additionalProperties": false,
           "type": "object"
+        },
+        "duration": {
+          "description": "the run's length in milliseconds, once finished",
+          "optional": true,
+          "type": "integer"
+        },
+        "id": {
+          "description": "the run's id, stable across daemon restarts; `last` names the newest run in any tool",
+          "optional": false,
+          "type": "string"
+        },
+        "suites": {
+          "description": "how many suites the run scheduled",
+          "optional": false,
+          "type": "integer"
+        },
+        "workspace": {
+          "description": "the working directory `fume` was invoked from",
+          "optional": false,
+          "type": "string"
+        },
+        "started": {
+          "description": "when the run started, ISO 8601 in UTC",
+          "format": "date-time",
+          "optional": false,
+          "type": "string"
         }
       },
       "optional": false,
@@ -838,34 +2037,182 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
       "additionalProperties": false,
       "type": "object"
     },
-    "Capture": {
+    "Strain": {
       "properties": {
-        "label": {
-          "description": "the captured value's label",
+        "nanoseconds": {
+          "description": "the time measured, in nanoseconds",
           "optional": false,
-          "type": "string"
+          "type": "integer"
         },
-        "value": {
-          "description": "the captured value, rendered",
+        "retained": {
+          "description": "bytes retained after the measurement",
           "optional": false,
-          "type": "string"
+          "type": "integer"
+        },
+        "sustained": {
+          "description": "whether the throughput was sustained at this concurrency",
+          "optional": false,
+          "type": "boolean"
+        },
+        "p50": {
+          "description": "median latency, in nanoseconds",
+          "optional": true,
+          "type": "integer"
+        },
+        "allocation": {
+          "description": "bytes allocated",
+          "optional": false,
+          "type": "integer"
+        },
+        "concurrency": {
+          "description": "concurrent workers",
+          "optional": false,
+          "type": "integer"
+        },
+        "operations": {
+          "description": "operations completed",
+          "optional": false,
+          "type": "integer"
+        },
+        "peakHeap": {
+          "description": "peak heap, in bytes",
+          "optional": false,
+          "type": "integer"
+        },
+        "gcCount": {
+          "description": "garbage collections during the measurement",
+          "optional": false,
+          "type": "integer"
+        },
+        "p99": {
+          "description": "99th percentile latency, in nanoseconds",
+          "optional": true,
+          "type": "integer"
+        },
+        "coordinates": {
+          "description": "the cell's coordinates",
+          "items": {
+            "properties": {
+              "axis": {
+                "description": "the axis's label",
+                "optional": false,
+                "type": "string"
+              },
+              "value": {
+                "description": "the axis's value for this cell, as text",
+                "optional": false,
+                "type": "string"
+              }
+            },
+            "optional": false,
+            "required": [
+              "axis",
+              "value"
+            ],
+            "additionalProperties": false,
+            "type": "object"
+          },
+          "optional": false,
+          "type": "array"
+        },
+        "p999": {
+          "description": "99.9th percentile latency, in nanoseconds",
+          "optional": true,
+          "type": "integer"
+        },
+        "compliance": {
+          "description": "the fraction of operations within the latency target, when one was declared",
+          "optional": true,
+          "type": "number"
+        },
+        "gcTime": {
+          "description": "time spent in garbage collection, in nanoseconds",
+          "optional": false,
+          "type": "integer"
+        },
+        "p90": {
+          "description": "90th percentile latency, in nanoseconds",
+          "optional": true,
+          "type": "integer"
         }
       },
       "optional": false,
       "required": [
-        "label",
-        "value"
+        "coordinates",
+        "concurrency",
+        "operations",
+        "nanoseconds",
+        "allocation",
+        "peakHeap",
+        "retained",
+        "gcCount",
+        "gcTime",
+        "sustained"
+      ],
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "TraceComponent": {
+      "properties": {
+        "className": {
+          "description": "the exception's class",
+          "optional": false,
+          "type": "string"
+        },
+        "message": {
+          "description": "the exception's message",
+          "optional": false,
+          "type": "string"
+        },
+        "frames": {
+          "description": "the stack frames, outermost first",
+          "items": {
+            "properties": {
+              "className": {
+                "description": "the frame's class",
+                "optional": false,
+                "type": "string"
+              },
+              "method": {
+                "description": "the frame's method",
+                "optional": false,
+                "type": "string"
+              },
+              "file": {
+                "description": "the frame's source file",
+                "optional": false,
+                "type": "string"
+              },
+              "line": {
+                "description": "the frame's line, when known",
+                "optional": true,
+                "type": "integer"
+              }
+            },
+            "optional": false,
+            "required": [
+              "className",
+              "method",
+              "file"
+            ],
+            "additionalProperties": false,
+            "type": "object"
+          },
+          "optional": false,
+          "type": "array"
+        }
+      },
+      "optional": false,
+      "required": [
+        "className",
+        "message",
+        "frames"
       ],
       "additionalProperties": false,
       "type": "object"
     },
     "SuiteSummary": {
       "properties": {
-        "captured": {
-          "description": "whether the suite printed anything outside its report; see the `captured` tool",
-          "optional": false,
-          "type": "boolean"
-        },
         "finished": {
           "description": "when the suite finished",
           "format": "date-time",
@@ -877,9 +2224,8 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
           "optional": false,
           "type": "boolean"
         },
-        "started": {
-          "description": "when the suite started",
-          "format": "date-time",
+        "suite": {
+          "description": "the suite's class name",
           "optional": false,
           "type": "string"
         },
@@ -917,8 +2263,14 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
           "additionalProperties": false,
           "type": "object"
         },
-        "suite": {
-          "description": "the suite's class name",
+        "captured": {
+          "description": "whether the suite printed anything outside its report; see the `captured` tool",
+          "optional": false,
+          "type": "boolean"
+        },
+        "started": {
+          "description": "when the suite started",
+          "format": "date-time",
           "optional": false,
           "type": "string"
         }
@@ -934,174 +2286,68 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
       "additionalProperties": false,
       "type": "object"
     },
-    "Benchmark": {
+    "Capture": {
       "properties": {
-        "coordinates": {
-          "description": "the cell's coordinates",
-          "items": {
-            "properties": {
-              "axis": {
-                "description": "the axis's label",
-                "optional": false,
-                "type": "string"
-              },
-              "value": {
-                "description": "the axis's value for this cell, as text",
-                "optional": false,
-                "type": "string"
-              }
-            },
-            "optional": false,
-            "required": [
-              "axis",
-              "value"
-            ],
-            "additionalProperties": false,
-            "type": "object"
-          },
-          "optional": false,
-          "type": "array"
-        },
-        "operationRate": {
-          "description": "the operation rate, when derived",
-          "optional": true,
-          "type": "string"
-        },
-        "runs": {
-          "description": "measurement runs",
-          "optional": false,
-          "type": "integer"
-        },
-        "mean": {
-          "description": "mean time per operation, in nanoseconds",
-          "optional": false,
-          "type": "number"
-        },
-        "min": {
-          "description": "fastest run, in nanoseconds per operation",
-          "optional": false,
-          "type": "number"
-        },
-        "confidence": {
-          "description": "confidence, as a percentage",
-          "optional": false,
-          "type": "integer"
-        },
-        "allocation": {
-          "description": "bytes allocated per operation, when measured",
-          "optional": true,
-          "type": "integer"
-        },
-        "max": {
-          "description": "slowest run, in nanoseconds per operation",
-          "optional": false,
-          "type": "number"
-        },
-        "operationSize": {
-          "description": "the size of one operation, when declared",
-          "optional": true,
-          "type": "string"
-        },
-        "sd": {
-          "description": "standard deviation, in nanoseconds",
-          "optional": false,
-          "type": "number"
-        },
-        "iterations": {
-          "description": "operations timed",
-          "optional": false,
-          "type": "integer"
-        },
-        "nanoseconds": {
-          "description": "the time measured, in nanoseconds",
-          "optional": false,
-          "type": "integer"
-        }
-      },
-      "optional": false,
-      "required": [
-        "coordinates",
-        "nanoseconds",
-        "iterations",
-        "runs",
-        "mean",
-        "min",
-        "max",
-        "sd",
-        "confidence"
-      ],
-      "additionalProperties": false,
-      "type": "object"
-    },
-    "TestRef": {
-      "properties": {
-        "name": {
-          "description": "the test's name",
+        "label": {
+          "description": "the captured value's label",
           "optional": false,
           "type": "string"
         },
-        "path": {
-          "description": "the path of names or monikers from the root suite to the test",
-          "items": {
-            "optional": false,
-            "type": "string"
-          },
-          "optional": false,
-          "type": "array"
-        },
-        "line": {
-          "description": "the line declaring the test",
-          "optional": false,
-          "type": "integer"
-        },
-        "moniker": {
-          "description": "the test's moniker, a selection term, when it declares one",
-          "optional": true,
-          "type": "string"
-        },
-        "id": {
-          "description": "the test's 6-hex id, a selection term for `fume run`; empty for a suite",
-          "optional": false,
-          "type": "string"
-        },
-        "file": {
-          "description": "the source file declaring the test",
-          "optional": false,
-          "type": "string"
-        },
-        "suite": {
-          "description": "the suite class the test was run under",
+        "value": {
+          "description": "the captured value, rendered",
           "optional": false,
           "type": "string"
         }
       },
       "optional": false,
       "required": [
-        "id",
-        "name",
-        "path",
-        "suite",
-        "file",
-        "line"
+        "label",
+        "value"
       ],
       "additionalProperties": false,
       "type": "object"
     },
-    "Hotspot": {
+    "Coordinate": {
+      "properties": {
+        "axis": {
+          "description": "the axis's label",
+          "optional": false,
+          "type": "string"
+        },
+        "value": {
+          "description": "the axis's value for this cell, as text",
+          "optional": false,
+          "type": "string"
+        }
+      },
+      "optional": false,
+      "required": [
+        "axis",
+        "value"
+      ],
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "Frame": {
       "properties": {
         "className": {
-          "description": "the class of the hot method",
+          "description": "the frame's class",
           "optional": false,
           "type": "string"
         },
         "method": {
-          "description": "the hot method",
+          "description": "the frame's method",
           "optional": false,
           "type": "string"
         },
-        "samples": {
-          "description": "execution samples landing in it",
+        "file": {
+          "description": "the frame's source file",
           "optional": false,
+          "type": "string"
+        },
+        "line": {
+          "description": "the frame's line, when known",
+          "optional": true,
           "type": "integer"
         }
       },
@@ -1109,187 +2355,7 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
       "required": [
         "className",
         "method",
-        "samples"
-      ],
-      "additionalProperties": false,
-      "type": "object"
-    },
-    "Strain": {
-      "properties": {
-        "coordinates": {
-          "description": "the cell's coordinates",
-          "items": {
-            "properties": {
-              "axis": {
-                "description": "the axis's label",
-                "optional": false,
-                "type": "string"
-              },
-              "value": {
-                "description": "the axis's value for this cell, as text",
-                "optional": false,
-                "type": "string"
-              }
-            },
-            "optional": false,
-            "required": [
-              "axis",
-              "value"
-            ],
-            "additionalProperties": false,
-            "type": "object"
-          },
-          "optional": false,
-          "type": "array"
-        },
-        "operations": {
-          "description": "operations completed",
-          "optional": false,
-          "type": "integer"
-        },
-        "compliance": {
-          "description": "the fraction of operations within the latency target, when one was declared",
-          "optional": true,
-          "type": "number"
-        },
-        "peakHeap": {
-          "description": "peak heap, in bytes",
-          "optional": false,
-          "type": "integer"
-        },
-        "sustained": {
-          "description": "whether the throughput was sustained at this concurrency",
-          "optional": false,
-          "type": "boolean"
-        },
-        "gcTime": {
-          "description": "time spent in garbage collection, in nanoseconds",
-          "optional": false,
-          "type": "integer"
-        },
-        "concurrency": {
-          "description": "concurrent workers",
-          "optional": false,
-          "type": "integer"
-        },
-        "p90": {
-          "description": "90th percentile latency, in nanoseconds",
-          "optional": true,
-          "type": "integer"
-        },
-        "retained": {
-          "description": "bytes retained after the measurement",
-          "optional": false,
-          "type": "integer"
-        },
-        "p99": {
-          "description": "99th percentile latency, in nanoseconds",
-          "optional": true,
-          "type": "integer"
-        },
-        "nanoseconds": {
-          "description": "the time measured, in nanoseconds",
-          "optional": false,
-          "type": "integer"
-        },
-        "p50": {
-          "description": "median latency, in nanoseconds",
-          "optional": true,
-          "type": "integer"
-        },
-        "p999": {
-          "description": "99.9th percentile latency, in nanoseconds",
-          "optional": true,
-          "type": "integer"
-        },
-        "gcCount": {
-          "description": "garbage collections during the measurement",
-          "optional": false,
-          "type": "integer"
-        },
-        "allocation": {
-          "description": "bytes allocated",
-          "optional": false,
-          "type": "integer"
-        }
-      },
-      "optional": false,
-      "required": [
-        "coordinates",
-        "concurrency",
-        "operations",
-        "nanoseconds",
-        "allocation",
-        "peakHeap",
-        "retained",
-        "gcCount",
-        "gcTime",
-        "sustained"
-      ],
-      "additionalProperties": false,
-      "type": "object"
-    },
-    "ActiveTest": {
-      "properties": {
-        "ref": {
-          "description": "the test or suite in flight",
-          "properties": {
-            "name": {
-              "description": "the test's name",
-              "optional": false,
-              "type": "string"
-            },
-            "path": {
-              "description": "the path of names or monikers from the root suite to the test",
-              "items": {
-                "optional": false,
-                "type": "string"
-              },
-              "optional": false,
-              "type": "array"
-            },
-            "line": {
-              "description": "the line declaring the test",
-              "optional": false,
-              "type": "integer"
-            },
-            "moniker": {
-              "description": "the test's moniker, a selection term, when it declares one",
-              "optional": true,
-              "type": "string"
-            },
-            "id": {
-              "description": "the test's 6-hex id, a selection term for `fume run`; empty for a suite",
-              "optional": false,
-              "type": "string"
-            },
-            "file": {
-              "description": "the source file declaring the test",
-              "optional": false,
-              "type": "string"
-            },
-            "suite": {
-              "description": "the suite class the test was run under",
-              "optional": false,
-              "type": "string"
-            }
-          },
-          "optional": false,
-          "required": [
-            "id",
-            "name",
-            "path",
-            "suite",
-            "file",
-            "line"
-          ],
-          "additionalProperties": false,
-          "type": "object"
-        }
-      },
-      "optional": false,
-      "required": [
-        "ref"
+        "file"
       ],
       "additionalProperties": false,
       "type": "object"
@@ -1305,211 +2371,6 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
           "description": "every failing test, with its diagnostics",
           "items": {
             "properties": {
-              "predicate": {
-                "description": "the predicate which failed, as written, when it was dissected",
-                "optional": true,
-                "type": "string"
-              },
-              "comparison": {
-                "description": "the structural comparison, row by row, when the test compared",
-                "items": {
-                  "properties": {
-                    "depth": {
-                      "description": "the row's depth in the structural comparison",
-                      "optional": false,
-                      "type": "integer"
-                    },
-                    "kind": {
-                      "description": "`same`, `different`, or `collation` for a structure whose parts follow",
-                      "optional": false,
-                      "type": "string"
-                    },
-                    "difference": {
-                      "description": "how they differ, or the structure's type name for a collation",
-                      "optional": true,
-                      "type": "string"
-                    },
-                    "right": {
-                      "description": "the found side",
-                      "optional": false,
-                      "type": "string"
-                    },
-                    "left": {
-                      "description": "the expected side",
-                      "optional": false,
-                      "type": "string"
-                    },
-                    "label": {
-                      "description": "the field or element compared; empty at the root",
-                      "optional": false,
-                      "type": "string"
-                    }
-                  },
-                  "optional": false,
-                  "required": [
-                    "depth",
-                    "label",
-                    "kind",
-                    "left",
-                    "right"
-                  ],
-                  "additionalProperties": false,
-                  "type": "object"
-                },
-                "optional": false,
-                "type": "array"
-              },
-              "captures": {
-                "description": "values the test captured for its report",
-                "items": {
-                  "properties": {
-                    "label": {
-                      "description": "the captured value's label",
-                      "optional": false,
-                      "type": "string"
-                    },
-                    "value": {
-                      "description": "the captured value, rendered",
-                      "optional": false,
-                      "type": "string"
-                    }
-                  },
-                  "optional": false,
-                  "required": [
-                    "label",
-                    "value"
-                  ],
-                  "additionalProperties": false,
-                  "type": "object"
-                },
-                "optional": false,
-                "type": "array"
-              },
-              "expected": {
-                "description": "the expected value, rendered, when the test compared",
-                "optional": true,
-                "type": "string"
-              },
-              "ref": {
-                "description": "the failing test",
-                "properties": {
-                  "name": {
-                    "description": "the test's name",
-                    "optional": false,
-                    "type": "string"
-                  },
-                  "path": {
-                    "description": "the path of names or monikers from the root suite to the test",
-                    "items": {
-                      "optional": false,
-                      "type": "string"
-                    },
-                    "optional": false,
-                    "type": "array"
-                  },
-                  "line": {
-                    "description": "the line declaring the test",
-                    "optional": false,
-                    "type": "integer"
-                  },
-                  "moniker": {
-                    "description": "the test's moniker, a selection term, when it declares one",
-                    "optional": true,
-                    "type": "string"
-                  },
-                  "id": {
-                    "description": "the test's 6-hex id, a selection term for `fume run`; empty for a suite",
-                    "optional": false,
-                    "type": "string"
-                  },
-                  "file": {
-                    "description": "the source file declaring the test",
-                    "optional": false,
-                    "type": "string"
-                  },
-                  "suite": {
-                    "description": "the suite class the test was run under",
-                    "optional": false,
-                    "type": "string"
-                  }
-                },
-                "optional": false,
-                "required": [
-                  "id",
-                  "name",
-                  "path",
-                  "suite",
-                  "file",
-                  "line"
-                ],
-                "additionalProperties": false,
-                "type": "object"
-              },
-              "found": {
-                "description": "the found value, rendered, when the test compared",
-                "optional": true,
-                "type": "string"
-              },
-              "status": {
-                "description": "`fail`, `throws`, `check-throws`, `mixed` or `aspire-fail`",
-                "optional": false,
-                "type": "string"
-              },
-              "message": {
-                "description": "the failure's message, when the test gave one",
-                "optional": true,
-                "type": "string"
-              },
-              "dissection": {
-                "description": "the predicate's intermediate values on the value which failed, the whole first",
-                "items": {
-                  "properties": {
-                    "code": {
-                      "description": "the subexpression, as written",
-                      "optional": false,
-                      "type": "string"
-                    },
-                    "kind": {
-                      "description": "`value`, or `thrown` for a predicate which threw",
-                      "optional": false,
-                      "type": "string"
-                    },
-                    "start": {
-                      "description": "where the subexpression starts in the predicate's source",
-                      "optional": false,
-                      "type": "integer"
-                    },
-                    "value": {
-                      "description": "the subexpression's value, rendered; or the exception, for `thrown`",
-                      "optional": false,
-                      "type": "string"
-                    },
-                    "end": {
-                      "description": "where the subexpression ends in the predicate's source",
-                      "optional": false,
-                      "type": "integer"
-                    },
-                    "depth": {
-                      "description": "the row's depth in the tree of the predicate's subexpressions",
-                      "optional": false,
-                      "type": "integer"
-                    }
-                  },
-                  "optional": false,
-                  "required": [
-                    "depth",
-                    "code",
-                    "start",
-                    "end",
-                    "value",
-                    "kind"
-                  ],
-                  "additionalProperties": false,
-                  "type": "object"
-                },
-                "optional": false,
-                "type": "array"
-              },
               "trace": {
                 "description": "the stack trace, when the test threw",
                 "properties": {
@@ -1585,8 +2446,213 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
                 "additionalProperties": false,
                 "type": "object"
               },
+              "found": {
+                "description": "the found value, rendered, when the test compared",
+                "optional": true,
+                "type": "string"
+              },
+              "dissection": {
+                "description": "the predicate's intermediate values on the value which failed, the whole first",
+                "items": {
+                  "properties": {
+                    "kind": {
+                      "description": "`value`, or `thrown` for a predicate which threw",
+                      "optional": false,
+                      "type": "string"
+                    },
+                    "end": {
+                      "description": "where the subexpression ends in the predicate's source",
+                      "optional": false,
+                      "type": "integer"
+                    },
+                    "value": {
+                      "description": "the subexpression's value, rendered; or the exception, for `thrown`",
+                      "optional": false,
+                      "type": "string"
+                    },
+                    "depth": {
+                      "description": "the row's depth in the tree of the predicate's subexpressions",
+                      "optional": false,
+                      "type": "integer"
+                    },
+                    "code": {
+                      "description": "the subexpression, as written",
+                      "optional": false,
+                      "type": "string"
+                    },
+                    "start": {
+                      "description": "where the subexpression starts in the predicate's source",
+                      "optional": false,
+                      "type": "integer"
+                    }
+                  },
+                  "optional": false,
+                  "required": [
+                    "depth",
+                    "code",
+                    "start",
+                    "end",
+                    "value",
+                    "kind"
+                  ],
+                  "additionalProperties": false,
+                  "type": "object"
+                },
+                "optional": false,
+                "type": "array"
+              },
+              "predicate": {
+                "description": "the predicate which failed, as written, when it was dissected",
+                "optional": true,
+                "type": "string"
+              },
+              "ref": {
+                "description": "the failing test",
+                "properties": {
+                  "moniker": {
+                    "description": "the test's moniker, a selection term, when it declares one",
+                    "optional": true,
+                    "type": "string"
+                  },
+                  "file": {
+                    "description": "the source file declaring the test",
+                    "optional": false,
+                    "type": "string"
+                  },
+                  "path": {
+                    "description": "the path of names or monikers from the root suite to the test",
+                    "items": {
+                      "optional": false,
+                      "type": "string"
+                    },
+                    "optional": false,
+                    "type": "array"
+                  },
+                  "suite": {
+                    "description": "the suite class the test was run under",
+                    "optional": false,
+                    "type": "string"
+                  },
+                  "line": {
+                    "description": "the line declaring the test",
+                    "optional": false,
+                    "type": "integer"
+                  },
+                  "id": {
+                    "description": "the test's 6-hex id, a selection term for `fume run`; empty for a suite",
+                    "optional": false,
+                    "type": "string"
+                  },
+                  "name": {
+                    "description": "the test's name",
+                    "optional": false,
+                    "type": "string"
+                  }
+                },
+                "optional": false,
+                "required": [
+                  "id",
+                  "name",
+                  "path",
+                  "suite",
+                  "file",
+                  "line"
+                ],
+                "additionalProperties": false,
+                "type": "object"
+              },
               "rerun": {
                 "description": "the command which reruns exactly this test",
+                "optional": false,
+                "type": "string"
+              },
+              "message": {
+                "description": "the failure's message, when the test gave one",
+                "optional": true,
+                "type": "string"
+              },
+              "expected": {
+                "description": "the expected value, rendered, when the test compared",
+                "optional": true,
+                "type": "string"
+              },
+              "comparison": {
+                "description": "the structural comparison, row by row, when the test compared",
+                "items": {
+                  "properties": {
+                    "kind": {
+                      "description": "`same`, `different`, or `collation` for a structure whose parts follow",
+                      "optional": false,
+                      "type": "string"
+                    },
+                    "label": {
+                      "description": "the field or element compared; empty at the root",
+                      "optional": false,
+                      "type": "string"
+                    },
+                    "right": {
+                      "description": "the found side",
+                      "optional": false,
+                      "type": "string"
+                    },
+                    "difference": {
+                      "description": "how they differ, or the structure's type name for a collation",
+                      "optional": true,
+                      "type": "string"
+                    },
+                    "depth": {
+                      "description": "the row's depth in the structural comparison",
+                      "optional": false,
+                      "type": "integer"
+                    },
+                    "left": {
+                      "description": "the expected side",
+                      "optional": false,
+                      "type": "string"
+                    }
+                  },
+                  "optional": false,
+                  "required": [
+                    "depth",
+                    "label",
+                    "kind",
+                    "left",
+                    "right"
+                  ],
+                  "additionalProperties": false,
+                  "type": "object"
+                },
+                "optional": false,
+                "type": "array"
+              },
+              "captures": {
+                "description": "values the test captured for its report",
+                "items": {
+                  "properties": {
+                    "label": {
+                      "description": "the captured value's label",
+                      "optional": false,
+                      "type": "string"
+                    },
+                    "value": {
+                      "description": "the captured value, rendered",
+                      "optional": false,
+                      "type": "string"
+                    }
+                  },
+                  "optional": false,
+                  "required": [
+                    "label",
+                    "value"
+                  ],
+                  "additionalProperties": false,
+                  "type": "object"
+                },
+                "optional": false,
+                "type": "array"
+              },
+              "status": {
+                "description": "`fail`, `throws`, `check-throws`, `mixed` or `aspire-fail`",
                 "optional": false,
                 "type": "string"
               }
@@ -1689,8 +2755,13 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
                 "description": "the tests that were running when it did",
                 "items": {
                   "properties": {
-                    "name": {
-                      "description": "the test's name",
+                    "moniker": {
+                      "description": "the test's moniker, a selection term, when it declares one",
+                      "optional": true,
+                      "type": "string"
+                    },
+                    "file": {
+                      "description": "the source file declaring the test",
                       "optional": false,
                       "type": "string"
                     },
@@ -1703,28 +2774,23 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
                       "optional": false,
                       "type": "array"
                     },
+                    "suite": {
+                      "description": "the suite class the test was run under",
+                      "optional": false,
+                      "type": "string"
+                    },
                     "line": {
                       "description": "the line declaring the test",
                       "optional": false,
                       "type": "integer"
-                    },
-                    "moniker": {
-                      "description": "the test's moniker, a selection term, when it declares one",
-                      "optional": true,
-                      "type": "string"
                     },
                     "id": {
                       "description": "the test's 6-hex id, a selection term for `fume run`; empty for a suite",
                       "optional": false,
                       "type": "string"
                     },
-                    "file": {
-                      "description": "the source file declaring the test",
-                      "optional": false,
-                      "type": "string"
-                    },
-                    "suite": {
-                      "description": "the suite class the test was run under",
+                    "name": {
+                      "description": "the test's name",
                       "optional": false,
                       "type": "string"
                     }
@@ -1772,431 +2838,54 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
       "additionalProperties": false,
       "type": "object"
     },
-    "TestResult": {
+    "Daemon": {
       "properties": {
-        "benchmarks": {
-          "description": "each cell's benchmark record, for a `bench`",
-          "items": {
-            "properties": {
-              "coordinates": {
-                "description": "the cell's coordinates",
-                "items": {
-                  "properties": {
-                    "axis": {
-                      "description": "the axis's label",
-                      "optional": false,
-                      "type": "string"
-                    },
-                    "value": {
-                      "description": "the axis's value for this cell, as text",
-                      "optional": false,
-                      "type": "string"
-                    }
-                  },
-                  "optional": false,
-                  "required": [
-                    "axis",
-                    "value"
-                  ],
-                  "additionalProperties": false,
-                  "type": "object"
-                },
-                "optional": false,
-                "type": "array"
-              },
-              "operationRate": {
-                "description": "the operation rate, when derived",
-                "optional": true,
-                "type": "string"
-              },
-              "runs": {
-                "description": "measurement runs",
-                "optional": false,
-                "type": "integer"
-              },
-              "mean": {
-                "description": "mean time per operation, in nanoseconds",
-                "optional": false,
-                "type": "number"
-              },
-              "min": {
-                "description": "fastest run, in nanoseconds per operation",
-                "optional": false,
-                "type": "number"
-              },
-              "confidence": {
-                "description": "confidence, as a percentage",
-                "optional": false,
-                "type": "integer"
-              },
-              "allocation": {
-                "description": "bytes allocated per operation, when measured",
-                "optional": true,
-                "type": "integer"
-              },
-              "max": {
-                "description": "slowest run, in nanoseconds per operation",
-                "optional": false,
-                "type": "number"
-              },
-              "operationSize": {
-                "description": "the size of one operation, when declared",
-                "optional": true,
-                "type": "string"
-              },
-              "sd": {
-                "description": "standard deviation, in nanoseconds",
-                "optional": false,
-                "type": "number"
-              },
-              "iterations": {
-                "description": "operations timed",
-                "optional": false,
-                "type": "integer"
-              },
-              "nanoseconds": {
-                "description": "the time measured, in nanoseconds",
-                "optional": false,
-                "type": "integer"
-              }
-            },
-            "optional": false,
-            "required": [
-              "coordinates",
-              "nanoseconds",
-              "iterations",
-              "runs",
-              "mean",
-              "min",
-              "max",
-              "sd",
-              "confidence"
-            ],
-            "additionalProperties": false,
-            "type": "object"
-          },
+        "pid": {
+          "description": "the daemon's pid",
           "optional": false,
-          "type": "array"
+          "type": "integer"
         },
-        "rerun": {
-          "description": "the command which reruns exactly this test",
+        "version": {
+          "description": "fume's version",
           "optional": false,
           "type": "string"
         },
-        "ref": {
-          "description": "the test",
-          "properties": {
-            "name": {
-              "description": "the test's name",
-              "optional": false,
-              "type": "string"
-            },
-            "path": {
-              "description": "the path of names or monikers from the root suite to the test",
-              "items": {
-                "optional": false,
-                "type": "string"
-              },
-              "optional": false,
-              "type": "array"
-            },
-            "line": {
-              "description": "the line declaring the test",
-              "optional": false,
-              "type": "integer"
-            },
-            "moniker": {
-              "description": "the test's moniker, a selection term, when it declares one",
-              "optional": true,
-              "type": "string"
-            },
-            "id": {
-              "description": "the test's 6-hex id, a selection term for `fume run`; empty for a suite",
-              "optional": false,
-              "type": "string"
-            },
-            "file": {
-              "description": "the source file declaring the test",
-              "optional": false,
-              "type": "string"
-            },
-            "suite": {
-              "description": "the suite class the test was run under",
-              "optional": false,
-              "type": "string"
-            }
-          },
-          "optional": false,
-          "required": [
-            "id",
-            "name",
-            "path",
-            "suite",
-            "file",
-            "line"
-          ],
-          "additionalProperties": false,
-          "type": "object"
-        },
-        "strains": {
-          "description": "each concurrency level's record, for a `stress`",
-          "items": {
-            "properties": {
-              "coordinates": {
-                "description": "the cell's coordinates",
-                "items": {
-                  "properties": {
-                    "axis": {
-                      "description": "the axis's label",
-                      "optional": false,
-                      "type": "string"
-                    },
-                    "value": {
-                      "description": "the axis's value for this cell, as text",
-                      "optional": false,
-                      "type": "string"
-                    }
-                  },
-                  "optional": false,
-                  "required": [
-                    "axis",
-                    "value"
-                  ],
-                  "additionalProperties": false,
-                  "type": "object"
-                },
-                "optional": false,
-                "type": "array"
-              },
-              "operations": {
-                "description": "operations completed",
-                "optional": false,
-                "type": "integer"
-              },
-              "compliance": {
-                "description": "the fraction of operations within the latency target, when one was declared",
-                "optional": true,
-                "type": "number"
-              },
-              "peakHeap": {
-                "description": "peak heap, in bytes",
-                "optional": false,
-                "type": "integer"
-              },
-              "sustained": {
-                "description": "whether the throughput was sustained at this concurrency",
-                "optional": false,
-                "type": "boolean"
-              },
-              "gcTime": {
-                "description": "time spent in garbage collection, in nanoseconds",
-                "optional": false,
-                "type": "integer"
-              },
-              "concurrency": {
-                "description": "concurrent workers",
-                "optional": false,
-                "type": "integer"
-              },
-              "p90": {
-                "description": "90th percentile latency, in nanoseconds",
-                "optional": true,
-                "type": "integer"
-              },
-              "retained": {
-                "description": "bytes retained after the measurement",
-                "optional": false,
-                "type": "integer"
-              },
-              "p99": {
-                "description": "99th percentile latency, in nanoseconds",
-                "optional": true,
-                "type": "integer"
-              },
-              "nanoseconds": {
-                "description": "the time measured, in nanoseconds",
-                "optional": false,
-                "type": "integer"
-              },
-              "p50": {
-                "description": "median latency, in nanoseconds",
-                "optional": true,
-                "type": "integer"
-              },
-              "p999": {
-                "description": "99.9th percentile latency, in nanoseconds",
-                "optional": true,
-                "type": "integer"
-              },
-              "gcCount": {
-                "description": "garbage collections during the measurement",
-                "optional": false,
-                "type": "integer"
-              },
-              "allocation": {
-                "description": "bytes allocated",
-                "optional": false,
-                "type": "integer"
-              }
-            },
-            "optional": false,
-            "required": [
-              "coordinates",
-              "concurrency",
-              "operations",
-              "nanoseconds",
-              "allocation",
-              "peakHeap",
-              "retained",
-              "gcCount",
-              "gcTime",
-              "sustained"
-            ],
-            "additionalProperties": false,
-            "type": "object"
-          },
-          "optional": false,
-          "type": "array"
-        },
-        "status": {
-          "description": "the test's collective status: `pass`, `fail`, `throws`, `check-throws`, `aspire-pass`, `aspire-fail`, `mixed` (its cells disagree), or `bench`, `stress`, `profile` for a measurement",
+        "started": {
+          "description": "when the daemon started",
+          "format": "date-time",
           "optional": false,
           "type": "string"
         },
-        "hotspots": {
-          "description": "the hot methods, for a `profile`",
-          "items": {
-            "properties": {
-              "className": {
-                "description": "the class of the hot method",
-                "optional": false,
-                "type": "string"
-              },
-              "method": {
-                "description": "the hot method",
-                "optional": false,
-                "type": "string"
-              },
-              "samples": {
-                "description": "execution samples landing in it",
-                "optional": false,
-                "type": "integer"
-              }
-            },
-            "optional": false,
-            "required": [
-              "className",
-              "method",
-              "samples"
-            ],
-            "additionalProperties": false,
-            "type": "object"
-          },
+        "runsDirectory": {
+          "description": "where runs are persisted",
           "optional": false,
-          "type": "array"
-        },
-        "kind": {
-          "description": "`check`, `bench`, `stress` or `profile`",
-          "optional": false,
-          "type": "string"
-        },
-        "completions": {
-          "description": "each cell's outcome, for a `check`",
-          "items": {
-            "properties": {
-              "coordinates": {
-                "description": "the cell's coordinates; empty for a test without axes",
-                "items": {
-                  "properties": {
-                    "axis": {
-                      "description": "the axis's label",
-                      "optional": false,
-                      "type": "string"
-                    },
-                    "value": {
-                      "description": "the axis's value for this cell, as text",
-                      "optional": false,
-                      "type": "string"
-                    }
-                  },
-                  "optional": false,
-                  "required": [
-                    "axis",
-                    "value"
-                  ],
-                  "additionalProperties": false,
-                  "type": "object"
-                },
-                "optional": false,
-                "type": "array"
-              },
-              "outcome": {
-                "description": "`pass`, `fail`, `throws`, `check-throws`, `aspire-pass` or `aspire-fail`",
-                "optional": false,
-                "type": "string"
-              },
-              "nanoseconds": {
-                "description": "how long the cell took, in nanoseconds",
-                "optional": false,
-                "type": "integer"
-              }
-            },
-            "optional": false,
-            "required": [
-              "coordinates",
-              "outcome",
-              "nanoseconds"
-            ],
-            "additionalProperties": false,
-            "type": "object"
-          },
-          "optional": false,
-          "type": "array"
-        }
-      },
-      "optional": false,
-      "required": [
-        "ref",
-        "kind",
-        "status",
-        "completions",
-        "benchmarks",
-        "strains",
-        "hotspots",
-        "rerun"
-      ],
-      "additionalProperties": false,
-      "type": "object"
-    },
-    "WorkerSession": {
-      "properties": {
-        "controller": {
-          "description": "the hostname of the controller whose run this daemon is working",
-          "optional": false,
-          "type": "string"
-        },
-        "current": {
-          "description": "the suite running now",
-          "optional": true,
           "type": "string"
         }
       },
       "optional": false,
       "required": [
-        "controller"
+        "pid",
+        "version",
+        "started",
+        "runsDirectory"
       ],
       "additionalProperties": false,
       "type": "object"
     },
     "Comparison": {
       "properties": {
-        "depth": {
-          "description": "the row's depth in the structural comparison",
-          "optional": false,
-          "type": "integer"
-        },
         "kind": {
           "description": "`same`, `different`, or `collation` for a structure whose parts follow",
+          "optional": false,
+          "type": "string"
+        },
+        "label": {
+          "description": "the field or element compared; empty at the root",
+          "optional": false,
+          "type": "string"
+        },
+        "right": {
+          "description": "the found side",
           "optional": false,
           "type": "string"
         },
@@ -2205,18 +2894,13 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
           "optional": true,
           "type": "string"
         },
-        "right": {
-          "description": "the found side",
+        "depth": {
+          "description": "the row's depth in the structural comparison",
           "optional": false,
-          "type": "string"
+          "type": "integer"
         },
         "left": {
           "description": "the expected side",
-          "optional": false,
-          "type": "string"
-        },
-        "label": {
-          "description": "the field or element compared; empty at the root",
           "optional": false,
           "type": "string"
         }
@@ -2232,444 +2916,8 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
       "additionalProperties": false,
       "type": "object"
     },
-    "Coordinate": {
-      "properties": {
-        "axis": {
-          "description": "the axis's label",
-          "optional": false,
-          "type": "string"
-        },
-        "value": {
-          "description": "the axis's value for this cell, as text",
-          "optional": false,
-          "type": "string"
-        }
-      },
-      "optional": false,
-      "required": [
-        "axis",
-        "value"
-      ],
-      "additionalProperties": false,
-      "type": "object"
-    },
-    "ActiveRun": {
-      "properties": {
-        "suitesDone": {
-          "description": "suites finished so far",
-          "optional": false,
-          "type": "integer"
-        },
-        "forked": {
-          "description": "the pid of the suite's own JVM, under `--fork`",
-          "optional": true,
-          "type": "integer"
-        },
-        "suitesTotal": {
-          "description": "suites scheduled",
-          "optional": false,
-          "type": "integer"
-        },
-        "current": {
-          "description": "the suite running now",
-          "optional": true,
-          "type": "string"
-        },
-        "summary": {
-          "description": "the run in summary",
-          "properties": {
-            "duration": {
-              "description": "the run's length in milliseconds, once finished",
-              "optional": true,
-              "type": "integer"
-            },
-            "suites": {
-              "description": "how many suites the run scheduled",
-              "optional": false,
-              "type": "integer"
-            },
-            "invoker": {
-              "description": "who launched the run: `human`, `claude`, `codex`, or `remote` for another fume",
-              "optional": false,
-              "type": "string"
-            },
-            "finished": {
-              "description": "when the run finished; absent while it is in flight",
-              "format": "date-time",
-              "optional": true,
-              "type": "string"
-            },
-            "outcome": {
-              "description": "`passed`, `failed`, `aborted` or `timed-out`; absent while the run is in flight",
-              "optional": true,
-              "type": "string"
-            },
-            "id": {
-              "description": "the run's id, stable across daemon restarts; `last` names the newest run in any tool",
-              "optional": false,
-              "type": "string"
-            },
-            "machine": {
-              "description": "the machine the suites ran on",
-              "optional": false,
-              "type": "string"
-            },
-            "workspace": {
-              "description": "the working directory `fume` was invoked from",
-              "optional": false,
-              "type": "string"
-            },
-            "selection": {
-              "description": "the selection terms forwarded to each suite",
-              "items": {
-                "optional": false,
-                "type": "string"
-              },
-              "optional": false,
-              "type": "array"
-            },
-            "started": {
-              "description": "when the run started, ISO 8601 in UTC",
-              "format": "date-time",
-              "optional": false,
-              "type": "string"
-            },
-            "totals": {
-              "description": "the run's totals, once finished",
-              "properties": {
-                "passed": {
-                  "description": "tests which passed, including measurements which completed",
-                  "optional": false,
-                  "type": "integer"
-                },
-                "failed": {
-                  "description": "tests which failed, threw, or had a failing check",
-                  "optional": false,
-                  "type": "integer"
-                },
-                "aspirePassed": {
-                  "description": "aspirational tests which passed",
-                  "optional": false,
-                  "type": "integer"
-                },
-                "aspireFailed": {
-                  "description": "aspirational tests which failed, which does not fail the run",
-                  "optional": false,
-                  "type": "integer"
-                }
-              },
-              "optional": true,
-              "required": [
-                "passed",
-                "failed",
-                "aspirePassed",
-                "aspireFailed"
-              ],
-              "additionalProperties": false,
-              "type": "object"
-            }
-          },
-          "optional": false,
-          "required": [
-            "id",
-            "workspace",
-            "invoker",
-            "machine",
-            "started",
-            "selection",
-            "suites"
-          ],
-          "additionalProperties": false,
-          "type": "object"
-        },
-        "active": {
-          "description": "tests and suites in flight",
-          "items": {
-            "properties": {
-              "ref": {
-                "description": "the test or suite in flight",
-                "properties": {
-                  "name": {
-                    "description": "the test's name",
-                    "optional": false,
-                    "type": "string"
-                  },
-                  "path": {
-                    "description": "the path of names or monikers from the root suite to the test",
-                    "items": {
-                      "optional": false,
-                      "type": "string"
-                    },
-                    "optional": false,
-                    "type": "array"
-                  },
-                  "line": {
-                    "description": "the line declaring the test",
-                    "optional": false,
-                    "type": "integer"
-                  },
-                  "moniker": {
-                    "description": "the test's moniker, a selection term, when it declares one",
-                    "optional": true,
-                    "type": "string"
-                  },
-                  "id": {
-                    "description": "the test's 6-hex id, a selection term for `fume run`; empty for a suite",
-                    "optional": false,
-                    "type": "string"
-                  },
-                  "file": {
-                    "description": "the source file declaring the test",
-                    "optional": false,
-                    "type": "string"
-                  },
-                  "suite": {
-                    "description": "the suite class the test was run under",
-                    "optional": false,
-                    "type": "string"
-                  }
-                },
-                "optional": false,
-                "required": [
-                  "id",
-                  "name",
-                  "path",
-                  "suite",
-                  "file",
-                  "line"
-                ],
-                "additionalProperties": false,
-                "type": "object"
-              }
-            },
-            "optional": false,
-            "required": [
-              "ref"
-            ],
-            "additionalProperties": false,
-            "type": "object"
-          },
-          "optional": false,
-          "type": "array"
-        }
-      },
-      "optional": false,
-      "required": [
-        "summary",
-        "suitesDone",
-        "suitesTotal",
-        "active"
-      ],
-      "additionalProperties": false,
-      "type": "object"
-    },
     "Failure": {
       "properties": {
-        "predicate": {
-          "description": "the predicate which failed, as written, when it was dissected",
-          "optional": true,
-          "type": "string"
-        },
-        "comparison": {
-          "description": "the structural comparison, row by row, when the test compared",
-          "items": {
-            "properties": {
-              "depth": {
-                "description": "the row's depth in the structural comparison",
-                "optional": false,
-                "type": "integer"
-              },
-              "kind": {
-                "description": "`same`, `different`, or `collation` for a structure whose parts follow",
-                "optional": false,
-                "type": "string"
-              },
-              "difference": {
-                "description": "how they differ, or the structure's type name for a collation",
-                "optional": true,
-                "type": "string"
-              },
-              "right": {
-                "description": "the found side",
-                "optional": false,
-                "type": "string"
-              },
-              "left": {
-                "description": "the expected side",
-                "optional": false,
-                "type": "string"
-              },
-              "label": {
-                "description": "the field or element compared; empty at the root",
-                "optional": false,
-                "type": "string"
-              }
-            },
-            "optional": false,
-            "required": [
-              "depth",
-              "label",
-              "kind",
-              "left",
-              "right"
-            ],
-            "additionalProperties": false,
-            "type": "object"
-          },
-          "optional": false,
-          "type": "array"
-        },
-        "captures": {
-          "description": "values the test captured for its report",
-          "items": {
-            "properties": {
-              "label": {
-                "description": "the captured value's label",
-                "optional": false,
-                "type": "string"
-              },
-              "value": {
-                "description": "the captured value, rendered",
-                "optional": false,
-                "type": "string"
-              }
-            },
-            "optional": false,
-            "required": [
-              "label",
-              "value"
-            ],
-            "additionalProperties": false,
-            "type": "object"
-          },
-          "optional": false,
-          "type": "array"
-        },
-        "expected": {
-          "description": "the expected value, rendered, when the test compared",
-          "optional": true,
-          "type": "string"
-        },
-        "ref": {
-          "description": "the failing test",
-          "properties": {
-            "name": {
-              "description": "the test's name",
-              "optional": false,
-              "type": "string"
-            },
-            "path": {
-              "description": "the path of names or monikers from the root suite to the test",
-              "items": {
-                "optional": false,
-                "type": "string"
-              },
-              "optional": false,
-              "type": "array"
-            },
-            "line": {
-              "description": "the line declaring the test",
-              "optional": false,
-              "type": "integer"
-            },
-            "moniker": {
-              "description": "the test's moniker, a selection term, when it declares one",
-              "optional": true,
-              "type": "string"
-            },
-            "id": {
-              "description": "the test's 6-hex id, a selection term for `fume run`; empty for a suite",
-              "optional": false,
-              "type": "string"
-            },
-            "file": {
-              "description": "the source file declaring the test",
-              "optional": false,
-              "type": "string"
-            },
-            "suite": {
-              "description": "the suite class the test was run under",
-              "optional": false,
-              "type": "string"
-            }
-          },
-          "optional": false,
-          "required": [
-            "id",
-            "name",
-            "path",
-            "suite",
-            "file",
-            "line"
-          ],
-          "additionalProperties": false,
-          "type": "object"
-        },
-        "found": {
-          "description": "the found value, rendered, when the test compared",
-          "optional": true,
-          "type": "string"
-        },
-        "status": {
-          "description": "`fail`, `throws`, `check-throws`, `mixed` or `aspire-fail`",
-          "optional": false,
-          "type": "string"
-        },
-        "message": {
-          "description": "the failure's message, when the test gave one",
-          "optional": true,
-          "type": "string"
-        },
-        "dissection": {
-          "description": "the predicate's intermediate values on the value which failed, the whole first",
-          "items": {
-            "properties": {
-              "code": {
-                "description": "the subexpression, as written",
-                "optional": false,
-                "type": "string"
-              },
-              "kind": {
-                "description": "`value`, or `thrown` for a predicate which threw",
-                "optional": false,
-                "type": "string"
-              },
-              "start": {
-                "description": "where the subexpression starts in the predicate's source",
-                "optional": false,
-                "type": "integer"
-              },
-              "value": {
-                "description": "the subexpression's value, rendered; or the exception, for `thrown`",
-                "optional": false,
-                "type": "string"
-              },
-              "end": {
-                "description": "where the subexpression ends in the predicate's source",
-                "optional": false,
-                "type": "integer"
-              },
-              "depth": {
-                "description": "the row's depth in the tree of the predicate's subexpressions",
-                "optional": false,
-                "type": "integer"
-              }
-            },
-            "optional": false,
-            "required": [
-              "depth",
-              "code",
-              "start",
-              "end",
-              "value",
-              "kind"
-            ],
-            "additionalProperties": false,
-            "type": "object"
-          },
-          "optional": false,
-          "type": "array"
-        },
         "trace": {
           "description": "the stack trace, when the test threw",
           "properties": {
@@ -2745,8 +2993,213 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
           "additionalProperties": false,
           "type": "object"
         },
+        "found": {
+          "description": "the found value, rendered, when the test compared",
+          "optional": true,
+          "type": "string"
+        },
+        "dissection": {
+          "description": "the predicate's intermediate values on the value which failed, the whole first",
+          "items": {
+            "properties": {
+              "kind": {
+                "description": "`value`, or `thrown` for a predicate which threw",
+                "optional": false,
+                "type": "string"
+              },
+              "end": {
+                "description": "where the subexpression ends in the predicate's source",
+                "optional": false,
+                "type": "integer"
+              },
+              "value": {
+                "description": "the subexpression's value, rendered; or the exception, for `thrown`",
+                "optional": false,
+                "type": "string"
+              },
+              "depth": {
+                "description": "the row's depth in the tree of the predicate's subexpressions",
+                "optional": false,
+                "type": "integer"
+              },
+              "code": {
+                "description": "the subexpression, as written",
+                "optional": false,
+                "type": "string"
+              },
+              "start": {
+                "description": "where the subexpression starts in the predicate's source",
+                "optional": false,
+                "type": "integer"
+              }
+            },
+            "optional": false,
+            "required": [
+              "depth",
+              "code",
+              "start",
+              "end",
+              "value",
+              "kind"
+            ],
+            "additionalProperties": false,
+            "type": "object"
+          },
+          "optional": false,
+          "type": "array"
+        },
+        "predicate": {
+          "description": "the predicate which failed, as written, when it was dissected",
+          "optional": true,
+          "type": "string"
+        },
+        "ref": {
+          "description": "the failing test",
+          "properties": {
+            "moniker": {
+              "description": "the test's moniker, a selection term, when it declares one",
+              "optional": true,
+              "type": "string"
+            },
+            "file": {
+              "description": "the source file declaring the test",
+              "optional": false,
+              "type": "string"
+            },
+            "path": {
+              "description": "the path of names or monikers from the root suite to the test",
+              "items": {
+                "optional": false,
+                "type": "string"
+              },
+              "optional": false,
+              "type": "array"
+            },
+            "suite": {
+              "description": "the suite class the test was run under",
+              "optional": false,
+              "type": "string"
+            },
+            "line": {
+              "description": "the line declaring the test",
+              "optional": false,
+              "type": "integer"
+            },
+            "id": {
+              "description": "the test's 6-hex id, a selection term for `fume run`; empty for a suite",
+              "optional": false,
+              "type": "string"
+            },
+            "name": {
+              "description": "the test's name",
+              "optional": false,
+              "type": "string"
+            }
+          },
+          "optional": false,
+          "required": [
+            "id",
+            "name",
+            "path",
+            "suite",
+            "file",
+            "line"
+          ],
+          "additionalProperties": false,
+          "type": "object"
+        },
         "rerun": {
           "description": "the command which reruns exactly this test",
+          "optional": false,
+          "type": "string"
+        },
+        "message": {
+          "description": "the failure's message, when the test gave one",
+          "optional": true,
+          "type": "string"
+        },
+        "expected": {
+          "description": "the expected value, rendered, when the test compared",
+          "optional": true,
+          "type": "string"
+        },
+        "comparison": {
+          "description": "the structural comparison, row by row, when the test compared",
+          "items": {
+            "properties": {
+              "kind": {
+                "description": "`same`, `different`, or `collation` for a structure whose parts follow",
+                "optional": false,
+                "type": "string"
+              },
+              "label": {
+                "description": "the field or element compared; empty at the root",
+                "optional": false,
+                "type": "string"
+              },
+              "right": {
+                "description": "the found side",
+                "optional": false,
+                "type": "string"
+              },
+              "difference": {
+                "description": "how they differ, or the structure's type name for a collation",
+                "optional": true,
+                "type": "string"
+              },
+              "depth": {
+                "description": "the row's depth in the structural comparison",
+                "optional": false,
+                "type": "integer"
+              },
+              "left": {
+                "description": "the expected side",
+                "optional": false,
+                "type": "string"
+              }
+            },
+            "optional": false,
+            "required": [
+              "depth",
+              "label",
+              "kind",
+              "left",
+              "right"
+            ],
+            "additionalProperties": false,
+            "type": "object"
+          },
+          "optional": false,
+          "type": "array"
+        },
+        "captures": {
+          "description": "values the test captured for its report",
+          "items": {
+            "properties": {
+              "label": {
+                "description": "the captured value's label",
+                "optional": false,
+                "type": "string"
+              },
+              "value": {
+                "description": "the captured value, rendered",
+                "optional": false,
+                "type": "string"
+              }
+            },
+            "optional": false,
+            "required": [
+              "label",
+              "value"
+            ],
+            "additionalProperties": false,
+            "type": "object"
+          },
+          "optional": false,
+          "type": "array"
+        },
+        "status": {
+          "description": "`fail`, `throws`, `check-throws`, `mixed` or `aspire-fail`",
           "optional": false,
           "type": "string"
         }
@@ -2763,358 +3216,23 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
       "additionalProperties": false,
       "type": "object"
     },
-    "Service": {
+    "ActiveTest": {
       "properties": {
-        "name": {
-          "description": "`dashboard`, `listener` or `mcp`",
-          "optional": false,
-          "type": "string"
-        },
-        "port": {
-          "description": "the port it serves on",
-          "optional": false,
-          "type": "integer"
-        }
-      },
-      "optional": false,
-      "required": [
-        "name",
-        "port"
-      ],
-      "additionalProperties": false,
-      "type": "object"
-    },
-    "IndexedSuite": {
-      "properties": {
-        "suite": {
-          "description": "the suite's class name, as `fume run --suite` takes it",
-          "optional": false,
-          "type": "string"
-        },
-        "indexed": {
-          "description": "whether the classpath's static index covers the suite; a suite it does not is listed only by running it",
-          "optional": false,
-          "type": "boolean"
-        },
-        "tests": {
-          "description": "the tests the index declares for the suite",
-          "optional": false,
-          "type": "integer"
-        }
-      },
-      "optional": false,
-      "required": [
-        "suite",
-        "indexed",
-        "tests"
-      ],
-      "additionalProperties": false,
-      "type": "object"
-    },
-    "Daemon": {
-      "properties": {
-        "pid": {
-          "description": "the daemon's pid",
-          "optional": false,
-          "type": "integer"
-        },
-        "version": {
-          "description": "fume's version",
-          "optional": false,
-          "type": "string"
-        },
-        "started": {
-          "description": "when the daemon started",
-          "format": "date-time",
-          "optional": false,
-          "type": "string"
-        },
-        "runsDirectory": {
-          "description": "where runs are persisted",
-          "optional": false,
-          "type": "string"
-        }
-      },
-      "optional": false,
-      "required": [
-        "pid",
-        "version",
-        "started",
-        "runsDirectory"
-      ],
-      "additionalProperties": false,
-      "type": "object"
-    },
-    "IndexedTest": {
-      "properties": {
-        "path": {
-          "description": "the path of names or monikers from the root suite to the test",
-          "items": {
-            "optional": false,
-            "type": "string"
-          },
-          "optional": false,
-          "type": "array"
-        },
-        "line": {
-          "description": "the line",
-          "optional": false,
-          "type": "integer"
-        },
-        "tags": {
-          "description": "the test's tags",
-          "items": {
-            "optional": false,
-            "type": "string"
-          },
-          "optional": false,
-          "type": "array"
-        },
-        "moniker": {
-          "description": "the test's moniker, when it declares one",
-          "optional": true,
-          "type": "string"
-        },
-        "id": {
-          "description": "the test's 6-hex id; absent when its name is only known at runtime",
-          "optional": true,
-          "type": "string"
-        },
-        "file": {
-          "description": "the source file",
-          "optional": false,
-          "type": "string"
-        },
-        "kind": {
-          "description": "`check`, `bench`, `stress` or `profile`",
-          "optional": false,
-          "type": "string"
-        },
-        "suite": {
-          "description": "the suite class declaring the test",
-          "optional": false,
-          "type": "string"
-        },
-        "dynamic": {
-          "description": "whether part of the test's name is computed at runtime",
-          "optional": false,
-          "type": "boolean"
-        },
-        "spread": {
-          "description": "whether the test is declared over axes, whose cells the index does not know",
-          "optional": false,
-          "type": "boolean"
-        },
-        "name": {
-          "description": "the test's name, with `*` for each part computed at runtime",
-          "optional": false,
-          "type": "string"
-        }
-      },
-      "optional": false,
-      "required": [
-        "path",
-        "name",
-        "kind",
-        "tags",
-        "suite",
-        "file",
-        "line",
-        "spread",
-        "dynamic"
-      ],
-      "additionalProperties": false,
-      "type": "object"
-    },
-    "Totals": {
-      "properties": {
-        "passed": {
-          "description": "tests which passed, including measurements which completed",
-          "optional": false,
-          "type": "integer"
-        },
-        "failed": {
-          "description": "tests which failed, threw, or had a failing check",
-          "optional": false,
-          "type": "integer"
-        },
-        "aspirePassed": {
-          "description": "aspirational tests which passed",
-          "optional": false,
-          "type": "integer"
-        },
-        "aspireFailed": {
-          "description": "aspirational tests which failed, which does not fail the run",
-          "optional": false,
-          "type": "integer"
-        }
-      },
-      "optional": false,
-      "required": [
-        "passed",
-        "failed",
-        "aspirePassed",
-        "aspireFailed"
-      ],
-      "additionalProperties": false,
-      "type": "object"
-    },
-    "RunDetail": {
-      "properties": {
-        "suites": {
-          "description": "each suite that has run so far",
-          "items": {
-            "properties": {
-              "captured": {
-                "description": "whether the suite printed anything outside its report; see the `captured` tool",
-                "optional": false,
-                "type": "boolean"
-              },
-              "finished": {
-                "description": "when the suite finished",
-                "format": "date-time",
-                "optional": false,
-                "type": "string"
-              },
-              "passed": {
-                "description": "whether the suite passed",
-                "optional": false,
-                "type": "boolean"
-              },
-              "started": {
-                "description": "when the suite started",
-                "format": "date-time",
-                "optional": false,
-                "type": "string"
-              },
-              "totals": {
-                "description": "the suite's totals, when it streamed its events",
-                "properties": {
-                  "passed": {
-                    "description": "tests which passed, including measurements which completed",
-                    "optional": false,
-                    "type": "integer"
-                  },
-                  "failed": {
-                    "description": "tests which failed, threw, or had a failing check",
-                    "optional": false,
-                    "type": "integer"
-                  },
-                  "aspirePassed": {
-                    "description": "aspirational tests which passed",
-                    "optional": false,
-                    "type": "integer"
-                  },
-                  "aspireFailed": {
-                    "description": "aspirational tests which failed, which does not fail the run",
-                    "optional": false,
-                    "type": "integer"
-                  }
-                },
-                "optional": true,
-                "required": [
-                  "passed",
-                  "failed",
-                  "aspirePassed",
-                  "aspireFailed"
-                ],
-                "additionalProperties": false,
-                "type": "object"
-              },
-              "suite": {
-                "description": "the suite's class name",
-                "optional": false,
-                "type": "string"
-              }
-            },
-            "optional": false,
-            "required": [
-              "suite",
-              "passed",
-              "started",
-              "finished",
-              "captured"
-            ],
-            "additionalProperties": false,
-            "type": "object"
-          },
-          "optional": false,
-          "type": "array"
-        },
-        "scheduled": {
-          "description": "the suites the run scheduled, in order",
-          "items": {
-            "optional": false,
-            "type": "string"
-          },
-          "optional": false,
-          "type": "array"
-        },
-        "classpath": {
-          "description": "the classpath the suites were loaded from",
-          "items": {
-            "optional": false,
-            "type": "string"
-          },
-          "optional": false,
-          "type": "array"
-        },
-        "results": {
-          "description": "whether per-test results can be served: `available`, `partial` (some suites could not stream), `incompatible` (the suites' event schema differs from this fume's), or `none`",
-          "optional": false,
-          "type": "string"
-        },
-        "current": {
-          "description": "the suite running now, if any",
-          "optional": true,
-          "type": "string"
-        },
-        "summary": {
-          "description": "the run in summary",
+        "ref": {
+          "description": "the test or suite in flight",
           "properties": {
-            "duration": {
-              "description": "the run's length in milliseconds, once finished",
-              "optional": true,
-              "type": "integer"
-            },
-            "suites": {
-              "description": "how many suites the run scheduled",
-              "optional": false,
-              "type": "integer"
-            },
-            "invoker": {
-              "description": "who launched the run: `human`, `claude`, `codex`, or `remote` for another fume",
-              "optional": false,
-              "type": "string"
-            },
-            "finished": {
-              "description": "when the run finished; absent while it is in flight",
-              "format": "date-time",
+            "moniker": {
+              "description": "the test's moniker, a selection term, when it declares one",
               "optional": true,
               "type": "string"
             },
-            "outcome": {
-              "description": "`passed`, `failed`, `aborted` or `timed-out`; absent while the run is in flight",
-              "optional": true,
-              "type": "string"
-            },
-            "id": {
-              "description": "the run's id, stable across daemon restarts; `last` names the newest run in any tool",
+            "file": {
+              "description": "the source file declaring the test",
               "optional": false,
               "type": "string"
             },
-            "machine": {
-              "description": "the machine the suites ran on",
-              "optional": false,
-              "type": "string"
-            },
-            "workspace": {
-              "description": "the working directory `fume` was invoked from",
-              "optional": false,
-              "type": "string"
-            },
-            "selection": {
-              "description": "the selection terms forwarded to each suite",
+            "path": {
+              "description": "the path of names or monikers from the root suite to the test",
               "items": {
                 "optional": false,
                 "type": "string"
@@ -3122,56 +3240,35 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
               "optional": false,
               "type": "array"
             },
-            "started": {
-              "description": "when the run started, ISO 8601 in UTC",
-              "format": "date-time",
+            "suite": {
+              "description": "the suite class the test was run under",
               "optional": false,
               "type": "string"
             },
-            "totals": {
-              "description": "the run's totals, once finished",
-              "properties": {
-                "passed": {
-                  "description": "tests which passed, including measurements which completed",
-                  "optional": false,
-                  "type": "integer"
-                },
-                "failed": {
-                  "description": "tests which failed, threw, or had a failing check",
-                  "optional": false,
-                  "type": "integer"
-                },
-                "aspirePassed": {
-                  "description": "aspirational tests which passed",
-                  "optional": false,
-                  "type": "integer"
-                },
-                "aspireFailed": {
-                  "description": "aspirational tests which failed, which does not fail the run",
-                  "optional": false,
-                  "type": "integer"
-                }
-              },
-              "optional": true,
-              "required": [
-                "passed",
-                "failed",
-                "aspirePassed",
-                "aspireFailed"
-              ],
-              "additionalProperties": false,
-              "type": "object"
+            "line": {
+              "description": "the line declaring the test",
+              "optional": false,
+              "type": "integer"
+            },
+            "id": {
+              "description": "the test's 6-hex id, a selection term for `fume run`; empty for a suite",
+              "optional": false,
+              "type": "string"
+            },
+            "name": {
+              "description": "the test's name",
+              "optional": false,
+              "type": "string"
             }
           },
           "optional": false,
           "required": [
             "id",
-            "workspace",
-            "invoker",
-            "machine",
-            "started",
-            "selection",
-            "suites"
+            "name",
+            "path",
+            "suite",
+            "file",
+            "line"
           ],
           "additionalProperties": false,
           "type": "object"
@@ -3179,104 +3276,7 @@ The schema `fume://schema` serves, for fume's version at the time of writing:
       },
       "optional": false,
       "required": [
-        "summary",
-        "classpath",
-        "scheduled",
-        "suites",
-        "results"
-      ],
-      "additionalProperties": false,
-      "type": "object"
-    },
-    "Completion": {
-      "properties": {
-        "coordinates": {
-          "description": "the cell's coordinates; empty for a test without axes",
-          "items": {
-            "properties": {
-              "axis": {
-                "description": "the axis's label",
-                "optional": false,
-                "type": "string"
-              },
-              "value": {
-                "description": "the axis's value for this cell, as text",
-                "optional": false,
-                "type": "string"
-              }
-            },
-            "optional": false,
-            "required": [
-              "axis",
-              "value"
-            ],
-            "additionalProperties": false,
-            "type": "object"
-          },
-          "optional": false,
-          "type": "array"
-        },
-        "outcome": {
-          "description": "`pass`, `fail`, `throws`, `check-throws`, `aspire-pass` or `aspire-fail`",
-          "optional": false,
-          "type": "string"
-        },
-        "nanoseconds": {
-          "description": "how long the cell took, in nanoseconds",
-          "optional": false,
-          "type": "integer"
-        }
-      },
-      "optional": false,
-      "required": [
-        "coordinates",
-        "outcome",
-        "nanoseconds"
-      ],
-      "additionalProperties": false,
-      "type": "object"
-    },
-    "Dissection": {
-      "properties": {
-        "code": {
-          "description": "the subexpression, as written",
-          "optional": false,
-          "type": "string"
-        },
-        "kind": {
-          "description": "`value`, or `thrown` for a predicate which threw",
-          "optional": false,
-          "type": "string"
-        },
-        "start": {
-          "description": "where the subexpression starts in the predicate's source",
-          "optional": false,
-          "type": "integer"
-        },
-        "value": {
-          "description": "the subexpression's value, rendered; or the exception, for `thrown`",
-          "optional": false,
-          "type": "string"
-        },
-        "end": {
-          "description": "where the subexpression ends in the predicate's source",
-          "optional": false,
-          "type": "integer"
-        },
-        "depth": {
-          "description": "the row's depth in the tree of the predicate's subexpressions",
-          "optional": false,
-          "type": "integer"
-        }
-      },
-      "optional": false,
-      "required": [
-        "depth",
-        "code",
-        "start",
-        "end",
-        "value",
-        "kind"
+        "ref"
       ],
       "additionalProperties": false,
       "type": "object"
