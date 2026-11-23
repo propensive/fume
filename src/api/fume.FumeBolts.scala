@@ -34,8 +34,8 @@ package fume
 
 // The bolt codes of Fume, `↯/f.29` to `↯/f.32`: the subdivisions of the letter Fume shares with
 // Pyrocosm and its other tools (`pyrocosm.Bolts`), one for each of Fume's modules. The record of
-// what every code means is `f.tel` in propensive/bolt. Declared here, in the module every other
-// module of Fume's that has errors depends on.
+// what every code means is `bolt.tel` in propensive/pyrocosm. Declared here, in the module every
+// other module of Fume's that has errors depends on.
 object FumeBolts:
   final val api      = 29
   final val relay    = 30
