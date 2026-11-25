@@ -175,6 +175,106 @@ object Suggest:
     tests.flatMap(below).flatMap(candidates).filter: candidate => seen.add(candidate.handle)
     . map(suggestion(scope))
 
+  // What is directly below the scope a word has typed, among paths of segments joined by a
+  // separator: each next segment beginning with what is typed after the scope, with how many
+  // paths are below it, and whether it is itself a path. In first-appearance order.
+  private case class Below(segment: Text, paths: Int, leaf: Boolean)
+
+  private def below(scope: Text, typed: Text, separator: Char, paths: List[Text]): List[Below] =
+    val found: scala.collection.mutable.LinkedHashMap[Text, Below] =
+      scala.collection.mutable.LinkedHashMap()
+
+    paths.each: path =>
+      if path.starts(scope) then
+        val rest: Text = path.skip(scope.length)
+        val end: Int = rest.s.indexOf(separator.toInt)
+        val segment: Text = if end < 0 then rest else rest.keep(end)
+
+        // The root of an absolute path is an empty segment before its first separator.
+        if (segment != t"" || end == 0) && segment.starts(typed) then
+          val known: Below = found.getOrElse(segment, Below(segment, 0, false))
+
+          found(segment) =
+            if end < 0 then known.copy(leaf = true) else known.copy(paths = known.paths + 1)
+
+    found.values.to(List)
+
+  private def scopeOf(word: Text, separator: Char): Text =
+    word.keep(word.s.lastIndexOf(separator.toInt) + 1)
+
+  private def plural(count: Int, one: Text, many: Text): Text =
+    if count == 1 then t"1 $one" else t"$count $many"
+
+  // The `--coverage` operand, which names classes or source files (see `Coverage.resolve`), a
+  // level at a time, as a shell completes a path:
+  //
+  //   - a word without a `/` offers what is next in the names of the classpath's classes after
+  //     the packages typed (`iridescence.` offers `Rgb24`, and `colorimetry`): a class, described
+  //     by its source file, and complete; or a package, described by how much is in it, and
+  //     left incomplete, since the package is a term as it stands and a `.` can follow;
+  //   - it also offers, as a word with a `/` only does, what is next in the paths of the
+  //     source files after the directories typed: a file, described by the classes compiled
+  //     from it; or a directory, which is likewise a term as it stands, ending in the `/`
+  //     which what is below it follows.
+  //
+  // The classes holding a file's top-level definitions (`iridescence_core$package`) are not
+  // offered by name: nobody chose the name, and the package or the file names them. A word
+  // with a wildcard in it is a glob, and has no completions.
+  def coverage(word: Text, census: fume.Coverage.Census): List[Suggestion] =
+    def classes: List[Suggestion] =
+      val scope: Text = scopeOf(word, '.')
+
+      below(scope, word.skip(scope.length), '.', census.names).flatMap: found =>
+        val name: Text = t"$scope${found.segment}"
+
+        def source: Optional[Text] = census.sources.filter(_(0) == name) match
+          case found :: _ => found(1)
+          case _          => Unset
+
+        val unit: List[Suggestion] =
+          if !found.leaf || found.paths > 0 || found.segment.contains(t"$$") then Nil
+          else List(Suggestion(found.segment, source, prefix = scope, operand = true))
+
+        val nest: List[Suggestion] =
+          if found.paths == 0 then Nil else
+            val content: Text = plural(found.paths, t"class", t"classes")
+
+            List
+              ( Suggestion
+                  ( found.segment,
+                    if found.leaf then t"a class, and $content within its package"
+                    else t"a package of $content",
+                    incomplete = true,
+                    prefix     = scope,
+                    operand    = true ) )
+
+        unit + nest
+
+    def files: List[Suggestion] =
+      val scope: Text = scopeOf(word, '/')
+
+      below(scope, word.skip(scope.length), '/', census.files).flatMap: found =>
+        val path: Text = t"$scope${found.segment}"
+
+        val file: List[Suggestion] =
+          if !found.leaf then Nil else
+            val defined: List[Text] = census.sources.filter(_(1) == path).map(_(0))
+            List(Suggestion(found.segment, defined.join(t", "), prefix = scope, operand = true))
+
+        val directory: List[Suggestion] =
+          if found.paths == 0 then Nil else
+            List
+              ( Suggestion
+                  ( t"${found.segment}/",
+                    t"a directory of ${plural(found.paths, t"source file", t"source files")}",
+                    incomplete = true,
+                    prefix     = scope,
+                    operand    = true ) )
+
+        file + directory
+
+    if fume.Coverage.wild(word) then Nil else if word.contains(t"/") then files else classes + files
+
   // The comma-continued names for the `--kind` and `--tag` operands: what remains after the
   // names already typed, behind the typed prefix.
   def kinds(operand: Text): List[Suggestion] =
