@@ -189,16 +189,18 @@ object ui:
         "with list: run each suite's body to list its tests, rather than read the index of " +
           "them" )
 
-  // The code whose coverage a run records: a class (`fume.Selection`), the classes of a
-  // package (`fume.*`) or a source file (`src/client/fume.Selection.scala`), recompiled with
-  // probes from the TASTy the classpath holds for it (see `Coverage`).
+  // The code whose coverage a run records: a class (`fume.Selection`), a package (`fume`),
+  // a glob over class names (`fume.S*`), a source file (`src/client/fume.Selection.scala`), a
+  // directory of them (`src/client`) or a glob over their paths (`src/**/*.scala`), recompiled
+  // with probes from the TASTy the classpath holds for it (see `Coverage`).
   val Coverage =
     Flag[Repeated]
       ( "coverage",
         true,
         Nil,
-        "record which tests reach the code of a class, such as mypackage.MyClass, or of a " +
-          "source file, such as src/file.scala; repeatable" )
+        "record which tests reach the code of a class, such as mypackage.MyClass, a package, " +
+          "a source file or directory, such as src/core, or a glob over either, such as " +
+          "'mypackage.My*' or 'src/**/*.scala'; repeatable" )
 
   val Fork =
     Flag[Unit]
@@ -356,7 +358,7 @@ private def dispatch()
     val durationScale: Optional[Text] = ui.DurationScale()
     val target: Optional[Text] = ui.Target()
     val timeout: Optional[Text] = ui.Timeout()
-    val covered: Prospective[Repeated] = coverageFlag()
+    val covered: Prospective[Repeated] = coverageFlag(classpath)
     val coverageOptions: Optional[Text] = ui.CoverageOptions()
     val fork: Boolean = ui.Fork().present
     val terms: List[Text] = selectionTerms(rest)
@@ -1760,9 +1762,14 @@ private def excludeFlag(classpath: Optional[LocalClasspath])(using Cli, Interpre
 
   ui.Exclude()
 
-// Reads `--coverage`: a class or a source file, which has no completions of its own.
-private def coverageFlag()(using Cli, Interpreter): Prospective[Repeated] =
-  given discoverable: (Repeated is Discoverable) = (_, _) => List()
+// Reads `--coverage`, its operand completing to the packages, classes and source files of the
+// classpath, a level at a time, from the daemon's cached census of it.
+private def coverageFlag(classpath: Optional[LocalClasspath])(using Cli, Interpreter)
+:   Prospective[Repeated] =
+
+  given discoverable: (Repeated is Discoverable) = (operand, _) =>
+    classpath.lay(List()): cp => Suggest.coverage(operand, fume.Coverage.cached(cp))
+
   ui.Coverage()
 
 // Registers the completion of every positional selection term: the focused word completes to

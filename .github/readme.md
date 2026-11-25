@@ -113,14 +113,43 @@ the classpath has.
 
 ## Coverage
 
-`--coverage` names code whose coverage a run records: a class (`mypackage.MyClass`), the classes
-of a package (`mypackage.*`), or a source file (`src/core/mypackage.MyClass.scala`, or as much of
-the end of its path as tells it apart). It may be repeated, and goes with the usual selection:
+`--coverage` names code whose coverage a run records, by its classes or by its source files. It
+may be repeated, and goes with the usual selection:
 
 ```sh
-fume run -c out.jar --coverage fume.Selection
-fume run -c out.jar --coverage src/client/fume.Selection.scala json/*
+fume run -c out.jar --coverage mypackage.MyClass       # a class, and its companion
+fume run -c out.jar --coverage mypackage               # a package, and the packages within it
+fume run -c out.jar --coverage 'mypackage.*'           # the classes of the package alone
+fume run -c out.jar --coverage 'mypackage.My*'         # a glob over class names
+fume run -c out.jar --coverage src/core/mypackage.MyClass.scala json/*
+fume run -c out.jar --coverage src/core                # every source file below a directory
+fume run -c out.jar --coverage 'src/**/*.scala'        # a glob over source paths
 ```
+
+A term with a `/` in it, or ending `.scala`, names source files; any other names classes.
+
+ - A class is named in full, `mypackage.MyClass`, and is the class and its companion object
+   together — whatever its source file's TASTy defines. A name nothing has, but which others
+   begin with, is a package: `mypackage` is every class in it and in the packages within it. In
+   a glob, `*` and `?` stay within a package and `**` does not, so `'mypackage.*'` is the
+   package's own classes, `'mypackage.**'` those of the packages within it too, and `'**.Json*'`
+   every class so named, wherever it is.
+ - A source file is named as the classpath records it: each class's TASTy holds the path of its
+   source, relative to wherever its build was rooted (`lib/mylib/src/core/mypackage.MyClass.scala`,
+   say, or an absolute path if the build had no root). So a file is named by as much of the end
+   of that path as tells it apart, a directory (`src/core`, `lib/mylib`) is every file below it,
+   and a glob (`'lib/mylib/**/*.scala'`) is matched against the path, or the end of it. The
+   files need not exist where fume runs: nothing reads them.
+
+A glob must be quoted, or the shell will expand it against the working directory — into several
+words, of which `--coverage` takes the first. A term which matches nothing fails the run before
+anything is run.
+
+The operand tab-completes a level at a time, as a path does, from the classes and the sources
+the classpath holds: `--coverage my⇥` offers the packages and classes beginning `my`, a package
+with how many classes it has and a class with its source file; after `mypackage.`, what is in
+the package; and after a `/`, the directories and source files below, each file with the classes
+compiled from it.
 
 Nothing is compiled specially beforehand. Fume finds the TASTy the classpath holds for that
 code and recompiles it — the same compiler, from the trees the compiler itself wrote — with a

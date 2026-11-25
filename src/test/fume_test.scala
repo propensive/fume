@@ -1158,6 +1158,155 @@ object Tests extends Suite(m"Fume tests"):
 
       . assert(_ == t"no test reached any of it")
 
+    suite(m"Coverage terms"):
+      // A classpath of two libraries: `venice`, with two classes, a file of top-level
+      // definitions and a class in a package within it; and `belmont`, with one class.
+      val census: fume.Coverage.Census =
+        fume.Coverage.Census
+          ( List
+              ( t"venice.Casket", t"venice.Ring", t"venice.venice_core$$package",
+                t"venice.rialto.Bridge", t"belmont.Portia" ),
+            List
+              ( t"venice.Casket" -> t"lib/venice/src/core/venice.Casket.scala",
+                t"venice.Ring" -> t"lib/venice/src/core/venice.Ring.scala",
+                t"venice.venice_core$$package" -> t"lib/venice/src/core/venice_core.scala",
+                t"venice.rialto.Bridge" -> t"lib/venice/src/rialto/venice.Bridge.scala",
+                t"belmont.Portia" -> t"lib/belmont/src/core/belmont.Portia.scala" ) )
+
+      val venice: List[Text] =
+        List
+          ( t"venice.Casket", t"venice.Ring", t"venice.venice_core$$package",
+            t"venice.rialto.Bridge" )
+
+      def resolve(term: Text): List[Text] = fume.Coverage.resolve(term, census)
+
+      test(m"a class's name is the class"):
+        resolve(t"venice.Casket")
+
+      . assert(_ == List(t"venice.Casket"))
+
+      test(m"a name within a class is the class"):
+        resolve(t"venice.Casket.choose")
+
+      . assert(_ == List(t"venice.Casket"))
+
+      test(m"a package's name is everything in it, and in the packages within it"):
+        resolve(t"venice")
+
+      . assert(_ == venice)
+
+      test(m"a name nothing has is not taken for the package around it"):
+        resolve(t"venice.Caskets")
+
+      . assert(_ == Nil)
+
+      test(m"a star stays within a package"):
+        resolve(t"venice.*")
+
+      . assert(_ == venice.keep(3))
+
+      test(m"two stars reach the packages within"):
+        resolve(t"venice.**")
+
+      . assert(_ == venice)
+
+      test(m"a glob may be over any part of a name"):
+        (resolve(t"*.R*"), resolve(t"**.[BP]*"))
+
+      . assert(_ == (List(t"venice.Ring"), List(t"venice.rialto.Bridge", t"belmont.Portia")))
+
+      test(m"a source file is named by as much of the end of its path as tells it apart"):
+        List
+          ( resolve(t"lib/venice/src/core/venice.Ring.scala"),
+            resolve(t"venice.Ring.scala"),
+            resolve(t"/home/work/lib/venice/src/core/venice.Ring.scala") )
+
+      . assert(_ == List.fill(3)(List(t"venice.Ring")))
+
+      test(m"a directory is every source file below it"):
+        (resolve(t"lib/venice"), resolve(t"lib/venice/"), resolve(t"src/rialto"))
+
+      . assert(_ == (venice, venice, List(t"venice.rialto.Bridge")))
+
+      test(m"part of a directory's name is not the directory"):
+        resolve(t"lib/ven")
+
+      . assert(_ == Nil)
+
+      test(m"a glob over paths matches source files"):
+        (resolve(t"lib/venice/**/*.scala"), resolve(t"src/core/*.Ring.scala"))
+
+      . assert(_ == (venice, List(t"venice.Ring")))
+
+      test(m"a census reads a directory's classes and the sources they record"):
+        val root = scratch()
+        (root / "fume").create[Directory]()
+
+        java.nio.file.Files.write
+          ( java.nio.file.Path.of(root.encode.s, "fume", "Tiny.tasty"),
+            Tiny.getClass.getResourceAsStream("/fume/Tiny.tasty").nn.readAllBytes() )
+
+        val read: fume.Coverage.Census =
+          fume.Coverage.census(LocalClasspath(List(Classpath.Entry.Directory(root.encode))*))
+
+        (read.names, read.sources.map { (name, source) => (name, source.ends(t"fume.Tiny.scala")) })
+
+      . assert(_ == (List(t"fume.Tiny"), List((t"fume.Tiny", true))))
+
+      def complete(word: Text): List[Text] = texts(Suggest.coverage(word, census))
+
+      test(m"an empty word completes to the outermost packages and source directories"):
+        complete(t"")
+
+      . assert(_ == List(t"venice", t"belmont", t"lib/"))
+
+      test(m"a package is left incomplete, for what is within it to follow"):
+        Suggest.coverage(t"ven", census).map: suggestion =>
+          (suggestion.text, suggestion.incomplete, suggestion.description)
+
+      . assert(_ == List((t"venice", true, t"a package of 4 classes")))
+
+      test(m"within a package, its classes and packages are offered, but no file's own class"):
+        complete(t"venice.")
+
+      . assert(_ == List(t"venice.Casket", t"venice.Ring", t"venice.rialto"))
+
+      test(m"a class is described by its source file"):
+        Suggest.coverage(t"venice.C", census).map: suggestion =>
+          (suggestion.text, suggestion.incomplete, suggestion.description)
+
+      . assert:
+          _ == List((t"venice.Casket", false, t"lib/venice/src/core/venice.Casket.scala"))
+
+      test(m"a path completes a directory at a time"):
+        (complete(t"lib/"), complete(t"lib/venice/src/"))
+
+      . assert:
+          _ ==
+            ( List(t"lib/belmont/", t"lib/venice/"),
+              List(t"lib/venice/src/core/", t"lib/venice/src/rialto/") )
+
+      test(m"a source file is described by the classes compiled from it"):
+        Suggest.coverage(t"lib/venice/src/rialto/", census).map: suggestion =>
+          (suggestion.text, suggestion.incomplete, suggestion.description)
+
+      . assert:
+          _ == List((t"lib/venice/src/rialto/venice.Bridge.scala", false, t"venice.rialto.Bridge"))
+
+      test(m"an absolute source path completes from its root"):
+        val absolute: fume.Coverage.Census =
+          fume.Coverage.Census
+            ( List(t"venice.Ring"), List(t"venice.Ring" -> t"/work/src/venice.Ring.scala") )
+
+        (texts(Suggest.coverage(t"", absolute)), texts(Suggest.coverage(t"/", absolute)))
+
+      . assert(_ == (List(t"venice", t"/"), List(t"/work/")))
+
+      test(m"a glob has no completions"):
+        complete(t"venice.*")
+
+      . assert(_ == Nil)
+
     suite(m"Relay"):
       // The wire format between a controller and a worker: every message shape must survive
       // the round trip through the derived BinTEL codec, since a worker built from a different

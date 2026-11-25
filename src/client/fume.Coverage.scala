@@ -40,7 +40,7 @@ import denominative.dysasymptotics.linearSize
 import systems.javaBaseSystem
 import textMetrics.uniformMetric
 
-// Which tests reach which code. `fume run --coverage <class or source file>` has
+// Which tests reach which code. `fume run --coverage <classes or source files>` has
 // `probably.Instrumenter` recompile the units it names from their TASTy, with a probe at every
 // method entry and branch; puts the recompiled classes ahead of the originals on the run's
 // classpath; and reads back, from the suites' own `probably.Coverage`, how many times each test
@@ -82,6 +82,194 @@ object Coverage:
   def directory(using Environment): Optional[Text] =
     safely(Xdg.cacheHome[Path on Linux] / "fume" / "coverage").let(_.encode)
 
+  // What a classpath holds that could be covered: its units, each known by the name of the
+  // top-level class its TASTy file is named after (`iridescence.Rgb24`, which is the class and
+  // its companion both), in the order a classloader would find them; and, for each which
+  // records one, the source file it was compiled from, as its TASTy has it — relative to the
+  // root of its build (`lib/iridescence/src/core/iridescence.Rgb24.scala`). The names are a
+  // listing of each entry; the sources need every TASTy file read, which is done only when
+  // something asks for them.
+  class Census(val names: List[Text], sourced: => List[(Text, Text)]):
+    lazy val sources: List[(Text, Text)] = sourced
+
+    // The source files, each once, in name order.
+    lazy val files: List[Text] =
+      import sortingAlgorithms.timsort
+      sources.map(_(1)).distinct.order: (file: Text) => file.s
+
+  private val suffix: String = ".tasty"
+
+  // The TASTy files of one classpath entry, as resource names (`iridescence/Rgb24.tasty`).
+  private def listing(entry: Classpath.Entry): List[Text] = entry match
+    case Classpath.Entry.Jar(path) =>
+      safely:
+        val zip: java.util.zip.ZipFile = java.util.zip.ZipFile(path.s)
+
+        try
+          val found: scm.ListBuffer[Text] = scm.ListBuffer()
+          val entries = zip.entries().nn
+
+          while entries.hasMoreElements do
+            val name: String = entries.nextElement().nn.getName.nn
+            if name.endsWith(suffix) then found += name.tt
+
+          found.toList.to(List)
+        finally zip.close()
+
+      . or(Nil)
+
+    case Classpath.Entry.Directory(path) =>
+      safely:
+        val root: java.nio.file.Path = java.nio.file.Path.of(path.s).nn
+        val found: scm.ListBuffer[Text] = scm.ListBuffer()
+
+        if java.nio.file.Files.isDirectory(root) then
+          val walk = java.nio.file.Files.walk(root).nn
+
+          try
+            walk.forEach: file =>
+              val name: String = root.relativize(file).nn.toString.replace('\\', '/').nn
+              if name.endsWith(suffix) then found += name.tt
+          finally walk.close()
+
+        found.toList.to(List)
+
+      . or(Nil)
+
+    case _ =>
+      Nil
+
+  // The source each of an entry's TASTy files records, by resource name.
+  private def origins(entry: Classpath.Entry, resources: List[Text]): List[(Text, Text)] =
+    // The bytes are read for this alone and never written to, which is all that capture
+    // checking, tracking an array as mutable state, would want to know.
+    def origin(resource: Text, bytes: scala.Array[Byte] | Null): List[(Text, Text)] =
+      val source: String | Null =
+        if bytes == null then null
+        else probably.Instrumenter.source(scala.caps.unsafe.unsafeAssumePure(bytes))
+
+      Optional(source).lay(Nil: List[(Text, Text)]): source =>
+        List((resource, source.replace('\\', '/').nn.tt))
+
+    entry match
+      case Classpath.Entry.Jar(path) =>
+        safely:
+          val zip: java.util.zip.ZipFile = java.util.zip.ZipFile(path.s)
+
+          try
+            resources.flatMap: resource =>
+              origin(resource, zip.getInputStream(zip.getEntry(resource.s)).nn.readAllBytes())
+          finally zip.close()
+
+        . or(Nil)
+
+      case Classpath.Entry.Directory(path) =>
+        resources.flatMap: resource =>
+          safely:
+            origin
+              ( resource,
+                java.nio.file.Files.readAllBytes(java.nio.file.Path.of(path.s, resource.s)) )
+
+          . or(Nil)
+
+      case _ =>
+        Nil
+
+  private def named(resource: Text): Text =
+    resource.s.substring(0, resource.s.length - suffix.length).nn.replace('/', '.').nn.tt
+
+  // Takes the census of a classpath. Where two entries hold the same unit, it is the first's,
+  // as it is for a classloader.
+  def census(classpath: LocalClasspath): Census =
+    val seen: scm.HashSet[Text] = scm.HashSet()
+
+    val held: List[(Classpath.Entry, List[Text])] = classpath.entries.map: entry =>
+      entry -> listing(entry).filter(seen.add(_))
+
+    Census
+      ( held.flatMap(_(1)).map(named),
+        held.flatMap { (entry, resources) => origins(entry, resources) }.map: (resource, source) =>
+          (named(resource), source) )
+
+  private val censuses: scala.collection.concurrent.TrieMap[Text, Census] =
+    scala.collection.concurrent.TrieMap()
+
+  // The census of a classpath, taken once for each build of its entries.
+  def cached(classpath: LocalClasspath): Census =
+    val key: Text = Suites.fingerprint(classpath)
+    val cached: Optional[Census] = censuses.getOrElse(key, Unset)
+
+    cached.or:
+      val census: Census = this.census(classpath)
+      censuses(key) = census
+      census
+
+  def wild(term: Text): Boolean = term.contains(t"*") || term.contains(t"?") || term.contains(t"[")
+
+  // Whether a term names source files rather than classes: it is a path, or a Scala file.
+  def pathlike(term: Text): Boolean = term.ends(t".scala") || term.contains(t"/")
+
+  private def globbed(pattern: Text, text: Text): Boolean =
+    safely(Glob.parse(pattern)).lay(false)(_.matches(text))
+
+  // Whether a recorded source file is one a path term asks for. A file records its source
+  // relative to wherever its build was rooted, so a term need only say how the path ends, and
+  // may say more than was recorded:
+  //
+  //   - a glob (`lib/iridescence/**/*.scala`) matches the recorded path, or the end of it from
+  //     any `/`;
+  //   - a file (`core/iridescence.Rgb24.scala`) is the end of the recorded path, or the
+  //     recorded path the end of it;
+  //   - anything else is a directory (`lib/iridescence`), at the start of the recorded path or
+  //     after any `/` of it, and asks for every file below.
+  def sourced(asked: Text, recorded: Text): Boolean =
+    if wild(asked) then
+      def recur(tail: Text): Boolean =
+        globbed(asked, tail) || {
+          val slash: Int = tail.s.indexOf('/')
+          slash >= 0 && recur(tail.skip(slash + 1))
+        }
+
+      recur(recorded)
+    else if asked.ends(t".scala") then
+      recorded == asked || recorded.ends(t"/$asked") || asked.ends(t"/$recorded")
+    else
+      val directory: Text = if asked.ends(t"/") then asked else t"$asked/"
+      recorded.starts(directory) || recorded.contains(t"/$directory")
+
+  // The units a term names, in the census's order:
+  //
+  //   - a path (`lib/iridescence/src/core/iridescence.Rgb24.scala`, `lib/iridescence`,
+  //     `'lib/iridescence/**/*.scala'`) is every unit compiled from a source file it asks for;
+  //   - a glob (`'iridescence.*'`, `'iridescence.Rgb*'`, `'iridescence.**'`) is every unit whose
+  //     name it matches, where `*` and `?` stay within a package and `**` does not;
+  //   - a unit's name (`iridescence.Rgb24`) is that unit: the class and its companion;
+  //   - a package's name (`iridescence`) — a name no unit has, which others begin with — is
+  //     every unit in the package and in the packages within it;
+  //   - a name with more after a unit's (`iridescence.Rgb24.apply`) is the unit.
+  def resolve(term: Text, census: Census): List[Text] =
+    val text: Text = term.sub(t"\\", t"/")
+
+    if pathlike(text) then
+      val files: List[Text] = census.files.filter(sourced(text, _))
+      census.sources.filter { (_, source) => files.has(source) }.map(_(0))
+    else if wild(text) then
+      val pattern: Text = text.sub(t".", t"/")
+      census.names.filter: name => globbed(pattern, name.sub(t".", t"/"))
+    else if census.names.has(text) then
+      List(text)
+    else
+      val within: List[Text] = census.names.filter(_.starts(t"$text."))
+
+      def enclosing(name: Text): List[Text] =
+        val dot: Int = name.s.lastIndexOf('.')
+
+        if dot < 0 then Nil else
+          val outer: Text = name.keep(dot)
+          if census.names.has(outer) then List(outer) else enclosing(outer)
+
+      if within.nil then enclosing(text) else within
+
   // A list as the standard library's, which is what `probably.Instrumenter` takes and what the
   // report below sorts and groups.
   private def plain[element](list: List[element]): scala.List[element] =
@@ -97,25 +285,36 @@ object Coverage:
 
     Subject(unit.index, unit.name.tt, probes)
 
-  // Plans the coverage of the units the terms name, recompiling them unless that has been done
-  // before: the plan, or why there is none.
+  // Plans the coverage of the units the terms name (see `resolve`), recompiling them unless
+  // that has been done before: the plan, or why there is none.
   def plan
     ( classpath: LocalClasspath, terms: List[Text], options: List[Text], cache: Optional[Text] )
   :   (Optional[Plan], List[Text]) =
 
-    cache.lay((Unset, List(t"there is no cache directory to recompile into"))): cache =>
-      val planned: probably.Instrumenter.Plan =
-        probably.Instrumenter.plan
-          ( plain(classpath().cut(t":")).map(_.s),
-            plain(terms).map(_.s),
-            plain(options).map(_.s),
-            cache.s )
+    val census: Census = cached(classpath)
+    val found: List[(Text, List[Text])] = terms.map: term => term -> resolve(term, census)
+    val missing: List[Text] = found.filter(_(1).nil).map(_(0))
 
-      if !planned.problems.isEmpty then (Unset, planned.problems.to(List).map(_.tt)) else
-        val classes = pyrocosm.Classpaths.entry(planned.classes.tt)
-        val covered: LocalClasspath = LocalClasspath((classes :: classpath.entries)*)
+    def unmatched(term: Text): Text =
+      t"no class, package or source file on the classpath matches $term"
 
-        (Plan(covered, planned.units.to(List).map(subject)), Nil: List[Text])
+    if !missing.nil then (Unset, missing.map(unmatched)) else
+      val uncached: (Optional[Plan], List[Text]) =
+        (Unset, List(t"there is no cache directory to recompile into"))
+
+      cache.lay(uncached): cache =>
+        val planned: probably.Instrumenter.Plan =
+          probably.Instrumenter.plan
+            ( plain(classpath().cut(t":")).map(_.s),
+              plain(found.flatMap(_(1)).distinct).map(_.s),
+              plain(options).map(_.s),
+              cache.s )
+
+        if !planned.problems.isEmpty then (Unset, planned.problems.to(List).map(_.tt)) else
+          val classes = pyrocosm.Classpaths.entry(planned.classes.tt)
+          val covered: LocalClasspath = LocalClasspath((classes :: classpath.entries)*)
+
+          (Plan(covered, planned.units.to(List).map(subject)), Nil: List[Text])
 
   // Has the suites' `probably.Coverage` — the one this classloader loads — open a collector
   // for each test from now on; false if there is none to ask.

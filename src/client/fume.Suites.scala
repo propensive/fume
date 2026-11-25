@@ -256,7 +256,7 @@ object Suites:
   private val scanned: scala.collection.concurrent.TrieMap[Text, List[Scheduled]] =
     scala.collection.concurrent.TrieMap()
 
-  private def fingerprint(classpath: LocalClasspath): Text =
+  def fingerprint(classpath: LocalClasspath): Text =
     classpath.entries.map: entry =>
       // A `LocalClasspath` decoded from fume's settings holds only jars and directories; the
       // platform's own runtime image has no file to stat, and never carries a suite.
