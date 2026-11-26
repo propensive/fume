@@ -62,8 +62,13 @@ configuration file, and finally the user's.
 
 Each run also records what launched it: `CODEX_SANDBOX=1` in the environment marks a run as
 Codex's and `CLAUDECODE=1` as Claude Code's, a run launched through the MCP server is an MCP
-client's, and the dashboard shows the agent's or the protocol's icon beside such a run in its
-list of runs; any other invocation is taken to be a human's.
+client's, and any other invocation is taken to be a human's.
+
+The dashboard lists the runs by name — the directory each was invoked from — each with one
+mark for how it stands: in flight, passed, failed, or stopped short. Beneath the name, smaller,
+is the rest: when it started; how many tests passed, or how many of them failed; the agent or
+the protocol which launched it, with its icon, if a human did not; and the machine it ran on,
+if that is not this one.
 
 ## Listing without running
 
