@@ -227,6 +227,28 @@ hub, which serves every Pyrocosm tool's front-end under one origin; `port` serve
 on a port of its own as well. Likewise a bare `mcp` serves the MCP server from the daemon's start, on `mcp-port`
 (8092 by default). `fume quit` stops them all.
 
+### Tests over several axes
+
+A test over two or more axes — a benchmark of `parser` against `N`, say — is shown in the
+dashboard as a grid, and a benchmark as grouped bars above it. Its axes, in order, have two
+roles: the last is the *series* — the grid's columns, and the bars within a group, one colour
+to a value — and the others are the *categories* — the grid's rows, and the bar groups, the
+first axis varying slowest. A test is first laid out as it declares its axes.
+
+Beside each such test is a button, ⟳, with the layout it has now (`N × parser`: rows ×
+columns). A press turns that test, in that run, and nothing else: the first axis moves to the
+end, so each axis is the series in its turn, and as many presses as the test has axes bring
+it back to where it began. With two axes a press swaps them; with three, the layouts are
+`a, b × c`, `b, c × a` and `c, a × b`. A turn works on a run in flight and on a finished one,
+and lasts for as long as the daemon remembers the run.
+
+Whether a test has the button follows from what is drawn, not from its axes' domains. A grid
+and a bar chart take any axis as categories — a numeric axis is its values in order, a discrete
+one its values as declared — so every test over two or more axes can be turned, whichever kinds
+of axis it has. A test over one axis has one layout, and no button. Nor has a stress test: its
+chart is lines over concurrency, a continuous measure which is not one of the test's axes, with
+a line to each test, so its roles are fixed. The terminal's report is always as declared.
+
 ## Runs are kept
 
 Every run is persisted as it happens, under `$XDG_STATE_HOME/fume/runs/<id>/`

@@ -43,7 +43,30 @@ import pyrocosm.{Action, Activity, Block, Event, Hints, Inline, Interface, Panel
 // remembers. A run registers its board when serving is on, so a browser opened before or
 // during a run watches the same cells the terminal shows.
 object Server:
-  case class Finished(suite: Text, blocks: List[Block])
+  // A finished suite's report. Its board is kept with it when a test of it can be turned, so
+  // that the report can be laid out again; `extra` is what follows the board's own blocks.
+  // `version` counts the layouts it has had, which is how a dashboard knows to show it again.
+  final class Finished
+    ( val suite: Text, blocks0: List[Block], board: Optional[fume.Board], extra: List[Block] ):
+
+    @scala.caps.unsafe.untrackedCaptures
+    @volatile
+    private var current: List[Block] = blocks0
+
+    @scala.caps.unsafe.untrackedCaptures
+    @volatile
+    private var version0: Int = 0
+
+    def blocks: List[Block] = current
+    def version: Int = version0
+
+    // Turns the test `action` is the button of, if it is one of this report's.
+    def turn(action: Action): Boolean = board.lay(false): board =>
+      synchronized:
+        if !board.turn(action) then false else
+          current = board.report(extra)
+          version0 += 1
+          true
 
   private val serving0: Atomic[Boolean] = Atomic(false)
 
@@ -81,9 +104,29 @@ object Server:
 
   def attach(run: Text, board: fume.Board): Unit = mutex { boards = boards.define(run, board) }
 
-  def detach(run: Text, suite: Text, blocks: List[Block]): Unit = mutex:
+  // A suite of the run has finished: its board's last report is kept for the dashboard, and
+  // the board with it if the report has anything to turn.
+  def detach(run: Text, suite: Text, board: fume.Board, extra: List[Block]): Unit =
+    val kept: Optional[fume.Board] = if board.turnable then board else Unset
+    finish(run, Finished(suite, board.report(extra), kept, extra))
+
+  // A suite finished with nobody serving a dashboard to show its report on.
+  def forgo(run: Text, suite: Text): Unit = finish(run, Finished(suite, Nil, Unset, Nil))
+
+  private def finish(run: Text, report: Finished): Unit = mutex:
     boards = boards.omit(run)
-    finished = finished.define(run, finished(run).or(Nil) + List(Finished(suite, blocks)))
+    finished = finished.define(run, finished(run).or(Nil) + List(report))
+
+  // A press of a test's turning button in a run's report: the test is turned, and the report
+  // — the board's next paint while the run is in flight, a finished suite's blocks after —
+  // laid out again. False if the action is not such a button's.
+  def turn(run: Text, action: Action): Boolean =
+    val live: Boolean = board(run).lay(false): board =>
+      if !board.turn(action) then false else
+        board.refresh(force = true)
+        true
+
+    live || done(run).exists(_.turn(action))
 
   def board(run: Text): Optional[fume.Board] = mutex(boards(run))
   def done(run: Text): List[Finished] = mutex(finished(run).or(Nil))
@@ -160,6 +203,9 @@ final class Dashboard():
   private var lastFinished: Int = -1
 
   @scala.caps.unsafe.untrackedCaptures
+  private var lastLayouts: Int = 0
+
+  @scala.caps.unsafe.untrackedCaptures
   private var lastRun: Optional[Text] = Unset
 
   @scala.caps.unsafe.untrackedCaptures
@@ -168,29 +214,19 @@ final class Dashboard():
   val runs: pyrocosm.Live[List[Block]] = pyrocosm.Live(List(Block.paragraph(t"No runs yet.")))
   val content: pyrocosm.Live[List[Block]] = pyrocosm.Live(List(Block.paragraph(t"Select a run.")))
 
-  // Lays a two-axis benchmark out the other way round: its second axis as the rows and the
-  // bar groups, its first as the columns and the bars within a group.
-  val transpose: pyrocosm.Toggle = pyrocosm.Toggle(t"transpose")
-
-  val transposeControl: pyrocosm.Control =
-    pyrocosm.Control.Toggle(transpose, Inline.text(t"Transpose axes"))
-
   private def action(run: Text): Action = mutex:
     actions(run).or:
       val action = Action(t"run-$run")
       actions = actions.define(run, action)
       action
 
+  // A press is of a run in the list, which selects it, or of the button beside a test over
+  // several axes in the report being shown, which turns that test in that run (`Rotations`).
   def handle(event: Event): Unit = event match
-    case Event.Toggled(`transpose`, state) =>
-      Documenting.transposed = state
-      lastLive = null
-      refresh()
-
     case Event.Pressed(action) =>
       val found: Optional[Text] = mutex(actions.to[List]).seek(_(1) == action).let(_(0))
 
-      found.let: run =>
+      found.or(selected.let { run => if Server.turn(run, action) then run else Unset }).let: run =>
         selected = run
         refresh()
 
@@ -302,9 +338,17 @@ final class Dashboard():
           case results: AnyRef => results
           case _               => null
 
-      val changed = lastRun != run || finished.size != lastFinished || !identical(live, lastLive)
+      // How many layouts the finished suites have had between them: one more whenever a test
+      // of one is turned, from this dashboard or another.
+      val layouts: Int = finished.map(_.version).fold(0)(_ + _)
+
+      val changed =
+        lastRun != run || finished.size != lastFinished || layouts != lastLayouts ||
+          !identical(live, lastLive)
+
       lastRun = run
       lastFinished = finished.size
+      lastLayouts = layouts
       lastLive = live
 
       if changed then
@@ -354,5 +398,4 @@ final class Dashboard():
                 Unset,
                 content,
                 Panel.Priority.Essential,
-                controls = List(transposeControl),
-                hints    = Hints(hints.Follow) ) ) )
+                hints = Hints(hints.Follow) ) ) )

@@ -1154,10 +1154,9 @@ private def dispatch()
                 board.let: board =>
                   if Server.serving then
                     board.refresh(force = true)
-                    val blocks: List[pyrocosm.Block] = Blocks.document(document, board.figures)
-                    Server.detach(journalId, title, blocks + Captures.blocks(captures.to(List)))
+                    Server.detach(journalId, title, board, Captures.blocks(captures.to(List)))
                   else
-                    Server.detach(journalId, title, Nil)
+                    Server.forgo(journalId, title)
 
                 captures.each: captured =>
                   if !captured.empty then
@@ -1202,10 +1201,9 @@ private def dispatch()
                 board.let: board =>
                   if Server.serving then
                     board.refresh(force = true)
-                    val blocks: List[pyrocosm.Block] = Blocks.document(document, board.figures)
-                    Server.detach(journalId, title, blocks + Captures.blocks(captures.to(List)))
+                    Server.detach(journalId, title, board, Captures.blocks(captures.to(List)))
                   else
-                    Server.detach(journalId, title, Nil)
+                    Server.forgo(journalId, title)
 
                 // A suite's stray output is a line in the report, not the output itself:
                 // the log has that, and the terminal has just been the board's.

@@ -106,13 +106,27 @@ object Blocks:
     case t"profile" => t"Profile"
     case _          => t"Tests"
 
+  // The button turning a test laid out by several axes, and beside it the layout it has now,
+  // rows × columns: for the dashboard, which has a `rotator` to hear the press. A table of
+  // one layout only, and any table in the terminal, has none.
+  private def turning(ref: TestEvent.Ref, axes: List[Text], rotator: Optional[Rotator])
+  :   List[Inline] =
+
+    rotator.lay(Nil: List[Inline]): rotator =>
+      if axes.size < 2 then Nil else
+        val destination: Inline.Destination = Inline.Destination.Internal(rotator.action(ref.id))
+        val icon: Inline = Inline.Icon(Rotations.icon, t"Turn the axes")
+        val button: Inline = Inline.Link(destination, List(icon))
+        List(Inline.Textual(t"  "), button, toned(Tone.Muted, Rotations.describe(axes)))
+
   // A block of a group, with the chart standing above it when the web dashboard has drawn
   // one (`figures` is empty for the terminal): a table's chart precedes it, and the stress
   // sparkline gives way to its chart.
   def block
     ( block:   Doc.Block,
       group:   Optional[Text]                = Unset,
-      figures: Ledger[Text, pyrocosm.Figure] = Ledger() )
+      figures: Ledger[Text, pyrocosm.Figure] = Ledger(),
+      rotator: Optional[Rotator]             = Unset )
   :   List[Block] =
 
     def figure(table: Text): List[Block] =
@@ -120,7 +134,7 @@ object Blocks:
         figures(t"$group#$table").lay(Nil: List[Block]): figure => List(Block.Figure(figure))
 
     block match
-    case Doc.Block.Table(title, columns, rows, highlight) =>
+    case Doc.Block.Table(title, columns, rows, highlight, axes) =>
       val rows0: List[Block.Row] = rows.indexed.map: (cells, index) =>
         val tone: Optional[Tone] = if highlight.has(index.n0) then Tone.Success else Unset
         Block.Row(cells.map { (cell: Datum) => Block.Cell(datum(cell)) }, tone)
@@ -128,7 +142,7 @@ object Blocks:
       val table: Block = Block.Table(columns.map(column), rows0)
 
       title.lay(figure(t"plain") + List(table)): ref =>
-        Block.Paragraph(caption(ref)) :: figure(ref.id) + List(table)
+        Block.Paragraph(caption(ref) + turning(ref, axes, rotator)) :: figure(ref.id) + List(table)
 
     case Doc.Block.Sparkline(steps, sequence) if !figure(t"stress").nil =>
       figure(t"stress")
@@ -168,7 +182,12 @@ object Blocks:
 
       List(Block.Listing(false, items))
 
-  def group(group: Group, figures: Ledger[Text, pyrocosm.Figure] = Ledger()): Block =
+  def group
+    ( group:   Group,
+      figures: Ledger[Text, pyrocosm.Figure] = Ledger(),
+      rotator: Optional[Rotator]             = Unset )
+  :   Block =
+
     val suiteName: Text = group.suite.let(_.name).or(t"")
     val key: Text = Charts.key(group.suite, group.kind, t"")
 
@@ -185,7 +204,7 @@ object Blocks:
       val prefix = key.skip(1, Rtl)
 
       val blocks: List[Block] =
-        group.blocks.bind: (block0: Doc.Block) => block(block0, prefix, figures)
+        group.blocks.bind: (block0: Doc.Block) => block(block0, prefix, figures, rotator)
 
       Block.Group(heading :: blocks)
 
@@ -447,15 +466,21 @@ object Blocks:
     ( state:    Model.State,
       document: Document,
       figures:  Ledger[Text, pyrocosm.Figure] = Ledger(),
-      memo:     RowMemo                       = RowMemo() )
+      memo:     RowMemo                       = RowMemo(),
+      rotator:  Optional[Rotator]             = Unset )
   :   List[Block] =
 
-    live(state, memo).lay(Nil: List[Block])(List(_)) + document.groups.map(group(_, figures)) +
-      failures(document)
+    live(state, memo).lay(Nil: List[Block])(List(_)) +
+      document.groups.map(group(_, figures, rotator)) + failures(document)
 
   def board(state: Model.State): List[Block] = board(state, Documenting.document(state))
 
   // The finished report's blocks: the results table and the groups.
-  def document(document: Document, figures: Ledger[Text, pyrocosm.Figure] = Ledger()): List[Block] =
+  def document
+    ( document: Document,
+      figures:  Ledger[Text, pyrocosm.Figure] = Ledger(),
+      rotator:  Optional[Rotator]             = Unset )
+  :   List[Block] =
+
     results(document.results).lay(Nil: List[Block])(List(_)) +
-      document.groups.map(group(_, figures)) + failures(document)
+      document.groups.map(group(_, figures, rotator)) + failures(document)
