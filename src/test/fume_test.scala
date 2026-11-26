@@ -2070,6 +2070,44 @@ object Tests extends Suite(m"Fume tests"):
           ( t"fume.Tiny", true, at(1_700_000_001_000L), at(1_700_000_002_000L),
             RunRecord.Totals(2, 0, 0, 0), Runs.eventsFile(1), false )
 
+      def noted(record: RunRecord): Text =
+        Inline.plain(fume.Dashboard.note(record, t"just now", t"laptop"))
+
+      test(m"a run in the list is noted by when it started, how it went and what launched it"):
+        val totals = RunRecord.Totals(1210, 0, 4, 0)
+        noted(record(t"a", Nil, t"passed").copy(totals = totals))
+
+      . assert(_ == t"just now · 1,214 passed ·  Claude")
+
+      test(m"a run's note counts its failures, and says nothing of a human or of this machine"):
+        val totals = RunRecord.Totals(210, 3, 0, 1)
+        noted(record(t"a", Nil, t"failed").copy(totals = totals, invoker = RunRecord.human))
+
+      . assert(_ == t"just now · 4 of 214 failed")
+
+      test(m"a run in flight, another fume's run and a run elsewhere are noted as such"):
+        val running = record(t"a", Nil, Unset).copy(invoker = RunRecord.human, machine = t"desk")
+        val sent = record(t"a", Nil, t"aborted").copy(invoker = RunRecord.remote, client = t"desk")
+        (noted(running), noted(sent))
+
+      . assert(_ == (t"just now · running · on desk", t"just now · aborted · for desk"))
+
+      test(m"a run in the list has one mark and its name, strong when it is the one selected"):
+        val run = record(t"a", Nil, t"passed")
+
+        def marks(title: List[Inline]): Int = title.count:
+          case Inline.Toned(_, List(Inline.Symbol(_))) => true
+          case _                                       => false
+
+        val strong: Boolean = fume.Dashboard.title(run, true).exists:
+          case Inline.Toned(_, List(Inline.Strong(_))) => true
+          case _                                       => false
+
+        val plain: List[Inline] = fume.Dashboard.title(run, false)
+        (marks(plain), strong, Inline.plain(plain).contains(t"project"))
+
+      . assert(_ == (1, true, true))
+
       test(m"a record round-trips through TEL"):
         val original: RunRecord = record(t"20231114-222000-abcd", List(tinySuite), t"passed")
         RunRecord.read(RunRecord.write(original))

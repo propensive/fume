@@ -35,6 +35,7 @@ package fume
 import soundness.*
 
 import denominative.dysasymptotics.linearSize
+import pyrocosm.Machine
 import pyrocosm.WebService
 import pyrocosm.{Action, Activity, Block, Event, Hints, Inline, Interface, Panel, Tone, Tool, hints}
 
@@ -157,6 +158,57 @@ object Dashboard:
   // Where the dashboard on `port` is found.
   def address(port: Int): Text = Fume.address(port)
 
+  // A run in the list of runs: one mark, for how it stands — in flight, passed, failed, or
+  // stopped short — and its name, which is its record's, with what else is worth knowing of
+  // it in a note beneath, set smaller. The selected run's name is strong, and in the accent.
+  def title(record: RunRecord, selected: Boolean): List[Inline] =
+    val standing: Inline = record.outcome.lay(Inline.glyph(Tone.Accent, pyrocosm.Glyph.Running)):
+      case RunRecord.passed => Inline.glyph(Tone.Success, pyrocosm.Glyph.Check)
+      case RunRecord.failed => Inline.glyph(Tone.Failure, pyrocosm.Glyph.Cross)
+      case _                => Inline.glyph(Tone.Warning, pyrocosm.Glyph.Warning)
+
+    val name: Inline =
+      if selected then Inline.Toned(Tone.Accent, List(Inline.Strong(Inline.text(record.name))))
+      else Inline.Textual(record.name)
+
+    List(standing, Inline.Textual(t" "), name)
+
+  // The note beneath a run's name, its parts separated by a dot: `when` it started; how it
+  // went — its tests' count, or how many of them failed, or, for a run with no totals, the
+  // word for its outcome; who launched it, when that was not a human at a terminal — an
+  // agent or an MCP client, with its icon, or the machine whose fume sent it here; and the
+  // machine it ran on, when that is not `host`, this one. What a record holds besides — the
+  // launching client's process id, the classpath, the selection — is the report's to show.
+  def note(record: RunRecord, when: Text, host: Text): List[Inline] =
+    def count(number: Int): Text = Figures.grouped(number)
+
+    val result: Text = record.totals.lay(record.outcome.or(t"running")): totals =>
+      val failed: Int = totals.failed + totals.aspireFailed
+
+      if failed == 0 then t"${count(totals.total)} passed"
+      else t"${count(failed)} of ${count(totals.total)} failed"
+
+    val invoker: Invoker = Invoker.of(record.invoker)
+
+    val launcher: List[List[Inline]] = invoker match
+      case Invoker.Human  => Nil
+      case Invoker.Remote => List(Inline.text(t"for ${record.client}"))
+      case Invoker.Mcp    => List(agent(invoker, t"MCP"))
+      case _              => List(agent(invoker, invoker.name))
+
+    val machine: List[List[Inline]] =
+      if record.machine == host || record.machine == t"" then Nil
+      else List(Inline.text(t"on ${record.machine}"))
+
+    val rest: List[List[Inline]] = List(Inline.text(result)) + launcher + machine
+    Inline.text(when) + rest.bind: part => Inline.Textual(t" · ") :: part
+
+  // An agent or a protocol in a note: its icon, served by `Assets`, and its name, which is
+  // all the icon would say, so it has no description of its own.
+  private def agent(invoker: Invoker, name: Text): List[Inline] =
+    invoker.icon.lay(Inline.text(name)): icon =>
+      List(Inline.Icon(Assets.location(icon), t""), Inline.Textual(t" $name"))
+
   // Served until `stop`, as every tool's web front-end is (`WebService`): the dashboard is
   // rebuilt a few times a second by the ticker, for as long as the front-end runs, exactly as
   // the interactive `fume serve` loop rebuilds it. The MCP server answers `/mcp` on the
@@ -265,38 +317,10 @@ final class Dashboard():
     Activity(run.id, Inline.text(nameOf(run)), status, destination, state)
 
   private def runItem(run: Journal.Run): Block.Item =
-    val record: RunRecord = run.record
-
-    def glyph(tone: Tone, symbol: pyrocosm.Glyph): Inline =
-      Inline.Toned(tone, List(Inline.Symbol(symbol)))
-
-    val standing: Inline = record.outcome.lay(glyph(Tone.Accent, pyrocosm.Glyph.Running)):
-      case RunRecord.passed => glyph(Tone.Success, pyrocosm.Glyph.Check)
-      case RunRecord.failed => glyph(Tone.Failure, pyrocosm.Glyph.Cross)
-      case _                => glyph(Tone.Warning, pyrocosm.Glyph.Warning)
-
-    // An agent's run carries the agent's icon, served by `Assets`; a human's carries nothing.
-    val invoker: Invoker = Invoker.of(record.invoker)
-
-    val agent: List[Inline] = invoker.icon.lay(Nil: List[Inline]): icon =>
-      List(Inline.Icon(Assets.location(icon), invoker.name), Inline.Textual(t" "))
-
-    val provenance: Text = t"${when(record.started)} · ${record.client} · ${record.machine}"
-
-    val detail: List[Inline] =
-      List
-        ( Inline.Emphasis(Inline.text(nameOf(run))),
-          Inline.Textual(t" "),
-          Inline.Toned(Tone.Muted, Inline.text(provenance)) )
-
-    val label: List[Inline] = List(standing, Inline.Textual(t" ")) + agent + detail
-
-    val selectedMark: List[Inline] =
-      if selected == run.id
-      then List(glyph(Tone.Accent, pyrocosm.Glyph.ArrowRight), Inline.Textual(t" "))
-      else Nil
-
-    Block.Item(List(Block.Paragraph(selectedMark + label)), action(run.id))
+    val title: List[Inline] = Dashboard.title(run.record, selected == run.id)
+    val host: Text = Machine.Identity.local.hostname
+    val note: List[Inline] = Dashboard.note(run.record, when(run.record.started), host)
+    Block.Item(List(Block.Paragraph(title)), action(run.id), note = note)
 
   // Whether two references are the same object, or both absent: how a board's published blocks
   // are known to be unchanged without comparing them.
