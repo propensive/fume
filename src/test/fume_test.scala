@@ -40,7 +40,7 @@ import denominative.dysasymptotics.linearSize
 import filesystemBackends.javaBaseFilesystem
 import logging.silentLogging
 import probably.TestEvent
-import pyrocosm.Block
+import pyrocosm.{Block, Inline}
 import strategies.throwUnsafely
 import systems.javaBaseSystem
 import temporaryDirectories.systemTemporaryDirectory
@@ -795,7 +795,7 @@ object Tests extends Suite(m"Fume tests"):
         val document = Documenting.document(model.state())
 
         document.groups.bind(_.blocks).sweep:
-          case Doc.Block.Table(title, _, rows, _) =>
+          case Doc.Block.Table(title, _, rows, _, _) =>
             (title.let(_.id), rows.size, rows.map(_.head.or(Doc.Datum.Blank)))
 
       . assert(_ == List((testA1.id, 2, List(Doc.Datum.Str(t"4"), Doc.Datum.Str(t"8")))))
@@ -882,6 +882,241 @@ object Tests extends Suite(m"Fume tests"):
           _ ==
             ( List(t"heading", t"figure", t"table", t"heading", t"figure", t"table"),
               List(t"heading", t"table", t"heading", t"other", t"chart", t"table") )
+
+      // The four cells of `N` against `parser`, recorded.
+      def gridModel(): Model =
+        benchModel
+          ( bench(testA1, 10000.0, 1, 0.0, cell(4, t"jacinta")),
+            bench(testA1, 20000.0, 1, 0.0, cell(4, t"circe")),
+            bench(testA1, 30000.0, 1, 0.0, cell(8, t"jacinta")),
+            bench(testA1, 40000.0, 1, 0.0, cell(8, t"circe")) )
+
+      def once(test: TestEvent.Ref): Rotations = Rotations.none.turned(test.id)
+
+      // A benchmark's grid: its axes as laid out, its column titles, and its rows' leading cells.
+      def grids(model: Model, rotations: Rotations): List[(List[Text], List[Text], List[Text])] =
+        Documenting.document(model.state(), rotations).groups.bind(_.blocks).sweep:
+          case Doc.Block.Table(_, columns, rows, _, axes) if !axes.nil =>
+            val leads: List[Text] = rows.map(_.head.or(Doc.Datum.Blank)).sweep:
+              case Doc.Datum.Str(text) => text
+
+            (axes, columns.map(_.title), leads)
+
+      test(m"a turn moves the first axis to the end, and as many turns as axes come round"):
+        val axes = List(t"N", t"parser", t"document")
+
+        ( Rotations.turn(axes, 1),
+          Rotations.turn(axes, 2),
+          Rotations.turn(axes, 3),
+          Rotations.turn(List(t"N", t"parser"), 1),
+          Rotations.turn(List(t"N"), 1) )
+
+      . assert:
+          _ ==
+            ( List(t"parser", t"document", t"N"),
+              List(t"document", t"N", t"parser"),
+              List(t"N", t"parser", t"document"),
+              List(t"parser", t"N"),
+              List(t"N") )
+
+      test(m"a two-axis benchmark turned once has a group per second-axis value"):
+        members(gridModel(), t"bench").head.let(Charts.axial(_, once(testA1))).let(_.slices)
+
+      . assert:
+          _ ==
+            List
+              ( Charts.Slice(t"4", List(flat(t"jacinta", 10.0), flat(t"circe", 20.0))),
+                Charts.Slice(t"8", List(flat(t"jacinta", 30.0), flat(t"circe", 40.0))) )
+
+      test(m"a two-axis benchmark turned twice is as it was declared"):
+        val twice = once(testA1).turned(testA1.id)
+        val entry = members(gridModel(), t"bench").head
+        entry.let(Charts.axial(_, twice)) == entry.let(Charts.axial(_))
+
+      . assert(_ == true)
+
+      test(m"a turn of one test leaves another as it was declared"):
+        val entry = members(gridModel(), t"bench").head
+        entry.let(Charts.axial(_, once(testA2))) == entry.let(Charts.axial(_))
+
+      . assert(_ == true)
+
+      test(m"a two-axis benchmark's grid is turned with its chart"):
+        val model = gridModel()
+        (grids(model, Rotations.none), grids(model, once(testA1)))
+
+      . assert:
+          _ ==
+            ( List((List(t"N", t"parser"), List(t"N", t"jacinta", t"circe"), List(t"4", t"8"))),
+              List
+                ( ( List(t"parser", t"N"),
+                    List(t"parser", t"4", t"8"),
+                    List(t"jacinta", t"circe") ) ) )
+
+      // A cell of `N` against `parser` against `document`.
+      def cube(n: Long, parser: Text, document: Text): List[TestEvent.Coordinate] =
+        cell(n, parser) + List(discrete(t"document", document))
+
+      def cubeModel(): Model =
+        benchModel
+          ( bench(testA1, 10000.0, 1, 0.0, cube(4, t"jacinta", t"small")),
+            bench(testA1, 20000.0, 1, 0.0, cube(4, t"circe", t"small")),
+            bench(testA1, 30000.0, 1, 0.0, cube(8, t"jacinta", t"small")),
+            bench(testA1, 40000.0, 1, 0.0, cube(8, t"circe", t"large")) )
+
+      test(m"a three-axis benchmark has a group per pair of values, a bar per third-axis value"):
+        members(cubeModel(), t"bench").head.let(Charts.axial(_)).let(_.slices)
+
+      . assert:
+          _ ==
+            List
+              ( Charts.Slice
+                  ( t"small",
+                    List
+                      ( flat(t"4, jacinta", 10.0), flat(t"4, circe", 20.0),
+                        flat(t"8, jacinta", 30.0), flat(t"8, circe", 0.0) ) ),
+                Charts.Slice
+                  ( t"large",
+                    List
+                      ( flat(t"4, jacinta", 0.0), flat(t"4, circe", 0.0),
+                        flat(t"8, jacinta", 0.0), flat(t"8, circe", 40.0) ) ) )
+
+      test(m"each turn of a three-axis benchmark gives another axis the series"):
+        val entry = members(cubeModel(), t"bench").head
+        val twice = once(testA1).turned(testA1.id)
+
+        ( entry.let(Charts.axial(_, once(testA1))).let(_.slices.map(_.name)),
+          entry.let(Charts.axial(_, twice)).let(_.slices.map(_.name)) )
+
+      . assert(_ == (List(t"4", t"8"), List(t"jacinta", t"circe")))
+
+      test(m"a three-axis benchmark's grid names each row by a column to each leading axis"):
+        grids(cubeModel(), Rotations.none).map(_(1))
+
+      . assert(_ == List(List(t"N", t"parser", t"small", t"large")))
+
+      // The actions of the turning buttons among some blocks, in order.
+      def buttons(blocks: List[Block]): List[pyrocosm.Action] = blocks.bind:
+        case Block.Group(content) =>
+          buttons(content)
+
+        case Block.Paragraph(content) =>
+          content.sweep:
+            case Inline.Link(Inline.Destination.Internal(action), _) => action
+
+        case _ =>
+          Nil
+
+      // A run with a benchmark over two axes, another over one, and a plain one.
+      def mixedModel(): Model =
+        val testA3 = ref(t"000005", Unset, List(t"root", t"A", t"a3"))
+        val model = gridModel()
+        model.handle(bench(testA2, 50000.0, 1, 0.0, List(integral(t"N", 8))))
+        model.handle(bench(testA3, 60000.0, 1, 0.0))
+        model
+
+      test(m"only a test over several axes has a button, and only on the dashboard"):
+        val state = mixedModel().state()
+        val document = Documenting.document(state)
+        val rotator = Rotator()
+        val shown: List[pyrocosm.Action] = buttons(Blocks.board(state, document, rotator = rotator))
+        (shown == List(rotator.action(testA1.id)), buttons(Blocks.board(state, document)))
+
+      . assert(_ == (true, Nil))
+
+      test(m"a test's button is a link to its action, drawn as the icon of a rotation"):
+        val state = gridModel().state()
+        val rotator = Rotator()
+        val blocks = Blocks.board(state, Documenting.document(state), rotator = rotator)
+        val html: Text = pyrocosm.HtmlRenderer().blocks(blocks).show
+        val anchor: Text = t"""<a href="#" id="${rotator.action(testA1.id).id}""""
+        (html.contains(anchor), html.contains(t"<svg"), html.contains(t"N × parser"))
+
+      . assert(_ == (true, true, true))
+
+      // The titles of the first column of each grid among some blocks: the axis its rows are.
+      def leading(blocks: List[Block]): List[Text] = blocks.bind:
+        case Block.Group(content) =>
+          leading(content)
+
+        case Block.Table(columns, _, _) =>
+          columns.head.let { column => Inline.plain(column.title) }.lay(Nil: List[Text]): title =>
+            if title == t"N" || title == t"parser" then List(title) else Nil
+
+        case _ =>
+          Nil
+
+      def reported(report: Server.Finished): List[Text] = leading(report.blocks)
+
+      test(m"a press turns a run's test on its board while it runs, and in its report after"):
+        val serving: Boolean = Server.serving
+        Server.serving = true
+        val run: Text = t"turning-run"
+        val board = fume.Board(gridModel(), t"A")
+        Server.attach(run, board)
+        board.refresh(force = true)
+        val declared: List[Text] = leading(board.webResults())
+        val button: Optional[pyrocosm.Action] = buttons(board.webResults()).head
+        val pressed: Optional[Boolean] = button.let(Server.turn(run, _))
+        val live: List[Text] = leading(board.webResults())
+        val terminal: List[Text] = leading(board.results())
+        Server.detach(run, t"A", board, Nil)
+        val kept: List[Text] = Server.done(run).bind(reported(_))
+        val again: Optional[Boolean] = button.let(Server.turn(run, _))
+        val back: List[Text] = Server.done(run).bind(reported(_))
+        val versions: List[Int] = Server.done(run).map(_.version)
+        val stranger: Boolean = Server.turn(run, pyrocosm.Action(t"other"))
+        Server.forget(run)
+        Server.serving = serving
+        (declared, pressed, live, terminal, kept, again, back, versions, stranger)
+
+      . assert:
+          _ ==
+            ( List(t"N"), true, List(t"parser"), List(t"N"), List(t"parser"), true, List(t"N"),
+              List(1), false )
+
+      test(m"a press of a test's button turns that test, and a press of anything else nothing"):
+        val rotator = Rotator()
+        val first = rotator.press(rotator.action(testA1.id))
+        val second = rotator.press(rotator.action(testA1.id))
+        val other = rotator.press(pyrocosm.Action(t"other"))
+        (first, second, other, rotator.rotations.of(testA1.id), rotator.rotations.of(testA2.id))
+
+      . assert(_ == (true, true, false, 2, 0))
+
+      test(m"a turn redraws a chart, and the same data in the same layout sends nothing"):
+        val charts = Charts()
+        val state = gridModel().state()
+        val key = Charts.key(suiteA, t"bench", testA1.id)
+        val figure: Optional[pyrocosm.Figure] = charts.refresh(state)(key)
+        val before: Optional[Text] = figure.let(_.svg)
+        charts.refresh(state)
+        val quiet: Boolean = figure.let(_.revision()).absent
+        charts.refresh(state, once(testA1))
+
+        val redrawn: Boolean = figure.let(_.revision()) match
+          case pyrocosm.Figure.Revision.Redraw(_) => true
+          case _                                  => false
+
+        (quiet, redrawn, figure.let(_.svg) != before)
+
+      . assert(_ == (true, true, true))
+
+      test(m"a unit test over three axes is a grid of statuses which turns as a benchmark's does"):
+        val model = Model()
+        model.handle(TestEvent.SuiteStarted(root, 0L))
+        model.handle(TestEvent.SuiteStarted(suiteA, 0L))
+
+        List((4L, t"jacinta", t"small"), (8L, t"circe", t"large")).each: (n, parser, document) =>
+          model.handle:
+            TestEvent.TestCompleted(testA1, t"check", cube(n, parser, document), passed, Nil, 0L)
+
+        (grids(model, Rotations.none).map(_(1)), grids(model, once(testA1)).map(_(1)))
+
+      . assert:
+          _ ==
+            ( List(List(t"N", t"parser", t"small", t"large")),
+              List(List(t"parser", t"document", t"4", t"8")) )
 
       // A failure as the board receives it: the details recorded for one failed test.
       def failed(details: TestEvent*): Doc.Document =

@@ -69,7 +69,9 @@ object Documenting:
 
     counted.fold(Totals.zero): (totals, row) => add(totals, row.status)
 
-  def document(state: State): Document =
+  // `rotations` says how far each test over several axes has been turned from its declaration:
+  // none, for every report but the dashboard's, which has a button for it.
+  def document(state: State, rotations: Rotations = Rotations.none): Document =
     val (counted, results) = summaries(state)
     val totals: Totals = totalsOf(counted)
 
@@ -77,7 +79,7 @@ object Documenting:
     // says nothing when another suite's tests ran.
     val nothingMatched: Boolean = state.nothingMatched > 0 && totals.total == 0
 
-    Document(results, totals, groups(state), state.details, state.fatals, nothingMatched)
+    Document(results, totals, groups(state, rotations), state.details, state.fatals, nothingMatched)
 
   private def parent(path: List[Text]): List[Text] = path.skip(1, Rtl)
 
@@ -214,7 +216,13 @@ object Documenting:
   private[fume] def measurements(state: State): List[(Optional[TestEvent.Ref], Text, List[Entry])] =
     grouped(state).filter: group => group(1) == t"bench" || group(1) == t"stress"
 
-  private def groups(state: State): List[Group] =
+  // Whether any test of the run is laid out by several axes, and so can be turned.
+  private[fume] def turnable(state: State): Boolean =
+    grouped(state).exists: group =>
+      group(2).exists: entry =>
+        (if group(1) == t"check" then checkAxes(entry) else axesOf(entry)).size > 1
+
+  private def groups(state: State, rotations: Rotations): List[Group] =
     grouped(state).bind[List[Group], Group, List[Group]]: (suite, kind, members) =>
       // A group where nothing has recorded and nothing is running collapses to one line:
       // its members stay elided until the group starts evaluating.
@@ -226,8 +234,8 @@ object Documenting:
       if !started then List(Group(suite, kind, Nil, pending = true))
       else
         val blocks: List[Block] = kind match
-          case t"check"  => members.map(axialCheck(_))
-          case t"bench"  => benchBlocks(members)
+          case t"check"  => members.map(axialCheck(_, rotations))
+          case t"bench"  => benchBlocks(members, rotations)
           case t"stress" => stressBlocks(members)
           case _         => members.map(histogram(_))
 
@@ -238,12 +246,14 @@ object Documenting:
   private def outcomeStatus(outcomes: List[TestEvent.Outcome]): Status =
     Status.collective(outcomes.map { outcome => Status.of(outcome.outcome) })
 
-  // An axial unit test: one axis renders as a table of per-value statuses and timings; two
-  // axes render as a grid of statuses with gaps at undefined combinations; more render as a
-  // flat listing.
-  private def axialCheck(entry: Entry): Block =
-    val axes: List[Text] =
-      entry.completions.bind[List[Text], Text, List[Text]](_(0).map(_.axis)).distinct
+  // The axes of a unit test's cells, in the order its completions carry them.
+  private def checkAxes(entry: Entry): List[Text] =
+    entry.completions.bind[List[Text], Text, List[Text]](_(0).map(_.axis)).distinct
+
+  // An axial unit test: one axis renders as a table of per-value statuses and timings; more
+  // render as a grid of statuses, with gaps at undefined combinations.
+  private def axialCheck(entry: Entry, rotations: Rotations): Block =
+    val axes: List[Text] = rotations.arrange(entry.ref.id, checkAxes(entry))
 
     axes match
       case axis :: Nil =>
@@ -267,41 +277,21 @@ object Documenting:
             List(Column(axis, stretch = true), Column(t"Status"), Column(t"Time", numeric = true)),
             rows )
 
-      case first :: second :: Nil =>
-        crosstab(entry, first, second): completions =>
-          if completions.nil then Datum.Gap else Datum.Mark(outcomeStatus(completions.map(_(1))))
-
       case _ =>
-        val rows: List[List[Datum]] =
-          entry.completions.map: completion =>
-            val address: Text = completion(0).map(coordText(_)).join(t", ")
-            List(Datum.Str(address), Datum.Mark(Status.of(completion(1).outcome)))
+        grid(entry, axes): address =>
+          val outcomes: List[TestEvent.Outcome] =
+            entry.completions.filter { completion => located(completion(0), address) }.map(_(1))
 
-        Block.Table
-          ( entry.ref,
-            List(Column(axes.join(t", "), stretch = true), Column(t"Status")),
-            rows )
+          if outcomes.nil then Datum.Gap else Datum.Mark(outcomeStatus(outcomes))
 
-  // Whether a two-axis entry is laid out with its axes the other way round from the test's
-  // declaration: the second axis as the crosstab's rows and the chart's groups. Toggled from
-  // the dashboard, for the one report the daemon shows.
-  @scala.caps.unsafe.untrackedCaptures
-  @volatile
-  var transposed: Boolean = false
-
-  // An entry's axes: those its records carry, or, before it has recorded, those its schedule
-  // announced (an emergent axis, whose values are found by running, is not one to lay out). A
-  // test's first axis is the crosstab's rows and the chart's groups, unless transposed.
+  // A benchmark's axes, as its test declares them: those its records carry, or, before it
+  // has recorded, those its schedule announced (an emergent axis, whose values are found by
+  // running, is not one to lay out). How they are laid out is `Rotations`' to say.
   private[fume] def axesOf(entry: Entry): List[Text] =
     val recorded: List[Text] =
       entry.benches.bind[List[Text], Text, List[Text]](_.coordinates.map(_.axis)).distinct
 
-    val declared: List[Text] =
-      if recorded.nil then entry.axes.filter(!_.emergent).map(_.axis) else recorded
-
-    declared match
-      case first :: second :: Nil if transposed => List(second, first)
-      case other                                => other
+    if recorded.nil then entry.axes.filter(!_.emergent).map(_.axis) else recorded
 
   // The values of one axis across an entry's cells — those the schedule announced first, then
   // any others its records carry — in first-appearance order for discrete axes and numeric
@@ -345,31 +335,48 @@ object Documenting:
 
     if distinct.exists(_.domain == t"discrete") then distinct else distinct.order(coordNumeric(_))
 
-  // The biaxial grid: the first axis's values are rows, the second's are columns, and each
-  // cell holds only the headline datum; absent combinations render as gaps.
-  private def crosstab(entry: Entry, first: Text, second: Text)
-    ( cell: List[(List[TestEvent.Coordinate], TestEvent.Outcome)] => Datum )
-  :   Block =
+  // A cell's address: the value it has on each of some axes.
+  private[fume] type Address = List[(Text, Text)]
 
-    val rowValues: List[Text] = axisValues(entry, first).map(coordText(_))
-    val columnValues: List[Text] = axisValues(entry, second).map(coordText(_))
+  // Whether the coordinates of a record are at an address.
+  private[fume] def located(coordinates: List[TestEvent.Coordinate], address: Address): Boolean =
+    def at(axis: Text, value: Text): Boolean =
+      coordinates.exists: c => c.axis == axis && coordText(c) == value
+
+    address.all(at(_, _))
+
+  // Every combination of the values of some axes, the first axis varying slowest.
+  private[fume] def addresses(entry: Entry, axes: List[Text]): List[Address] = axes match
+    case axis :: rest =>
+      val tails: List[Address] = addresses(entry, rest)
+
+      axisValues(entry, axis).map(coordText(_)).bind[List[Address], Address, List[Address]]:
+        value => tails.map((axis, value) :: _)
+
+    case _ =>
+      List(Nil)
+
+  // The grid of an entry over several axes, in the order they are laid out (`Rotations`): a column
+  // for each value of the last, and a row for each combination of the others' values, named in
+  // a column to each axis. Each cell holds only the headline datum of its address; an absent
+  // combination is whatever `cell` makes of it, usually a gap.
+  private def grid(entry: Entry, axes: List[Text])(cell: Address => Datum): Block =
+    val (categories, series0) = Rotations.roles(axes)
+    val series: Text = series0.or(t"")
+    val columnValues: List[Text] = axisValues(entry, series).map(coordText(_))
 
     val rows: List[List[Datum]] =
-      rowValues.map: row =>
-        val cells: List[Datum] =
-          columnValues.map: column =>
-            val matching = entry.completions.filter: completion =>
-              completion(0).exists { c => c.axis == first && coordText(c) == row } &&
-                completion(0).exists: c => c.axis == second && coordText(c) == column
+      addresses(entry, categories).map: address =>
+        val cells: List[Datum] = columnValues.map: column => cell(address + List((series, column)))
+        address.map { (pair: (Text, Text)) => Datum.Str(pair(1)): Datum } + cells
 
-            cell(matching)
-
-        Datum.Str(row) :: cells
+    val leading: List[Column] = categories.indexed.map: (axis, index) =>
+      Column(axis, stretch = index.n0 == 0)
 
     val columns: List[Column] =
-      Column(first, stretch = true) :: columnValues.map: value => Column(value, numeric = true)
+      leading + columnValues.map: value => Column(value, numeric = true)
 
-    Block.Table(entry.ref, columns, rows)
+    Block.Table(entry.ref, columns, rows, axes = axes)
 
   // ---------------------------------------------------------------- benchmarks
 
@@ -466,7 +473,7 @@ object Documenting:
         case _ =>
           Datum.Ratio(side(value)/side(anchorValue))
 
-  private def benchBlocks(entries: List[Entry]): List[Block] =
+  private def benchBlocks(entries: List[Entry], rotations: Rotations): List[Block] =
     // Once its group has started, a benchmark without results yet occupies its named row
     // with BLANK cells, filling in when the data arrives. (An entry that turns out to be
     // axial leaves the plain table for its own titled table with its first record.)
@@ -507,12 +514,12 @@ object Documenting:
             rows,
             highlight ))
 
-    table + axial.bind[List[Block], Block, List[Block]]: entry => axialBench(entry, sized)
+    table + axial.bind[List[Block], Block, List[Block]](axialBench(_, sized, rotations))
 
-  // An entry with one axis renders as a table of its runs; with two, as a crosstab of
-  // headline data; with more, as a flat listing of coordinates and headlines.
-  private def axialBench(entry: Entry, sized: Boolean): List[Block] =
-    val axes: List[Text] = axesOf(entry)
+  // An entry with one axis renders as a table of its runs; with more, as a grid of headline
+  // data.
+  private def axialBench(entry: Entry, sized: Boolean, rotations: Rotations): List[Block] =
+    val axes: List[Text] = rotations.arrange(entry.ref.id, axesOf(entry))
 
     def benchAt(axis: Text, value: Text): Optional[TestEvent.BenchmarkRecorded] =
       entry.benches.seek(_.coordinates.exists { c => c.axis == axis && coordText(c) == value })
@@ -549,37 +556,14 @@ object Documenting:
             Column(axis, stretch = true) :: benchMetricColumns(sized) + comparisonColumns,
             rows ))
 
-      case first :: second :: Nil =>
-        val rowValues: List[Text] = axisValues(entry, first).map(coordText(_))
-        val columnValues: List[Text] = axisValues(entry, second).map(coordText(_))
-
-        val rows: List[List[Datum]] =
-          rowValues.map: row =>
-            val cells: List[Datum] =
-              columnValues.map: column =>
-                entry.benches.seek: bench =>
-                  bench.coordinates.exists { c => c.axis == first && coordText(c) == row } &&
-                    bench.coordinates.exists: c => c.axis == second && coordText(c) == column
-
-                . lay(Datum.Gap)(headline(_))
-
-            Datum.Str(row) :: cells
-
-        val columns: List[Column] =
-          Column(first, stretch = true) :: columnValues.map: value => Column(value, numeric = true)
-
-        List(Block.Table(entry.ref, columns, rows))
-
       case _ =>
-        val rows: List[List[Datum]] =
-          entry.benches.map: bench =>
-            val address: Text = bench.coordinates.map(coordText(_)).join(t", ")
-            List(Datum.Str(address), headline(bench))
+        def cell(address: Address): Datum =
+          def here(bench: TestEvent.BenchmarkRecorded): Boolean =
+            located(bench.coordinates, address)
 
-        List(Block.Table
-          ( entry.ref,
-            List(Column(axes.join(t", "), stretch = true), Column(t"Headline", numeric = true)),
-            rows ))
+          entry.benches.seek(here(_)).lay(Datum.Gap)(headline(_))
+
+        List(grid(entry, axes)(cell(_)))
 
   // ---------------------------------------------------------------- stress tests
 

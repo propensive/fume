@@ -323,7 +323,7 @@ object Render:
 
   private def blockLines(block: Block, width: Int, terse: Boolean)(emit: Teletype => Unit): Unit =
     block match
-      case Block.Table(title, columns, rows, highlight) =>
+      case Block.Table(title, columns, rows, highlight, _) =>
         title.let: ref =>
           if terse then emit(e"${ref.id}  ${ref.name}")
           else emit(e"$Bold(${Fg(Palette.informative)}(${ref.id})) $Bold(${ref.name})")

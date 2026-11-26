@@ -135,15 +135,17 @@ object Doc:
       sustained: Optional[(Long, Long)] )
 
   enum Block:
-    // A table of cells; a biaxial entry renders as a crosstab: its second axis's values
+    // A table of cells; an entry over several axes renders as a grid: its last axis's values
     // become the columns and each cell holds only the headline datum. `highlight` lists the
     // indices of rows to render with the winner's background — set once every scheduled row
-    // has its data.
+    // has its data. `axes` are a grid's, in the order it is laid out by (`Rotations`), and empty
+    // for any other table: a table which has them is one of several layouts of its test.
     case Table
       ( title:     Optional[TestEvent.Ref],
         columns:   List[Column],
         rows:      List[List[Datum]],
-        highlight: List[Int] = Nil )
+        highlight: List[Int]  = Nil,
+        axes:      List[Text] = Nil )
 
     case Sparkline(steps: List[Long], sequence: List[Spark])
     case Histogram(title: Optional[TestEvent.Ref], total: Long, frames: List[TestEvent.Hotspot])

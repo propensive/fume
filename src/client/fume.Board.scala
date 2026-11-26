@@ -52,6 +52,10 @@ final class Board(model: Model, val title: Text, progress0: Optional[Progress] =
   private val charts: Charts = Charts()
   private val memo: Blocks.RowMemo = Blocks.RowMemo()
 
+  // How the dashboard's readers have turned the run's tests over several axes: the web
+  // results', and the finished report's, layouts. The terminal's are always as declared.
+  private val rotator: Rotator = Rotator()
+
   def figures: Ledger[Text, pyrocosm.Figure] = charts.figures
 
   // Marks the board, or paints it now when forced: the final state must always be shown.
@@ -65,9 +69,34 @@ final class Board(model: Model, val title: Text, progress0: Optional[Progress] =
     val state = model.state()
     val document = Documenting.document(state)
     results() = Blocks.board(state, document, memo = memo)
-    // The web results, and the charts they carry, only while a dashboard can show them.
-    if Server.serving then webResults() = Blocks.board(state, document, charts.refresh(state), memo)
+
+    // The web results, and the charts they carry, only while a dashboard can show them; laid
+    // out as their tests have been turned, which is another document only once one has been.
+    if Server.serving then
+      val rotations: Rotations = rotator.rotations
+      val figures = charts.refresh(state, rotations)
+
+      val turned =
+        if rotations == Rotations.none then document else Documenting.document(state, rotations)
+
+      webResults() = Blocks.board(state, turned, figures, memo, rotator)
+
     interface.activities() = List(Blocks.progress(state, progress0))
+
+  // Turns the test `action` is the button of, if it is one of this board's; the results are
+  // the same until they are next painted, or reported.
+  def turn(action: pyrocosm.Action): Boolean = rotator.press(action)
+
+  // Whether any test of the run can be turned: whether the finished report might change.
+  def turnable: Boolean = Documenting.turnable(model.state())
+
+  // The finished run's report for the dashboard — its results table, its groups under their
+  // charts, laid out as their tests have been turned, and whatever follows them.
+  def report(extra: List[Block]): List[Block] = synchronized:
+    val state = model.state()
+    val rotations: Rotations = rotator.rotations
+    val document = Documenting.document(state, rotations)
+    Blocks.document(document, charts.refresh(state, rotations), rotator) + extra
 
   // The run's progress so far, for the dashboard's card of it.
   def activity: Optional[Activity] = interface.activities().head

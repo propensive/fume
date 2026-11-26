@@ -49,8 +49,10 @@ import pyrocosm.Inline
 // A benchmark chart is grouped bars, as tasseomancy draws them: a category per bar group and
 // a series per bar within the group, coloured by series. A plain group of benchmarks has a
 // category per test and one series; a benchmark over one axis, a category per axis value; and
-// over two, a category per value of the first axis with a series per value of the second — the
-// crosstab's rows and columns — so the i-th bar of every group is the same colour.
+// over several, a series per value of the last axis it is laid out by and a category per
+// combination of the others' values — the grid's columns and rows — so the i-th bar of every
+// group is the same colour. Which axis is last is the test's declaration's to say, and then
+// `Rotations`': the button beside the test in the dashboard turns its chart with its grid.
 object Charts:
   // The dashboard's chart palette: a white ground with black axes and lettering, a faint grid,
   // and a ramp from pale lime to deep blue for the series.
@@ -127,20 +129,17 @@ object Charts:
 
     BarData(List(Slice(t"mean", bars)), base)
 
-  // An axial benchmark's bars: over one axis, a bar per value; over two, a group per value of
-  // the first axis holding a bar per value of the second; over more, a bar per coordinate
-  // address. Values are in the order the table lists them, the scheduled ones first, and a
-  // scheduled cell yet to record is an empty bar, so the bars are all in place from the start
-  // and a record only raises its own.
-  def axial(entry: Model.Entry): BarData =
-    val axes: List[Text] = Documenting.axesOf(entry)
-
+  // An axial benchmark's bars: over one axis, a bar per value; over several, laid out in the
+  // order `rotations` leaves them in, a group per combination of the values of all but the last,
+  // holding a bar per value of the last. Values are in the order the table lists them, the
+  // scheduled ones first, and a scheduled cell yet to record is an empty bar, so the bars are
+  // all in place from the start and a record only raises its own.
+  def axial(entry: Model.Entry, rotations: Rotations = Rotations.none): BarData =
+    val axes: List[Text] = rotations.arrange(entry.ref.id, Documenting.axesOf(entry))
     val base: Timebase = baseOf(entry.benches)
 
-    def benchAt(pairs: List[(Text, Text)]): Optional[TestEvent.BenchmarkRecorded] =
-      entry.benches.seek: bench =>
-        pairs.all: (axis, value) =>
-          bench.coordinates.exists: c => c.axis == axis && Documenting.coordText(c) == value
+    def benchAt(address: Documenting.Address): Optional[TestEvent.BenchmarkRecorded] =
+      entry.benches.seek: bench => Documenting.located(bench.coordinates, address)
 
     def values(axis: Text): List[Text] =
       Documenting.axisValues(entry, axis).map(Documenting.coordText(_))
@@ -153,24 +152,23 @@ object Charts:
 
         BarData(List(Slice(entry.ref.name, bars)), base)
 
-      case first :: second :: Nil =>
+      case _ =>
+        val (categories, series0) = Rotations.roles(axes)
+        val series: Text = series0.or(t"")
+        val groups: List[Documenting.Address] = Documenting.addresses(entry, categories)
+
         val slices: List[Slice] =
-          values(second).map: column =>
+          values(series).map: column =>
             val bars: List[Bar] =
-              values(first).map: row =>
-                benchAt(List((first, row), (second, column)))
-                . lay(Bar(row, 0.0, 0.0, 0.0))(bar(row, _, base))
+              groups.map: address =>
+                val label: Text = address.map(_(1)).join(t", ")
+
+                benchAt(address + List((series, column)))
+                . lay(Bar(label, 0.0, 0.0, 0.0))(bar(label, _, base))
 
             Slice(column, bars)
 
         BarData(slices, base)
-
-      case _ =>
-        val bars: List[Bar] =
-          entry.benches.map: bench =>
-            bar(bench.coordinates.map(Documenting.coordText(_)).join(t", "), bench, base)
-
-        BarData(List(Slice(entry.ref.name, bars)), base)
 
   // A curve per stress entry that has recorded: throughput against concurrency, each step
   // measured once.
@@ -341,7 +339,8 @@ object Charts:
     case Bench
       ( figure: pyrocosm.Figure,
         chart:  Chart[List[Series[Text, Chart.Estimate]], Bars, Bars.Fit, Bars.Style],
-        data:   BarData )
+        data:   BarData,
+        axes:   List[Text] )
 
     case Stress
       ( figure: pyrocosm.Figure,
@@ -349,8 +348,8 @@ object Charts:
         curves: List[Curve] )
 
   private def figureOf(held: Held): pyrocosm.Figure = held match
-    case Held.Bench(figure, _, _)  => figure
-    case Held.Stress(figure, _, _) => figure
+    case Held.Bench(figure, _, _, _) => figure
+    case Held.Stress(figure, _, _)   => figure
 
 final class Charts:
   import Charts.*
@@ -371,31 +370,35 @@ final class Charts:
     held(key).let: held => if select.isDefinedAt(held) then select(held) else Unset
 
   // A benchmark chart: bars are added, or their values revised, as records arrive; a change of
-  // timebase (a chart's first record was quick, a later one slow) redraws with a new scale.
-  private def bench(key: Text, data: BarData, alt: List[Inline]): Optional[pyrocosm.Figure] =
+  // timebase (a chart's first record was quick, a later one slow) redraws with a new scale, and
+  // so does a turn of its axes, `axes` being the order they are laid out in.
+  private def bench(key: Text, data: BarData, alt: List[Inline], axes: List[Text] = Nil)
+  :   Optional[pyrocosm.Figure] =
+
     if data.empty then Unset else
       val style: Style = benchStyle(data)
       given Chart.Standard = style
 
-      // A chart keeps its axes while the timebase, the grouping and the width it needs hold.
-      def compatible(data0: BarData): Boolean =
-        data0.base == data.base && benchStyle(data0).width == style.width &&
+      // A chart keeps its axes while the timebase, the layout, the grouping and the width it
+      // needs hold.
+      def compatible(data0: BarData, axes0: List[Text]): Boolean =
+        data0.base == data.base && axes0 == axes && benchStyle(data0).width == style.width &&
           benchStyle(data0).legend == style.legend
 
       val next: Held.Bench = existing(key) { case held: Held.Bench => held } match
-        case Held.Bench(figure, chart, data0) if compatible(data0) =>
-          if data0 == data then Held.Bench(figure, chart, data) else
+        case Held.Bench(figure, chart, data0, axes0) if compatible(data0, axes0) =>
+          if data0 == data then Held.Bench(figure, chart, data, axes) else
             val known = partIds(chart.drawing)
             val (chart2, revisions) = chart.revise(benchSeries(data))
             Charts.revise(figure, revisions, known, chart2.in[Svg])
-            Held.Bench(figure, chart2, data)
+            Held.Bench(figure, chart2, data, axes)
 
         case other =>
           val chart = benchSeries(data).chart(Bars())
           val drawing: Text = chart.in[Svg].in[Xml].show
           val figure: pyrocosm.Figure = other.let(figureOf(_)).or(pyrocosm.Figure(alt, drawing))
           if other.present then figure.redraw(drawing)
-          Held.Bench(figure, chart, data)
+          Held.Bench(figure, chart, data, axes)
 
       held = held.define(key, next)
       next.figure
@@ -428,36 +431,43 @@ final class Charts:
 
   // Every measurement table of the run with data, charted, by key. Charts persist across
   // refreshes, so their figures are the same objects each time: a panel re-rendered from them
-  // shows the current drawing, and their revisions travel by the figures themselves.
-  def refresh(state: Model.State): Ledger[Text, pyrocosm.Figure] = synchronized:
-    var figures1: Ledger[Text, pyrocosm.Figure] = Ledger()
+  // shows the current drawing, and their revisions travel by the figures themselves. A test
+  // which has been turned is charted as `rotations` lays it out.
+  def refresh(state: Model.State, rotations: Rotations = Rotations.none)
+  :   Ledger[Text, pyrocosm.Figure] =
 
-    def record(key: Text, figure: Optional[pyrocosm.Figure]): Unit =
-      figure.let: figure => figures1 = figures1.define(key, figure)
+    synchronized:
+      var figures1: Ledger[Text, pyrocosm.Figure] = Ledger()
 
-    Documenting.measurements(state).each: (suite, kind, members) =>
-      val suiteName: Text = suite.let(_.name).or(t"")
+      def record(key: Text, figure: Optional[pyrocosm.Figure]): Unit =
+        figure.let: figure => figures1 = figures1.define(key, figure)
 
-      kind match
-        case t"bench" =>
-          val plainKey: Text = key(suite, kind, t"plain")
-          val caption = t"Mean time of each benchmark in $suiteName, with its confidence interval"
-          record(plainKey, bench(plainKey, plain(members), Inline.text(caption)))
+      Documenting.measurements(state).each: (suite, kind, members) =>
+        val suiteName: Text = suite.let(_.name).or(t"")
 
-          members.filter(!Documenting.axesOf(_).nil).each: entry =>
-            val axes: Text = Documenting.axesOf(entry).join(t" and ")
+        kind match
+          case t"bench" =>
+            val plainKey: Text = key(suite, kind, t"plain")
+            val caption = t"Mean time of each benchmark in $suiteName, with its confidence interval"
+            record(plainKey, bench(plainKey, plain(members), Inline.text(caption)))
 
-            val axialKey: Text = key(suite, kind, entry.ref.id)
-            val caption = t"Mean time of ${entry.ref.name} by $axes, with its confidence interval"
-            record(axialKey, bench(axialKey, axial(entry), Inline.text(caption)))
+            members.filter(!Documenting.axesOf(_).nil).each: entry =>
+              val declared: List[Text] = Documenting.axesOf(entry)
+              val axes: Text = declared.join(t" and ")
+              val layout: List[Text] = rotations.arrange(entry.ref.id, declared)
 
-        case t"stress" =>
-          val stressKey: Text = key(suite, kind, t"stress")
-          val caption = t"Throughput of each stress test in $suiteName against concurrency"
-          record(stressKey, stress(stressKey, curves(members), Inline.text(caption)))
+              val axialKey: Text = key(suite, kind, entry.ref.id)
+              val caption = t"Mean time of ${entry.ref.name} by $axes, with its confidence interval"
+              val data: BarData = axial(entry, rotations)
+              record(axialKey, bench(axialKey, data, Inline.text(caption), layout))
 
-        case _ =>
-          ()
+          case t"stress" =>
+            val stressKey: Text = key(suite, kind, t"stress")
+            val caption = t"Throughput of each stress test in $suiteName against concurrency"
+            record(stressKey, stress(stressKey, curves(members), Inline.text(caption)))
 
-    figures0 = figures1
-    figures1
+          case _ =>
+            ()
+
+      figures0 = figures1
+      figures1
